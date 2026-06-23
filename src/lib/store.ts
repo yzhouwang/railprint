@@ -215,7 +215,9 @@ export async function markRide(opts: {
   }
   const tripId = db.newId();
   const createdAt = new Date().toISOString();
-  const newEvents: RideEvent[] = segmentIds.map((segmentId) => ({
+  // Persist ONLY the newly-lit segments — never re-stamp already-ridden ones on a
+  // partial-overlap re-mark (that bloated the durable log + corrupted per-event stats).
+  const newEvents: RideEvent[] = added.map((segmentId) => ({
     id: db.newId(),
     segmentId,
     railGeoVersion: opts.pkg.version,

@@ -64,6 +64,26 @@ describe('markRide', () => {
     expect(get(events).length).toBe(countAfterFirst); // nothing new persisted
   });
 
+  it('persists only the NEW segments on a partial-overlap re-mark (no duplicate events)', async () => {
+    await markRide({
+      lineId: 'jr-kururi',
+      fromStationId: sid('jr-kururi', '木更津'),
+      toStationId: sid('jr-kururi', '横田'),
+      pkg: JP_PACKAGE,
+    });
+    expect(get(events).length).toBe(4);
+    const second = await markRide({
+      lineId: 'jr-kururi',
+      fromStationId: sid('jr-kururi', '木更津'),
+      toStationId: sid('jr-kururi', '馬来田'), // overlaps the first 4 segs + 2 new
+      pkg: JP_PACKAGE,
+    });
+    expect(second.added).toBe(2);
+    expect(get(events).length).toBe(6); // 4 + 2, NOT 4 + 6 — no re-stamped duplicates
+    const ids = get(events).map((e) => e.segmentId);
+    expect(new Set(ids).size).toBe(ids.length); // each ridden segment logged exactly once
+  });
+
   it('throws when the two stations are not on the same line', async () => {
     await expect(
       markRide({
