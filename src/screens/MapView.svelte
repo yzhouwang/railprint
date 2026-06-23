@@ -20,6 +20,7 @@
   import {
     buildBaseStyle,
     networkBounds,
+    riddenBounds,
     litStationIds,
     lineColorExpression,
     lineWidthExpression,
@@ -146,9 +147,13 @@
   });
 
   function fitToNetwork(): void {
-    const b = networkBounds(get(packages));
+    const pkgs = get(packages);
+    // Frame where you've actually ridden; else the JP network; else everything.
+    const jp = pkgs.filter((p) => p.country === 'JP');
+    const b =
+      riddenBounds(get(litSegmentIds), pkgs) ?? networkBounds(jp.length ? jp : pkgs);
     if (!b || !map) return;
-    map.fitBounds(b, { padding: 56, duration: 0, maxZoom: 12 });
+    map.fitBounds(b, { padding: 64, duration: 0, maxZoom: 13 });
   }
 
   function wireStationClicks(): void {

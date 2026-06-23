@@ -147,10 +147,11 @@ export function stationRadiusExpression(litStationArray: string[]): unknown[] {
 }
 
 // ─────────────────────────────── the base style ─────────────────────────────────
-// v0 has NO external basemap tiles (DESIGN defers basemap polish — the rail network IS
-// the map). Just a mint/white background + our GeoJSON layers. $0, fully self-contained,
-// offline-capable. The shape is `maplibregl.StyleSpecification` but we keep it untyped
-// here so style.ts imports nothing from maplibre.
+// A muted OSM raster basemap (so the network reads against real geography) under our
+// GeoJSON rail layers. No glyphs/sprite/text. The shape is `maplibregl.StyleSpecification`
+// but kept untyped here so style.ts imports nothing from maplibre.
+// NOTE: the raster basemap reintroduces an external tile dependency the eng review
+// flagged for offline/iOS — fine for this online-first v0; revisit for the PWA/offline tier.
 
 export interface BaseStyleInput {
   packages: RailGeoPackage[];
@@ -165,11 +166,31 @@ export function buildBaseStyle({ packages, litSegmentIds: lit }: BaseStyleInput)
     // entirely — MapLibre's validator rejects `glyphs: undefined` ("string expected,
     // undefined found"), which fired map 'error' before 'load' and blanked the map.
     sources: {
+      // v0 raster basemap (muted) so the rail network reads against real geography.
+      basemap: {
+        type: 'raster',
+        tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+        tileSize: 256,
+        attribution: '© OpenStreetMap contributors',
+        maxzoom: 19,
+      },
       [SEGMENTS_SOURCE]: { type: 'geojson', data: buildSegmentCollection(packages) },
       [STATIONS_SOURCE]: { type: 'geojson', data: buildStationCollection(packages) },
     },
     layers: [
       { id: 'rp-bg', type: 'background', paint: { 'background-color': tokens.white } },
+      {
+        id: 'rp-basemap',
+        type: 'raster',
+        source: 'basemap',
+        // Mute toward soft grey so the emerald rail pops (JR-East aesthetic).
+        paint: {
+          'raster-saturation': -0.9,
+          'raster-opacity': 0.55,
+          'raster-contrast': -0.12,
+          'raster-brightness-max': 0.98,
+        },
+      },
       {
         id: SEGMENTS_GLOW_LAYER,
         type: 'line',
@@ -236,4 +257,30 @@ export function networkBounds(packages: RailGeoPackage[]): LngLatBounds | null {
     [w, s],
     [e, n],
   ];
+}
+
+/** Bounds over only the RIDDEN segments, so the default view frames where you've been. */
+export function riddenBounds(
+  litSegmentIds: string[],
+  packages: RailGeoPackage[],
+): LngLatBounds | null {
+  const lit = new Set(litSegmentIds);
+  let w = Infinity;
+  let s = Infinity;
+  let e = -Infinity;
+  let n = -Infinity;
+  let any = false;
+  for (const pkg of packages) {
+    for (const seg of pkg.segments) {
+      if (!lit.has(seg.segmentId)) continue;
+      for (const [lon, lat] of seg.geometry.coordinates) {
+        any = true;
+        if (lon < w) w = lon;
+        if (lon > e) e = lon;
+        if (lat < s) s = lat;
+        if (lat > n) n = lat;
+      }
+    }
+  }
+  return any ? [[w, s], [e, n]] : null;
 }

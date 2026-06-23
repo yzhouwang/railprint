@@ -12,11 +12,13 @@ describe('buildBaseStyle', () => {
     expect('sprite' in style).toBe(false);
   });
 
-  it('is a self-contained v8 style: geojson sources only, at least one layer', () => {
+  it('is a v8 style: rail data as geojson + a muted raster basemap, with layers', () => {
     const style = buildBaseStyle({ packages: STUB_PACKAGES, litSegmentIds: [] });
     expect(style.version).toBe(8);
     const sources = style.sources as Record<string, { type: string }>;
-    expect(Object.values(sources).every((s) => s.type === 'geojson')).toBe(true);
+    expect(sources['rp-segments'].type).toBe('geojson');
+    expect(sources['rp-stations'].type).toBe('geojson');
+    expect(sources['basemap'].type).toBe('raster'); // v0 OSM basemap under the rail
     expect((style.layers as unknown[]).length).toBeGreaterThan(0);
   });
 });
