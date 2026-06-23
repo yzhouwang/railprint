@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "description": "Manual stitch overrides for N02 lines that cannot be resolved by endpoint chaining. Empty until a real N02 vintage is ingested.",
+  "lines": []
+}
+
