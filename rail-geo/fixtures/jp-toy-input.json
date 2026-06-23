@@ -1,0 +1,47 @@
+{
+  "version": "0.1.0-fixture",
+  "country": "JP",
+  "generatedAt": "2026-06-23T00:00:00.000Z",
+  "lines": [
+    {
+      "lineId": "jp:toy-shinkansen",
+      "name": "東海道新幹線 fixture",
+      "country": "JP",
+      "n02_002": 1,
+      "sequenceStrategy": "project",
+      "sections": [
+        { "sectionId": "s3", "coordinates": [[3, 0], [2, 0]] },
+        { "sectionId": "s1", "coordinates": [[0, 0], [1, 0]] },
+        { "sectionId": "s2", "coordinates": [[1, 0], [2, 0]] },
+        { "sectionId": "s4", "coordinates": [[3, 0], [4, 0]] }
+      ],
+      "stations": [
+        { "stationId": "shin-osaka", "name": "新大阪", "lon": 4, "lat": 0 },
+        { "stationId": "nagoya", "name": "名古屋", "lon": 2, "lat": 0 },
+        { "stationId": "tokyo", "name": "東京", "lon": 0, "lat": 0 },
+        { "stationId": "shizuoka", "name": "静岡", "lon": 1, "lat": 0 }
+      ]
+    },
+    {
+      "lineId": "jp:yamanote-fixture",
+      "name": "山手線 fixture",
+      "country": "JP",
+      "isLoop": true,
+      "isHSR": false,
+      "arcDirection": "cw",
+      "sections": [
+        { "sectionId": "bottom", "coordinates": [[0, 0], [1, 0]] },
+        { "sectionId": "right", "coordinates": [[1, 0], [1, 1]] },
+        { "sectionId": "top", "coordinates": [[0, 1], [1, 1]] },
+        { "sectionId": "left", "coordinates": [[0, 1], [0, 0]] }
+      ],
+      "stations": [
+        { "stationId": "a", "name": "A", "lon": 0, "lat": 0, "seq": 1 },
+        { "stationId": "b", "name": "B", "lon": 1, "lat": 0, "seq": 2 },
+        { "stationId": "c", "name": "C", "lon": 1, "lat": 1, "seq": 3 },
+        { "stationId": "d", "name": "D", "lon": 0, "lat": 1, "seq": 4 }
+      ]
+    }
+  ]
+}
+

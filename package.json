@@ -1,0 +1,33 @@
+{
+  "name": "railprint",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "build:rail-geo:fixture": "node pipeline/cli.ts --input rail-geo/fixtures/jp-toy-input.json --out rail-geo/generated",
+    "test": "node --test tests/geometry/*.test.ts",
+    "test:geometry": "node --test tests/geometry/*.test.ts",
+    "test:app": "vitest run"
+  },
+  "dependencies": {
+    "dexie": "^4.0.11",
+    "maplibre-gl": "^5.0.0",
+    "pmtiles": "^4.1.0"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^5.0.3",
+    "@tsconfig/svelte": "^5.0.4",
+    "@types/geojson": "^7946.0.14",
+    "fake-indexeddb": "^6.0.0",
+    "jsdom": "^25.0.1",
+    "svelte": "^5.19.0",
+    "svelte-check": "^4.1.4",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.7",
+    "vitest": "^3.0.4"
+  }
+}
