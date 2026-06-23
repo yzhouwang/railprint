@@ -80,7 +80,12 @@ interface SequencedStation {
   lat: number;
   seq: number;
   alongKm: number;
+  offsetKm: number;
 }
+
+// A station projecting further than this from its own line means a wrong-line
+// station or a bad geocode — fail closed rather than ship plausible-but-wrong km.
+const MAX_STATION_OFFSET_KM = 2;
 
 export function buildRailGeoPackage(input: BuildInput): BuildResult {
   const generatedAt = input.generatedAt ?? new Date().toISOString();
@@ -107,6 +112,24 @@ export function buildRailGeoPackage(input: BuildInput): BuildResult {
     }
 
     const isLoop = lineInput.isLoop ?? stitched.isLoop;
+
+    const minStations = isLoop ? 3 : 2;
+    if (lineInput.stations.length < minStations) {
+      lineIssues.push({
+        severity: 'error',
+        code: 'insufficient-stations',
+        lineId: lineInput.lineId,
+        message: `Line has ${lineInput.stations.length} station(s); needs at least ${minStations} for coverage`,
+      });
+      reportLines.push({
+        lineId: lineInput.lineId,
+        name: lineInput.name,
+        status: 'requires-override',
+        issues: lineIssues,
+      });
+      continue;
+    }
+
     let lineGeometry = stitched.line;
     let sequenced = sequenceStations(lineInput, lineGeometry);
 
@@ -121,6 +144,82 @@ export function buildRailGeoPackage(input: BuildInput): BuildResult {
         code: 'station-order-not-monotonic',
         lineId: lineInput.lineId,
         message: 'Station sequence does not match stitched line direction',
+      });
+      reportLines.push({
+        lineId: lineInput.lineId,
+        name: lineInput.name,
+        status: 'requires-override',
+        issues: lineIssues,
+      });
+      continue;
+    }
+
+    if (isLoop && sequenced.length >= 3) {
+      // A loop consistent with its stitched winding has exactly ONE cyclic descent
+      // in alongKm (the wrap). Opposite winding shows n-1 descents, which makes every
+      // forward slice take the LONG arc (3x km inflation). Reverse the geometry so the
+      // forward slices are the short arc; fail closed if order is still inconsistent.
+      const cyclicDescents = (vals: number[]): number => {
+        let descents = 0;
+        for (let i = 0; i < vals.length; i += 1) {
+          if (vals[(i + 1) % vals.length] < vals[i]) descents += 1;
+        }
+        return descents;
+      };
+      if (cyclicDescents(sequenced.map((station) => station.alongKm)) === sequenced.length - 1) {
+        lineGeometry = reverseLineString(lineGeometry);
+        sequenced = sequenceStations(lineInput, lineGeometry);
+      }
+      if (cyclicDescents(sequenced.map((station) => station.alongKm)) !== 1) {
+        lineIssues.push({
+          severity: 'error',
+          code: 'loop-station-order-not-monotonic',
+          lineId: lineInput.lineId,
+          message: 'Loop station sequence is not consistent with the stitched winding',
+        });
+        reportLines.push({
+          lineId: lineInput.lineId,
+          name: lineInput.name,
+          status: 'requires-override',
+          issues: lineIssues,
+        });
+        continue;
+      }
+    }
+
+    const duplicateSeq = new Set<number>();
+    const duplicateId = new Set<string>();
+    const hasDuplicate = sequenced.some((station) => {
+      if (duplicateSeq.has(station.seq) || duplicateId.has(station.stationId)) {
+        return true;
+      }
+      duplicateSeq.add(station.seq);
+      duplicateId.add(station.stationId);
+      return false;
+    });
+    if (hasDuplicate) {
+      lineIssues.push({
+        severity: 'error',
+        code: 'duplicate-station',
+        lineId: lineInput.lineId,
+        message: 'Line has duplicate station seq or stationId; segment ids would collide',
+      });
+      reportLines.push({
+        lineId: lineInput.lineId,
+        name: lineInput.name,
+        status: 'requires-override',
+        issues: lineIssues,
+      });
+      continue;
+    }
+
+    const offLine = sequenced.find((station) => station.offsetKm > MAX_STATION_OFFSET_KM);
+    if (offLine) {
+      lineIssues.push({
+        severity: 'error',
+        code: 'station-off-line',
+        lineId: lineInput.lineId,
+        message: `Station ${offLine.stationId} projects ${offLine.offsetKm.toFixed(2)}km from the line (> ${MAX_STATION_OFFSET_KM}km)`,
       });
       reportLines.push({
         lineId: lineInput.lineId,
@@ -222,6 +321,7 @@ function sequenceStations(lineInput: LineBuildInput, line: LineString): Sequence
       lat: station.lat,
       seq: station.seq ?? index + 1,
       alongKm: projection.alongKm,
+      offsetKm: projection.distanceKm,
     };
   });
 
@@ -243,7 +343,9 @@ function buildSegments(
 ): RailSegment[] {
   const count = isLoop ? stations.length : stations.length - 1;
   const segments: RailSegment[] = [];
-  const loopArcDirection = lineInput.arcDirection ?? 'cw';
+  // Derive arc direction from the ACTUAL stitched winding (which may have been
+  // reversed above), not the input label — the geometry the UI lights must match.
+  const loopArcDirection = isLoop ? loopWinding(line) : (lineInput.arcDirection ?? 'cw');
 
   for (let i = 0; i < count; i += 1) {
     const from = stations[i];
@@ -281,5 +383,16 @@ function isStrictlyDecreasing(values: number[]): boolean {
 
 function roundKm(value: number): number {
   return Math.round(value * 1000) / 1000;
+}
+
+// Shoelace signed area on the ring. sum(>0) ⇒ clockwise, (<0) ⇒ counter-clockwise
+// for lon/lat with y pointing up (good enough at city scale for a cw/ccw label).
+function loopWinding(line: LineString): 'cw' | 'ccw' {
+  const c = line.coordinates;
+  let sum = 0;
+  for (let i = 1; i < c.length; i += 1) {
+    sum += (c[i][0] - c[i - 1][0]) * (c[i][1] + c[i - 1][1]);
+  }
+  return sum > 0 ? 'cw' : 'ccw';
 }
 

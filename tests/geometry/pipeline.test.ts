@@ -142,7 +142,9 @@ test('emits loop wrap segment with explicit arc direction', () => {
     'jp:yamanote-fixture:3-4',
     'jp:yamanote-fixture:4-1',
   ]);
-  assert.equal(built.railGeoPackage.segments.every((segment) => segment.arcDirection === 'cw'), true);
+  // arcDirection is DERIVED from the stitched winding (the unit-square fixture stitches CCW),
+  // not copied from the input label.
+  assert.equal(built.railGeoPackage.segments.every((segment) => segment.arcDirection === 'ccw'), true);
   assert.ok(lineLengthKm(built.railGeoPackage.segments[3].geometry) > 100);
 });
 
@@ -202,4 +204,128 @@ test('CLI emits package, segment GeoJSON, validation report, and override report
   )), true);
   assert.equal(report.lines.every((line: { status: string }) => line.status === 'ok'), true);
   assert.deepEqual(overrides.lines, []);
+});
+
+test('asserts real per-segment km against known great-circle distances', () => {
+  const line: LineBuildInput = {
+    lineId: 'jp:km-fixture',
+    name: 'km fixture',
+    country: 'JP',
+    isHSR: false,
+    sections: [
+      { sectionId: 'a', coordinates: [[0, 0], [1, 0]] },
+      { sectionId: 'b', coordinates: [[1, 0], [2, 0]] },
+    ],
+    stations: [
+      { stationId: 's1', name: 'S1', lon: 0, lat: 0, seq: 1 },
+      { stationId: 's2', name: 'S2', lon: 1, lat: 0, seq: 2 },
+      { stationId: 's3', name: 'S3', lon: 2, lat: 0, seq: 3 },
+    ],
+  };
+  const pkg = buildRailGeoPackage({
+    version: '0.1.0-test', country: 'JP', generatedAt: '2026-06-23T00:00:00.000Z', lines: [line],
+  }).railGeoPackage;
+  // 1 degree of longitude at the equator ≈ 111.195 km (R=6371.0088).
+  assert.ok(Math.abs(pkg.segments[0].km - 111.195) < 0.5, `seg0 km=${pkg.segments[0].km}`);
+  assert.ok(Math.abs(pkg.segments[1].km - 111.195) < 0.5, `seg1 km=${pkg.segments[1].km}`);
+});
+
+test('loop with station order opposite the stitched winding still measures the SHORT arc', () => {
+  const loop: LineBuildInput = {
+    lineId: 'jp:loop-reverse-fixture',
+    name: 'reverse loop fixture',
+    country: 'JP',
+    isLoop: true,
+    isHSR: false,
+    arcDirection: 'cw',
+    sections: [
+      { sectionId: 'bottom', coordinates: [[0, 0], [1, 0]] },
+      { sectionId: 'right', coordinates: [[1, 0], [1, 1]] },
+      { sectionId: 'top', coordinates: [[0, 1], [1, 1]] },
+      { sectionId: 'left', coordinates: [[0, 1], [0, 0]] },
+    ],
+    stations: [
+      { stationId: 'a', name: 'A', lon: 0, lat: 0, seq: 1 },
+      { stationId: 'd', name: 'D', lon: 0, lat: 1, seq: 2 },
+      { stationId: 'c', name: 'C', lon: 1, lat: 1, seq: 3 },
+      { stationId: 'b', name: 'B', lon: 1, lat: 0, seq: 4 },
+    ],
+  };
+  const built = buildRailGeoPackage({
+    version: '0.1.0-test', country: 'JP', generatedAt: '2026-06-23T00:00:00.000Z', lines: [loop],
+  });
+  if (built.railGeoPackage.lines.length === 0) {
+    assert.equal(built.validationReport.lines[0].status, 'requires-override');
+    return;
+  }
+  for (const seg of built.railGeoPackage.segments) {
+    assert.ok(seg.km < 160, `loop segment ${seg.segmentId} measured ${seg.km} km — expected the short arc (~111), got the long way around`);
+  }
+});
+
+test('single-station line does not silently report ok with phantom coverage', () => {
+  const line: LineBuildInput = {
+    lineId: 'jp:single-station',
+    name: 'single station',
+    country: 'JP',
+    isHSR: false,
+    sections: [{ sectionId: 'a', coordinates: [[0, 0], [1, 0]] }],
+    stations: [{ stationId: 'only', name: 'Only', lon: 0, lat: 0, seq: 1 }],
+  };
+  const built = buildRailGeoPackage({
+    version: '0.1.0-test', country: 'JP', generatedAt: '2026-06-23T00:00:00.000Z', lines: [line],
+  });
+  const shipped = built.railGeoPackage.lines.length === 1;
+  const flagged = built.validationReport.lines[0]?.status === 'requires-override';
+  assert.ok(flagged || (shipped && built.railGeoPackage.segments.length === 0));
+});
+
+test('fails closed when a station projects too far from its own line', () => {
+  const line: LineBuildInput = {
+    lineId: 'jp:off-line-fixture',
+    name: 'off line fixture',
+    country: 'JP',
+    isHSR: false,
+    sections: [{ sectionId: 'a', coordinates: [[0, 0], [1, 0]] }],
+    stations: [
+      { stationId: 's1', name: 'S1', lon: 0, lat: 0, seq: 1 },
+      { stationId: 'wrong', name: 'Wrong line', lon: 1, lat: 5, seq: 2 }, // ~555 km off
+    ],
+  };
+  const built = buildRailGeoPackage({
+    version: '0.1.0-test', country: 'JP', generatedAt: '2026-06-23T00:00:00.000Z', lines: [line],
+  });
+  assert.equal(built.railGeoPackage.lines.length, 0);
+  assert.equal(built.validationReport.lines[0].status, 'requires-override');
+  assert.equal(built.validationReport.lines[0].issues.some((i) => i.code === 'station-off-line'), true);
+});
+
+test('fails closed on duplicate station seq (segment id collision)', () => {
+  const line: LineBuildInput = {
+    lineId: 'jp:dup-seq-fixture',
+    name: 'dup seq fixture',
+    country: 'JP',
+    isHSR: false,
+    sections: [{ sectionId: 'a', coordinates: [[0, 0], [2, 0]] }],
+    stations: [
+      { stationId: 's1', name: 'S1', lon: 0, lat: 0, seq: 1 },
+      { stationId: 's2', name: 'S2', lon: 1, lat: 0, seq: 1 }, // duplicate seq
+      { stationId: 's3', name: 'S3', lon: 2, lat: 0, seq: 2 },
+    ],
+  };
+  const built = buildRailGeoPackage({
+    version: '0.1.0-test', country: 'JP', generatedAt: '2026-06-23T00:00:00.000Z', lines: [line],
+  });
+  assert.equal(built.railGeoPackage.lines.length, 0);
+  assert.equal(built.validationReport.lines[0].issues.some((i) => i.code === 'duplicate-station'), true);
+});
+
+test('stitches sections whose shared endpoint is a near-miss (a few metres apart)', () => {
+  // Two sections meeting at ~(1,0) but the second starts 5e-5° east (~5.5 m) — a raw N02 near-miss.
+  const stitched = stitchLineSections([
+    { sectionId: 'a', coordinates: [[0, 0], [1, 0]] },
+    { sectionId: 'b', coordinates: [[1.00005, 0], [2, 0]] },
+  ]);
+  assert.equal(stitched.ok, true);
+  assert.deepEqual(stitched.sectionOrder, ['a', 'b']);
 });

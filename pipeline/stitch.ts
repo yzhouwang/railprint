@@ -1,5 +1,5 @@
 import type { LineString, Position } from './geojson.ts';
-import { coordinateKey, normalizeLineString, positionsEqual } from './geometry.ts';
+import { haversineKm, normalizeLineString, positionsEqual } from './geometry.ts';
 
 export interface SectionInput {
   sectionId: string;
@@ -31,14 +31,20 @@ interface GraphEdge {
 
 export function stitchLineSections(
   sections: SectionInput[],
-  options: { endpointPrecision?: number; expectLoop?: boolean } = {},
+  options: { endpointPrecision?: number; endpointToleranceKm?: number; expectLoop?: boolean } = {},
 ): StitchResult {
   const precision = options.endpointPrecision ?? 6;
+  const toleranceKm = options.endpointToleranceKm ?? 0.01;
   const issues: StitchIssue[] = [];
 
   if (sections.length === 0) {
     return fail('empty-line', 'Cannot stitch a line with no sections');
   }
+
+  // Cluster section endpoints within a tolerance so near-miss real-world endpoints
+  // (raw N02/OSM endpoints differ by a few metres) snap together instead of failing
+  // as a disconnected line. Exact-coordinate fixtures each form their own cluster.
+  const endpointKeyOf = buildEndpointKeyer(sections, toleranceKm);
 
   const edges: GraphEdge[] = [];
   const adjacency = new Map<string, GraphEdge[]>();
@@ -54,8 +60,8 @@ export function stitchLineSections(
       continue;
     }
 
-    const aKey = coordinateKey(coords[0], precision);
-    const bKey = coordinateKey(coords[coords.length - 1], precision);
+    const aKey = endpointKeyOf(coords[0]);
+    const bKey = endpointKeyOf(coords[coords.length - 1]);
     const edge: GraphEdge = { index, sectionId: section.sectionId, aKey, bKey, coordinates: coords };
     edges.push(edge);
     push(adjacency, aKey, edge);
@@ -203,6 +209,34 @@ function validateConnected(
     };
   }
   return undefined;
+}
+
+function buildEndpointKeyer(
+  sections: SectionInput[],
+  toleranceKm: number,
+): (coord: Position) => string {
+  const clusters: { centroid: Position; key: string }[] = [];
+  const keyOf = (coord: Position): string => {
+    for (const cluster of clusters) {
+      if (haversineKm(cluster.centroid, coord) <= toleranceKm) {
+        return cluster.key;
+      }
+    }
+    const key = `c${clusters.length}`;
+    clusters.push({ centroid: coord, key });
+    return key;
+  };
+  // Seed clusters in deterministic section order so near-miss endpoints attach to
+  // the first cluster within tolerance.
+  for (const section of sections) {
+    const coords = normalizeLineString(section.coordinates);
+    if (coords.length < 2) {
+      continue;
+    }
+    keyOf(coords[0]);
+    keyOf(coords[coords.length - 1]);
+  }
+  return keyOf;
 }
 
 function push(map: Map<string, GraphEdge[]>, key: string, edge: GraphEdge): void {
