@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+.env
+.env.*
+.vite/
+coverage/
+# large generated geometry artifacts (built from N02, not checked in raw)
+*.pmtiles
+data/raw/
