@@ -127,7 +127,7 @@
         map.on('error', (e: unknown) => {
           // GL/style errors after load shouldn't blank the map; only fail before ready.
           if (status !== 'ready') {
-            console.error('[MapView] maplibre error', e);
+            console.error('[MapView] maplibre error:', (e as { error?: Error })?.error?.message ?? (e as { error?: unknown })?.error ?? e);
             status = 'error';
           }
         });

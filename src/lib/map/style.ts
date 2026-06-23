@@ -161,8 +161,9 @@ export function buildBaseStyle({ packages, litSegmentIds: lit }: BaseStyleInput)
   const litStations = litStationIds(lit, packages);
   return {
     version: 8,
-    // Empty glyphs/sprite: we render no symbol text in v0, so none are fetched.
-    glyphs: undefined,
+    // No glyphs/sprite: we render no symbol text in v0. The `glyphs` key is OMITTED
+    // entirely — MapLibre's validator rejects `glyphs: undefined` ("string expected,
+    // undefined found"), which fired map 'error' before 'load' and blanked the map.
     sources: {
       [SEGMENTS_SOURCE]: { type: 'geojson', data: buildSegmentCollection(packages) },
       [STATIONS_SOURCE]: { type: 'geojson', data: buildStationCollection(packages) },
