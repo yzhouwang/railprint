@@ -141,3 +141,73 @@ Deferred: all auto-import (QR/OCR/paste-parse), train-model + badge gamification
 - You said *"build one for ourselves … for rail fans,"* then when I offered startup vs hobby you picked **open source for the community** — and when I offered the leanest build you picked the **hybrid that keeps the data forkable and the format open**. You optimized for the tool *outliving you*, not for shipping the absolute fastest. That's a maintainer's instinct, not a demo-maker's.
 - You chose **Japan-first** even after I flagged that Japan is the solved, crowded space and China is the empty one. You took the on-ramp with eyes open rather than chasing the harder novelty for its own sake — sequencing discipline.
 - You picked **all four** "whoa" features without flinching. You're not afraid of scope when the scope is the actual vision; the discipline showed up in *how* you sequence it, not in cutting it down.
+
+---
+
+## Eng Review Decisions (2026-06-23, /plan-eng-review)
+
+Validated against current best practice (5-agent search, 71 lookups) + two independent outside voices (Codex + Claude subagent, strong consensus). Repo scaffolded + pushed: **https://github.com/yzhouwang/railprint**.
+
+**Platform (Issue 1):** Browser **web app first** (online-only v0). Offline + installable PWA = tier-2 fast-follow; native app = tier-3 later. Deletes all PMTiles-offline / service-worker machinery from v0.
+
+**Sequencing (Issue 7, cross-model consensus):** **Import-from-incumbent is the v0 HERO**, manual marking secondary. First real action = a **crosswalk spike**: hand-map ~50 rows of a real 乗りつぶしオンライン/RailLab export to N02/ekidata IDs to prove the only non-manual acquisition path is feasible *before* building.
+
+**Geometry source:** MLIT N02 — confirmed **CC BY 4.0** (better than the doc's caution). Pin a 2024/2025 vintage; ship `出典「国土数値情報（鉄道データ）」（国土交通省）を加工して作成`.
+
+**Stitching (Issue 3):** Required build-time stage — chain N02 RailroadSection by endpoint, flip reversed, validate continuity + station count; un-stitchable lines → checked-in **overrides file** (forkable, community-fixable). lineSlice rejects MultiLineString, so this is mandatory, not optional.
+
+**Station sequence (Issue 2):** ekidata for conventional-line names; **Shinkansen sequence DERIVED from N02 geometry** (project stations onto stitched line, sort by along-distance) — ekidata's free tier lacks Shinkansen ordering. `%HSR` subset keyed off **`事業者種別 N02_002==1`** (not `鉄道区分 N02_001`).
+
+**Marking (Issue 5):** **Line-first** — pick a line, then tap station A → station B; segment = slice between their sequence indices (single-line only, dodges O-D inference). Loop lines (山手線/大阪環状線) store **arc direction explicitly**.
+
+**Trip model (Issue 8):** Single-line slice is the coverage primitive; manual rides can be **grouped into a trip** (diary/card). Auto-decompose (O-D→legs) deferred. Import supplies leg-level data, so v0 is covered.
+
+**Data model (Issue 9, Codex):** **Coverage SET** of ridden segment-ids drives km/% (set-union, dupe/undated-proof); separate **ride-EVENTS log** (date, train model, notes) drives diary + Wrapped card. Fixes the bad `date+line+from+to` dedupe key.
+
+**Storage/durability (Issue 4):** Dexie/IndexedDB = runtime truth; **CSV export = durable backup-of-record** (the only thing surviving "clear data"); ridelog stores **references, not geometry**; resolver **pins rail-geo version + warns** on mismatch; `navigator.storage.persist()` + export-nag. Cross-device = manual import for now.
+
+**Geometry compute (folded):** all turf at **build time** (`lineSliceAlong` + precomputed distance-along, never runtime `lineSlice` on tapped coords); runtime ships **zero turf**, just sums precomputed per-segment km.
+
+**China corridor IN v0 (TODO 2 → promoted to v0):** ship **one small China corridor (京沪高铁)** through the same pipeline from OSM, to validate the country-agnostic schema against China's reality (OSM/ODbL geometry, WGS-84, avoid Amap/Baidu GCJ-02) *before* investing in broad Japan breadth. v0 identity = "Japan + one China corridor."
+
+**Tests (Issue 6):** **golden-file geometry suite** (computed km ≈ published official lengths within tolerance, station counts, loop arcs — build fails on drift) + Vitest unit + Playwright E2E for the core flows.
+
+**Render (folded):** light ridden segments via a single **data-driven style expression** keyed on the coverage Set (not per-feature `setFeatureState`); incremental stats. Outside-voice flag: load-test the **near-complete render** (80%+ lit) — consider inverse render (base = ridden, overlay unridden gaps).
+
+**Deferred to TODOS.md:** rail-geo version **migrations** (N→N+1 ID map + quarantine) before the 2nd data release.
+
+## Implementation Tasks
+Synthesized from this review. Run with Claude Code or Codex; checkbox as you ship. Do implementation on a **feature branch**, ship via PR (per your standing preference).
+
+- [ ] **T1 (P1, human: ~1d / CC: ~3h)** — Spike — crosswalk feasibility: hand-map ~50 rows of a real 乗りつぶしオンライン/RailLab export to N02/ekidata IDs. **Do this first** — it decides whether the import wedge holds.
+  - Surfaced by: Outside voice (both) — import is the hero, crosswalk is the hidden load-bearing dependency.
+  - Verify: a written reconciliation note + % of rows that mapped cleanly.
+- [ ] **T2 (P1, human: ~3-5d / CC: ~1-2d)** — build pipeline — N02 stitch → ordered polyline per line (flip reversed, validate continuity + station count), emit per-segment `{lineId,fromSeq,toSeq,km,geometry}`; un-stitchable → overrides file.
+  - Verify: validation report; golden-file km checks (T7).
+- [ ] **T3 (P1, human: ~1-2d / CC: ~3h)** — build pipeline — derive Shinkansen sequence by projection; key `%HSR` off `N02_002==1`.
+- [ ] **T4 (P1, human: ~4-6d / CC: ~2d)** — import — incumbent→N02/ekidata ID crosswalk + CSV importer (merge into coverage, dedupe events, malformed-row report, merge-vs-replace). **The v0 hero.**
+- [ ] **T5 (P1, human: ~2-3d / CC: ~1d)** — data model — Dexie coverage-set + ride-events log; resolver (refs + pinned rail-geo version → km + %national + %HSR), runtime sum only.
+- [ ] **T6 (P1, human: ~4-5d / CC: ~2d)** — map/UI — MapLibre + PMTiles, dim network + lit segments via data-driven expression; line-first marking; loop arc direction.
+- [ ] **T7 (P1, human: ~2-3d / CC: ~1d)** — tests — golden-file geometry suite (km≈published, station counts, loop arcs); build fails on drift.
+- [ ] **T8 (P1, human: ~2-3d / CC: ~1d)** — wrapped — `<canvas>` card with subsetted Noto Sans JP (`document.fonts.ready` before draw), eager blob, `navigator.share({files})` + `<a download>` fallback (iOS gesture-safe).
+- [ ] **T9 (P1, human: ~1wk / CC: ~2-3d)** — China corridor — ingest 京沪高铁 from OSM through the same pipeline; validate country-agnostic schema + WGS-84 (no GCJ-02).
+- [ ] **T10 (P2, human: ~2d / CC: ~1d)** — durability — CSV export + export-nag + `storage.persist()`; empty-state UX.
+- [ ] **T11 (P2, human: ~2-3d / CC: ~1d)** — trip grouping — optional "group legs into a trip" for manual rides.
+- [ ] **T12 (P2, human: ~2-3d / CC: ~1d)** — tests — Playwright E2E for the 5 core flows.
+- [ ] **T13 (P3, TODO)** — migrations — rail-geo version N→N+1 ID map + quarantine (before 2nd data release).
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 0 | — | — |
+| Codex Review | `/codex review` | Independent 2nd opinion | 0 | — | — |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | CLEAR | 9 issues + 2 TODOs, all decided; China corridor promoted to v0 |
+| Design Review | `/plan-design-review` | UI/UX gaps | 0 | — | — |
+| DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | — |
+
+- **CODEX:** outside voice ran (Codex + Claude subagent) — strong cross-model consensus: import-first re-sequencing, ID-crosswalk dependency, through-service modeling, near-complete render cliff, rail-geo migrations. All surfaced to the user; all resolved.
+- **CROSS-MODEL:** both outside voices independently agreed on the 5 above — no tension, high-confidence signal. All folded by explicit user decision.
+- **VERDICT:** ENG CLEARED — ready to implement. First action: T1 crosswalk spike.
+
+NO UNRESOLVED DECISIONS
