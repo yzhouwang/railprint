@@ -196,6 +196,23 @@ Synthesized from this review. Run with Claude Code or Codex; checkbox as you shi
 - [ ] **T12 (P2, human: ~2-3d / CC: ~1d)** — tests — Playwright E2E for the 5 core flows.
 - [ ] **T13 (P3, TODO)** — migrations — rail-geo version N→N+1 ID map + quarantine (before 2nd data release).
 
+## Design Review Decisions (2026-06-23, /plan-design-review)
+
+Visual system extracted from JR East recruit site → full system in repo `DESIGN.md`. Design completeness **3/10 → 8/10**. Mockups hand-built (designer's AI image-gen gated on OpenAI org verification).
+
+- **Aesthetic:** emerald (`#00A040`) monochrome discipline on white, folder-tab cards, 3D claymation dioramas. Calm App-UI surface. The ridden network glows emerald — completion literally lights up. Deliberate opposite of the web-1.0 incumbent.
+- **Issue 1 — navigation:** bottom tab bar `地図 · 統計 · 取込` with the `+` FAB for "mark a ride" floating above. Always-visible wayfinding; map stays hero.
+- **Issue 2 — import-partial state:** a **review-and-resolve screen** ("1,180/1,240 mapped · 60 need help" → confirm suggested match or skip). The crosswalk WILL leave rows unmatched; never silently drop them. This is the make-or-break moment of the import-hero flow.
+- **Folded specs (in DESIGN.md):** glowing-line treatment (ridden = emerald 4px, unridden = grey 2px; colorblind-safe via thickness); completion stat card; interaction-state table (loading/empty/error/success/partial incl. online-only offline overlay); the signature "map floods green on import" motion; mobile + desktop-side-panel responsive; contrast rule (emerald-600 not for <16px text → emerald-800); Noto Sans JP (ties to T8 font subsetting); dark mode deferred to v1.
+
+## Approved Mockups
+
+| Screen | Path | Direction |
+|--------|------|-----------|
+| Map + line-first marking | ~/.gstack/projects/train/designs/railprint-20260623/ (mockup A) | Muted grey network, emerald glowing ridden lines, folder-tab % card, FAB |
+| Wrapped share card | (mockup B) | Folder-tab frame, toy Shinkansen diorama, km + % + superlatives |
+| Import / empty state | (mockup C) | Warm diorama, import as primary action, map-mark secondary |
+
 ## GSTACK REVIEW REPORT
 
 | Review | Trigger | Why | Runs | Status | Findings |
@@ -203,11 +220,11 @@ Synthesized from this review. Run with Claude Code or Codex; checkbox as you shi
 | CEO Review | `/plan-ceo-review` | Scope & strategy | 0 | — | — |
 | Codex Review | `/codex review` | Independent 2nd opinion | 0 | — | — |
 | Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | CLEAR | 9 issues + 2 TODOs, all decided; China corridor promoted to v0 |
-| Design Review | `/plan-design-review` | UI/UX gaps | 0 | — | — |
+| Design Review | `/plan-design-review` | UI/UX gaps | 1 | CLEAR | design 3/10 → 8/10, 2 decisions, 3 mockups approved |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | — |
 
-- **CODEX:** outside voice ran (Codex + Claude subagent) — strong cross-model consensus: import-first re-sequencing, ID-crosswalk dependency, through-service modeling, near-complete render cliff, rail-geo migrations. All surfaced to the user; all resolved.
-- **CROSS-MODEL:** both outside voices independently agreed on the 5 above — no tension, high-confidence signal. All folded by explicit user decision.
-- **VERDICT:** ENG CLEARED — ready to implement. First action: T1 crosswalk spike.
+- **CODEX:** eng-review outside voice ran (Codex + Claude subagent) — strong cross-model consensus: import-first re-sequencing, ID-crosswalk dependency, through-service modeling, near-complete render cliff, rail-geo migrations. All surfaced; all resolved.
+- **CROSS-MODEL:** both eng-review outside voices independently agreed — no tension, high-confidence signal. All folded by explicit user decision.
+- **VERDICT:** ENG + DESIGN CLEARED — ready to implement. First action: T1 crosswalk spike; build the map + import flow against the approved mockups + DESIGN.md.
 
 NO UNRESOLVED DECISIONS
