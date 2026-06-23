@@ -9,3 +9,4 @@ coverage/
 # large generated geometry artifacts (built from N02, not checked in raw)
 *.pmtiles
 data/raw/
+.gstack/

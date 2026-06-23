@@ -1,0 +1,87 @@
+/* RailPrint global base. Emerald monochrome, calm App-UI surface (DESIGN.md).
+   CSS variables are injected from tokens.ts by theme.ts/applyTheme(). */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-family);
+  font-weight: var(--weight-body);
+  font-size: var(--size-body);
+  color: var(--ink);
+  background: var(--white);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* respect iOS safe areas (notch / home indicator) */
+  padding: 0;
+}
+
+#app {
+  height: 100%;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+/* Visible focus ring for keyboard nav (accessibility spec, DESIGN.md). */
+:focus-visible {
+  outline: 2px solid var(--rail-text);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Small emerald text must use emerald-800 (--rail-text) for AA contrast. */
+.u-emphasis {
+  color: var(--rail-text);
+  font-weight: var(--weight-label);
+}
+
+.u-muted {
+  color: var(--ink-muted);
+}
+
+.u-label {
+  font-size: var(--size-label);
+  font-weight: var(--weight-label);
+  letter-spacing: 0.02em;
+  color: var(--ink-muted);
+}
+
+/* Display numbers (km, %) — the loudest type; emerald-600 is fine at ≥24px. */
+.u-display {
+  font-weight: var(--weight-display);
+  color: var(--rail-lit);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.u-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
