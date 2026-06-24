@@ -19,6 +19,11 @@ const wikiStation = (label: string, [lon, lat]: Pos) => ({
   en: { value: label },
 });
 
+const wikiLine = (ja: string, en: string) => ({
+  ja: { value: ja },
+  en: { value: en },
+});
+
 test('normalizes station romaji display names', () => {
   assert.equal(normalizeRomaji('Zōshigaya Station'), 'Zoshigaya');
   assert.equal(normalizeRomaji('shin-kōyasu'), 'Shin-Koyasu');
@@ -86,4 +91,27 @@ test('tier-2 spatial-only path fills close unmatched names and marks review', ()
   assert.deepEqual(result.stationReadings.spatial, { romaji: 'Nearby', source: 'osm' });
   assert.equal(result.stats.tier2, 1);
   assert.equal(result.reviewRows[0].confidence, 'tier2-spatial');
+});
+
+test('line readings join exact normalized Wikidata labels and keep curated overrides', () => {
+  const result = buildReadings({
+    n02Stations: { features: [
+      n02Station('s1', 'A', 135.0, 35.0, '東日本旅客鉄道', '山手線'),
+      n02Station('s2', 'B', 135.1, 35.1, 'JR West', '架空線'),
+      n02Station('s3', 'C', 135.2, 35.2, 'JR West', '短線'),
+    ] },
+    osmStations: { elements: [] },
+    wikidataStations: { results: { bindings: [] } },
+    wikidataLines: { results: { bindings: [
+      wikiLine('山手線（JR東日本）', 'Wrong Wikidata Yamanote'),
+      wikiLine('架空線 (Example)', 'Longer Fictional Railway Line'),
+      wikiLine('架空線', 'Fictional Line'),
+      wikiLine('短線', 'Longer Short Line'),
+      wikiLine('短線', 'Short Line'),
+    ] } },
+  });
+
+  assert.equal(result.lineReadings['東日本旅客鉄道\u0000山手線'], 'Yamanote Line');
+  assert.equal(result.lineReadings['JR West\u0000架空線'], 'Fictional Line');
+  assert.equal(result.lineReadings['JR West\u0000短線'], 'Short Line');
 });

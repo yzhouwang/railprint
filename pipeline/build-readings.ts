@@ -40,6 +40,11 @@ interface WikiBinding {
   en?: { value?: string };
 }
 
+interface WikiLineBinding {
+  ja?: { value?: string };
+  en?: { value?: string };
+}
+
 interface WikiStation {
   label: string;
   lon: number;
@@ -47,9 +52,11 @@ interface WikiStation {
 }
 
 export interface JoinInputs {
+  n02RailSections?: N02FC;
   n02Stations: N02FC;
   osmStations: { elements?: OsmNode[] };
   wikidataStations: { results?: { bindings?: WikiBinding[] } };
+  wikidataLines?: { results?: { bindings?: WikiLineBinding[] } };
   overrides?: Record<string, unknown>;
 }
 
@@ -85,6 +92,11 @@ interface Candidate<T> {
   item: T;
   lon: number;
   lat: number;
+}
+
+interface LineGroup {
+  operator: string;
+  name: string;
 }
 
 class SpatialIndex<T> {
@@ -259,6 +271,53 @@ export function n02LineReadingKey(operator: string, line: string): string {
   return `${operator}\u0000${line}`;
 }
 
+function parseLineGroups(n02Lines: N02FC): LineGroup[] {
+  const seen = new Set<string>();
+  const out: LineGroup[] = [];
+  for (const f of n02Lines.features) {
+    const p = f.properties;
+    const operator = String(p.N02_004 ?? '');
+    const name = String(p.N02_003 ?? '');
+    if (!operator || !name) continue;
+    const key = n02LineReadingKey(operator, name);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ operator, name });
+  }
+  return out.sort((a, b) => n02LineReadingKey(a.operator, a.name).localeCompare(n02LineReadingKey(b.operator, b.name), 'ja'));
+}
+
+function normalizeWikiJaLineLabel(label: string): string {
+  let out = label.trim();
+  for (;;) {
+    const next = out.replace(/\s*(?:（[^（）]*）|\([^()]*\))\s*$/u, '').trim();
+    if (next === out) return out;
+    out = next;
+  }
+}
+
+function parseWikiLineReadings(wikidataLines: { results?: { bindings?: WikiLineBinding[] } } | undefined): Map<string, string> {
+  const byName = new Map<string, string[]>();
+  for (const b of wikidataLines?.results?.bindings ?? []) {
+    const ja = b.ja?.value;
+    const en = b.en?.value;
+    if (!ja || !en) continue;
+    const name = normalizeWikiJaLineLabel(ja);
+    const romaji = normalizeRomaji(en, false);
+    if (!name || !romaji) continue;
+    const arr = byName.get(name);
+    if (arr) arr.push(romaji);
+    else byName.set(name, [romaji]);
+  }
+
+  const out = new Map<string, string>();
+  for (const [name, labels] of byName) {
+    labels.sort((a, b) => a.length - b.length || a.localeCompare(b));
+    out.set(name, labels[0]);
+  }
+  return out;
+}
+
 export function buildReadings(inputs: JoinInputs): JoinResult {
   const groups = parseStationGroups(inputs.n02Stations);
   const osm = parseOsmStations(inputs.osmStations);
@@ -358,18 +417,23 @@ export function buildReadings(inputs: JoinInputs): JoinResult {
   }
 
   const lineReadings = curatedLineReadings();
-  for (const g of groups) {
-    for (const op of g.operators) {
-      for (const line of g.lines) {
-        const key = n02LineReadingKey(op, line);
-        if (!lineReadings[key] && line.endsWith('線')) {
-          const base = line.replace(/線$/, '').replace(/新幹$/, '');
-          if (/^[A-Za-z0-9 -]+$/.test(base)) {
-            lineReadings[key] = line.endsWith('新幹線')
-              ? `${normalizeRomaji(base, false)} Shinkansen`
-              : `${normalizeRomaji(base, false)} Line`;
-          }
-        }
+  const wikiLineReadings = parseWikiLineReadings(inputs.wikidataLines);
+  for (const g of parseLineGroups(inputs.n02RailSections ?? inputs.n02Stations)) {
+    const key = n02LineReadingKey(g.operator, g.name);
+    if (lineReadings[key]) continue;
+
+    const wikiReading = wikiLineReadings.get(g.name);
+    if (wikiReading) {
+      lineReadings[key] = wikiReading;
+      continue;
+    }
+
+    if (g.name.endsWith('線')) {
+      const base = g.name.replace(/線$/, '').replace(/新幹$/, '');
+      if (/^[A-Za-z0-9 -]+$/.test(base)) {
+        lineReadings[key] = g.name.endsWith('新幹線')
+          ? `${normalizeRomaji(base, false)} Shinkansen`
+          : `${normalizeRomaji(base, false)} Line`;
       }
     }
   }
@@ -423,17 +487,20 @@ async function main(): Promise<void> {
   if (process.argv.includes('--refresh')) await refreshCaches();
 
   const n02Stations = readJson('data/n02/stations.json') as N02FC;
+  const n02RailSections = readJson('data/n02/rail-sections.json') as N02FC;
   const osmStations = readJson('data/readings/osm-stations.json') as { elements?: OsmNode[] };
   const wikidataStations = readJson('data/readings/wikidata-stations.json') as { results?: { bindings?: WikiBinding[] } };
+  const wikidataLines = readJson('data/readings/wikidata-lines.json') as { results?: { bindings?: WikiLineBinding[] } };
   const overrides = existsSync('overrides/jp-n02-overrides.json')
     ? readJson('overrides/jp-n02-overrides.json') as Record<string, unknown>
     : {};
-  const result = buildReadings({ n02Stations, osmStations, wikidataStations, overrides });
+  const result = buildReadings({ n02RailSections, n02Stations, osmStations, wikidataStations, wikidataLines, overrides });
 
   writeFileSync('data/readings/station-readings.json', `${JSON.stringify(result.stationReadings, null, 2)}\n`);
   writeFileSync('data/readings/line-readings.json', `${JSON.stringify(result.lineReadings, null, 2)}\n`);
   writeFileSync('data/readings/station-readings-review.json', `${JSON.stringify(result.reviewRows, null, 2)}\n`);
   console.log(`station readings: ${result.stats.matched}/${result.stats.groups} (${(result.stats.coverage * 100).toFixed(2)}%)`);
+  console.log(`line readings: ${Object.keys(result.lineReadings).length}`);
   console.log(`tier1=${result.stats.tier1} tier2=${result.stats.tier2} wikidata=${result.stats.wikidata} manual=${result.stats.manual} unmatched=${result.stats.unmatched}`);
   console.log(`review rows: ${result.reviewRows.length}`);
   console.log('credit: Romanizations © OpenStreetMap contributors, ODbL');

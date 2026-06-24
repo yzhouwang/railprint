@@ -51,6 +51,9 @@ const romajiCoverage = pkg.stations.length ? withRomaji.length / pkg.stations.le
 const coverageOk = romajiCoverage >= 0.97;
 if (!coverageOk) failures += 1;
 console.log(`  ${coverageOk ? '✓' : '✗'} station nameRoma coverage: ${withRomaji.length}/${pkg.stations.length} (${(romajiCoverage * 100).toFixed(2)}%)`);
+const linesWithRomaji = pkg.lines.filter((l) => typeof l.nameRoma === 'string' && l.nameRoma.trim().length > 0);
+const lineRomajiCoverage = pkg.lines.length ? linesWithRomaji.length / pkg.lines.length : 1;
+console.log(`  ℹ line nameRoma coverage: ${linesWithRomaji.length}/${pkg.lines.length} (${(lineRomajiCoverage * 100).toFixed(2)}%)`);
 
 function expectStationReading(name: string, romaji: string): void {
   const matches = pkg.stations.filter((s) => s.name === name);
