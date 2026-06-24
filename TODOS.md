@@ -37,4 +37,23 @@
 
 ---
 
+## Deferred (captured by /plan-eng-review 2026-06-24 — record-highlight + bilingual feature)
+
+### Line-name romaji: operator-aware join (FAST-FOLLOW)
+- **Priority:** P2
+- **What:** Line romaji is 287/594 (48%) from an exact-name Wikidata join. Shared names carry operator-prefix errors (中央線→"Osaka Metro Chuo Line", 甘木線→"Amagi Railway Amagi Line"). Make the `pipeline/build-readings.ts` line join operator-aware: match N02 operator + name, strip operator prefixes ("Osaka Metro ", "JR ", "<Op> Railway ") from Wikidata labels, normalize 本線↔線. Expected ~75-85% coverage + fixes the collisions.
+- **Why:** A4 decision was "stations + lines bilingual"; stations done (97.6%), lines are the remaining half, with a few visibly-wrong labels on high-profile lines. Shipped core without it (graceful degradation: Japanese where romaji absent).
+- **Context:** Data already cached at `data/readings/wikidata-lines.json` (1517 JP lines). Reuse the existing `<operator>\x00<name>` key format + the curated-14 override.
+
+### Station romaji residual review
+- **Priority:** P3
+- **What:** Engine flagged 629 low-confidence rows in `data/readings/station-readings-review.json` (90 coordinate-only Tier-2, 321 Wikidata, 218 unmatched). Eyeball + add `overrides/jp-n02-overrides.json` entries for wrong/blank ones; verify large/multi-node station joins.
+- **Why:** 97.65% + golden-pass shipped; the half-day manual pass lifts coverage + catches the coordinate-only mis-joins.
+
+### wanakana chunk-split (minor)
+- **Priority:** P3
+- Rollup inlined `wanakana` into the main entry (small, single-consumer). True lazy-chunk-split is a minor build optimization if bundle size matters; runtime laziness already holds (only runs on a search cache-miss).
+
+---
+
 _Promoted to v0 (not deferred): one China corridor (京沪高铁) through the pipeline to validate the country-agnostic schema — see docs/DESIGN.md → Implementation Tasks T9._

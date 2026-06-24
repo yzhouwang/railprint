@@ -1,10 +1,16 @@
 // Build the real JP RailGeoPackage from the N02 GeoJSON and sanity-check key lines.
 // Usage: node pipeline/build-jp.ts [--out <file>]
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { buildPackageFromN02, lineId } from './n02-ingest.ts';
 
 const RS = JSON.parse(readFileSync('data/n02/rail-sections.json', 'utf8'));
 const ST = JSON.parse(readFileSync('data/n02/stations.json', 'utf8'));
+const stationReadings = existsSync('data/readings/station-readings.json')
+  ? JSON.parse(readFileSync('data/readings/station-readings.json', 'utf8'))
+  : {};
+const lineReadings = existsSync('data/readings/line-readings.json')
+  ? JSON.parse(readFileSync('data/readings/line-readings.json', 'utf8'))
+  : {};
 
 const t0 = Date.now();
 const { pkg, stats } = buildPackageFromN02(RS, ST, {
@@ -12,6 +18,8 @@ const { pkg, stats } = buildPackageFromN02(RS, ST, {
   version: '2025.1.0',
   generatedAt: '2025-04-01T00:00:00.000Z',
   simplifyTolDeg: 0.00008, // ~9m — plenty for map zooms, big size win
+  stationReadings,
+  lineReadings,
 });
 console.log('built in', ((Date.now() - t0) / 1000).toFixed(1), 's');
 console.log('stats', stats);

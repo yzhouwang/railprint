@@ -10,6 +10,8 @@ import type { RailGeoPackage, RailLine } from '../src/contract/types.ts';
 import { haversineKm } from './geometry.ts';
 
 const pkg = JSON.parse(readFileSync('public/rail/jp-2025.json', 'utf8')) as RailGeoPackage;
+const stationReadings = JSON.parse(readFileSync('data/readings/station-readings.json', 'utf8')) as Record<string, { romaji?: string }>;
+const n02Stations = JSON.parse(readFileSync('data/n02/stations.json', 'utf8')) as { features: { properties: Record<string, unknown> }[] };
 
 const lineKm = (id: string): number => pkg.segments.filter((s) => s.lineId === id).reduce((a, s) => a + s.km, 0);
 const lineStations = (id: string): { lon: number; lat: number }[] =>
@@ -41,6 +43,51 @@ const health: Health[] = pkg.lines.map((line) => {
   return { line, km, gc, detour, maxSeg, flags };
 });
 
+// ── Romaji coverage and irregular readings. ──
+let failures = 0;
+console.log('━━━ romaji readings ━━━');
+const withRomaji = pkg.stations.filter((s) => typeof s.nameRoma === 'string' && s.nameRoma.trim().length > 0);
+const romajiCoverage = pkg.stations.length ? withRomaji.length / pkg.stations.length : 1;
+const coverageOk = romajiCoverage >= 0.97;
+if (!coverageOk) failures += 1;
+console.log(`  ${coverageOk ? '✓' : '✗'} station nameRoma coverage: ${withRomaji.length}/${pkg.stations.length} (${(romajiCoverage * 100).toFixed(2)}%)`);
+const linesWithRomaji = pkg.lines.filter((l) => typeof l.nameRoma === 'string' && l.nameRoma.trim().length > 0);
+const lineRomajiCoverage = pkg.lines.length ? linesWithRomaji.length / pkg.lines.length : 1;
+console.log(`  ℹ line nameRoma coverage: ${linesWithRomaji.length}/${pkg.lines.length} (${(lineRomajiCoverage * 100).toFixed(2)}%)`);
+
+function expectStationReading(name: string, romaji: string): void {
+  const matches = pkg.stations.filter((s) => s.name === name);
+  const packageOk = matches.some((s) => s.nameRoma === romaji);
+  const readingOk = n02Stations.features
+    .filter((f) => f.properties.N02_005 === name)
+    .some((f) => stationReadings[String(f.properties.N02_005g ?? f.properties.N02_005c ?? '')]?.romaji === romaji);
+  const ok = packageOk || (matches.length === 0 && readingOk);
+  if (!ok) failures += 1;
+  const seen = [...new Set(matches.map((s) => s.nameRoma ?? '(missing)'))].sort().join(', ');
+  const detail = packageOk ? '' : matches.length === 0 && readingOk ? ' (readings table; not emitted by current geometry build)' : ` (saw: ${seen})`;
+  console.log(`  ${ok ? '✓' : '✗'} ${name}→${romaji}${detail}`);
+}
+
+function expectStationReadingAt(name: string, lineId: string, lon: number, lat: number, romaji: string): void {
+  const matches = pkg.stations
+    .filter((s) => s.name === name && s.lineId === lineId)
+    .map((s) => ({ station: s, km: haversineKm([s.lon, s.lat], [lon, lat]) }))
+    .sort((a, b) => a.km - b.km);
+  const best = matches[0];
+  const ok = !!best && best.km <= 0.2 && best.station.nameRoma === romaji;
+  if (!ok) failures += 1;
+  console.log(`  ${ok ? '✓' : '✗'} ${name}@${lineId.replace(/^jp-/, '')}→${romaji}${best ? ` (${best.station.nameRoma ?? 'missing'}, ${best.km.toFixed(3)}km)` : ' (missing)'}`);
+}
+
+expectStationReading('日暮里', 'Nippori');
+expectStationReading('放出', 'Hanaten');
+expectStationReading('我孫子', 'Abiko');
+expectStationReading('御徒町', 'Okachimachi');
+expectStationReading('雑司が谷', 'Zoshigaya');
+expectStationReadingAt('神戸', 'jp-わたらせ渓谷鐵道-わたらせ渓谷線', 139.356565, 36.537505, 'Godo');
+expectStationReadingAt('神戸', 'jp-西日本旅客鉄道-山陽線', 135.17822, 34.67922, 'Kobe');
+expectStationReadingAt('神戸', 'jp-豊橋鉄道-渥美線', 137.27737, 34.66799, 'Kambe');
+
 // ── curated anchors (営業キロ). Shinkansen names are unique, so name match is safe. ──
 const ANCHORS: { name: string; opMatch?: RegExp; km: number; loop?: boolean }[] = [
   { name: '東海道新幹線', km: 515.4 },
@@ -54,8 +101,7 @@ const ANCHORS: { name: string; opMatch?: RegExp; km: number; loop?: boolean }[] 
   { name: '横須賀線', opMatch: /東日本/, km: 23.9 },
 ];
 
-let failures = 0;
-console.log('━━━ curated anchors (営業キロ) ━━━');
+console.log('\n━━━ curated anchors (営業キロ) ━━━');
 for (const a of ANCHORS) {
   const cands = pkg.lines.filter((l) => l.name === a.name && (!a.opMatch || a.opMatch.test(l.lineId)));
   if (cands.length === 0) { console.log(`  ✗ ${a.name}: NOT FOUND`); failures += 1; continue; }

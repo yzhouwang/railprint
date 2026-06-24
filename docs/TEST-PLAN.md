@@ -39,6 +39,25 @@ Stack target: Vite + Svelte · Vitest (unit) · Playwright (E2E)
 - Assert % HSR denominator built from 事業者種別 N02_002==1 (not 鉄道区分 N02_001).
 - Build fails if any golden line drifts beyond tolerance.
 
+## Record-add: red highlight + bilingual station-first search (C1–C6)
+Covered by Vitest unit suites (`npm test` → vitest):
+- C1 highlight — `src/lib/map/style.test.ts`: red highlight line/station layers sit ABOVE the
+  base layers (red wins over emerald), `selectedLineSegmentIds`/`selectedLineStationIds`,
+  `inFilter` shape, empty filter at boot, seeded filter, OSM/ODbL romaji credit on the source,
+  and the existing no-glyphs/sprite assertion still passes.
+- C2 search — `src/lib/search.test.ts`: 新宿 / 新宿駅 / shinjuku / Shinjuku / しんじゅく all resolve
+  to 新宿 (exact-key + wanakana kana fold); transfer stations return ALL line-instances (no 5-cap);
+  romaji typo fuzzy match; blank/nonsense reject; `normRoma` macron+separator folding.
+- C3 inference — `src/lib/search.test.ts`: single-share (新宿↔上野 → 山手線), multi-share
+  (東京↔品川 → 山手線 + 東海道新幹線 picker), no-share reject (上野↔横浜), and every offered
+  candidate validated against `segmentsBetween`.
+
+E2E (Playwright) — **NOT run: no Playwright harness exists in this repo** (no `@playwright/test`
+dep, no config, no `e2e/` dir). The 3 record-add flows (pick line → red → tap A,B; type
+Shibuya→infer→Shinjuku→record; type 新宿 7-line disambiguation) are covered at the logic layer by
+the unit suites above; wiring a Playwright harness + WebGL-capable browser is deferred (the map is
+maplibre-gl/WebGL, which needs a real browser, not jsdom).
+
 ## Not Yet Tested (deferred with their features)
 - Offline / service-worker caching (deferred to v1 with PWA tier).
 - Auto-import (QR/OCR/email-parse), gamification/badges, GPS check-in, community heatmap, China namespace — all deferred per design doc.

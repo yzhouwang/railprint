@@ -67,6 +67,7 @@ describe('drawWrappedCard smoke (mock 2D context)', () => {
         segmentById: new Map(),
         linesByCountry: new Map(),
         stationsByLine: new Map(),
+        stationGroupById: new Map(),
       },
       now: new Date('2026-06-23T00:00:00Z'),
     });
@@ -99,6 +100,7 @@ describe('drawWrappedCard smoke (mock 2D context)', () => {
         segmentById: new Map(),
         linesByCountry: new Map(),
         stationsByLine: new Map(),
+        stationGroupById: new Map(),
       },
     });
     expect(() => drawWrappedCard(ctx, data)).not.toThrow();
