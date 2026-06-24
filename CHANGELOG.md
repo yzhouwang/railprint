@@ -2,6 +2,21 @@
 
 All notable changes to RailPrint are documented here.
 
+## [0.3.0.0] - 2026-06-24
+
+### Added
+- The real Japanese national rail network on the map: **594 lines, ~10,000 stations, ~26,800 km**, built from the official MLIT N02 dataset — replacing the old 5-line placeholder. Every Shinkansen matches its published 営業キロ to within 0.2% (東海道 515, 東北 675, 山陽 553…), and loops like 大阪環状線 render as proper rings.
+- The build pipeline behind it: it groups track by operator + line name (so the JR-East 山手線 and the Kobe-subway 山手線 stay separate lines), rides one track of double-track lines so distances aren't doubled, tells real loops from out-and-backs, orders stations along each line, and bridges small gaps in the source data. A golden gate verifies the output against known line lengths and runs as part of `npm test`.
+- A `fetch-n02` script and pipeline README so the network can be regenerated from source, plus a visible map credit for the rail data (CC BY 4.0).
+
+### Changed
+- First open now loads the real network with a brief loading screen. If the data can't be reached, the app falls back to a starter map and automatically retries when you reconnect or return to the tab — and shows a "data unavailable, retrying" banner instead of silently reading your rides as 0%.
+
+### Fixed
+- Transfer stations shared by several lines (新宿, etc.) keep their correct position on each line instead of collapsing onto one platform.
+- Lines that pass close to themselves (大江戸線, 鶴見線, 京葉線) no longer report nonsense ~60 m gaps between stations that are actually over a kilometre apart.
+- Trunk lines that span a data gap (山陽線, 日豊線, 常磐線) now show their full length and station list instead of just the largest connected piece.
+
 ## [0.2.0.0] - 2026-06-23
 
 ### Added
