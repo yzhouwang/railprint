@@ -53,4 +53,18 @@
 
 ---
 
+---
+
+## Deferred (captured by /plan-eng-review 2026-06-25 — line-logo coverage S1+S2+S3)
+
+Coverage went 227→287 (S1, operator-aware src-index) →349 (S2, ja-infobox audit backfill) = **58.8%**.
+A 307-line audit verified the remainder: ~93 had a findable symbol, **214 genuinely have none**
+(trams, cable cars, most rural 3rd-sector + rural JR — no official line symbol exists anywhere).
+
+### Logo follow-ups (P3)
+- **QID crosswalk / S3** — deferred (Codex outside voice: premature; the src-index + operator-family pick met the correctness aim). Revisit only if a residue of cross-operator collisions appears that operator-family matching can't resolve. See `docs/plans/line-logo-coverage-s1s2s3.md`.
+- **Per-file license tags** — `logo-credits.json` still uses a generic "Wikimedia Commons" credit. ~40 CC-BY files (Kintetsu/Meitetsu/Kobe/Sapporo + new 3rd-sector logomarks) want accurate per-file license + author. Changing it touches the C7 attribution UI, so it's its own task.
+- **Deferred audit candidates (28 lines)** — 11 giant numbering-chart PNGs (伊予鉄/西鉄 — 2200px, render poorly at 16px; need cropping/SVG substitutes), 13 low-confidence, 3 contested JR line-codes (筑豊 JE, 山陰 san-A, 総武 JO — agents disagreed). See `scratchpad/s2-dropped.json`.
+- **Within-company JR line-code accuracy** — the operator-family gate catches cross-company JR errors but NOT wrong-code-within-a-company (e.g. JO vs JM on a JR-East line). The high-agreement picks are trusted; a future pass could add exact-code golden assertions per JR line.
+
 _Promoted to v0 (not deferred): one China corridor (京沪高铁) through the pipeline to validate the country-agnostic schema — see docs/DESIGN.md → Implementation Tasks T9._
