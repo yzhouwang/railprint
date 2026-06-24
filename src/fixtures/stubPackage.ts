@@ -35,6 +35,11 @@ interface LineSeed {
   country: Country;
   isHSR: boolean;
   isLoop: boolean;
+  // EXPERIENCE-LANE STUB ADDITION (revert when the real engine package lands): each line carries
+  // its OFFICIAL color (hex) so the multicolor-map tests run without the real data; a couple carry
+  // a `logo` path so the logo-vs-swatch branch is exercised. The real package sources both.
+  color?: string;
+  logo?: string;
   stations: StationSeed[];
 }
 
@@ -98,6 +103,8 @@ function buildLine(seed: LineSeed): BuiltLine {
     lineId: seed.lineId,
     name: seed.name,
     ...(seed.nameRoma ? { nameRoma: seed.nameRoma } : {}),
+    ...(seed.color ? { color: seed.color } : {}),
+    ...(seed.logo ? { logo: seed.logo } : {}),
     country: seed.country,
     isHSR: seed.isHSR,
     isLoop: seed.isLoop,
@@ -136,6 +143,8 @@ const YAMANOTE: LineSeed = {
   isHSR: false,
   isLoop: true,
   nameRoma: 'Yamanote Line',
+  color: '#9ACD32', // official 黄緑 (yellow-green)
+  logo: '/rail/logos/jr-yamanote.png', // stub: exercises the logo-vs-swatch branch
   stations: [
     { name: '東京', lon: 139.7671, lat: 35.6812, roma: 'Tokyo', groupId: 'g-tokyo' },
     { name: '神田', lon: 139.771, lat: 35.6918, roma: 'Kanda' },
@@ -178,6 +187,8 @@ const TOKAIDO_SHINKANSEN: LineSeed = {
   isHSR: true,
   isLoop: false,
   nameRoma: 'Tokaido Shinkansen',
+  color: '#0072BC', // Shinkansen blue
+  logo: '/rail/logos/jr-tokaido-shinkansen.png',
   stations: [
     { name: '東京', lon: 139.7671, lat: 35.6812, roma: 'Tokyo', groupId: 'g-tokyo' },
     { name: '品川', lon: 139.7387, lat: 35.6285, roma: 'Shinagawa', groupId: 'g-shinagawa' },
@@ -206,6 +217,7 @@ const KURURI: LineSeed = {
   country: 'JP',
   isHSR: false,
   isLoop: false,
+  color: '#E8552D', // JR-East local orange (no logo → swatch fallback)
   stations: [
     { name: '木更津', lon: 139.9165, lat: 35.3815 },
     { name: '祇園', lon: 139.936, lat: 35.376 },
@@ -231,6 +243,7 @@ const TOKYU_TOYOKO: LineSeed = {
   isHSR: false,
   isLoop: false,
   nameRoma: 'Tokyu Toyoko Line',
+  color: '#DA0442', // 東急 red (no logo → swatch fallback)
   stations: [
     { name: '渋谷', lon: 139.7016, lat: 35.658, roma: 'Shibuya', groupId: 'g-shibuya' },
     { name: '代官山', lon: 139.703, lat: 35.6485, roma: 'Daikanyama' },
@@ -265,6 +278,7 @@ const JINGHU_HSR: LineSeed = {
   country: 'CN',
   isHSR: true,
   isLoop: false,
+  color: '#C8102E', // CR HSR red
   stations: [
     { name: '北京南', lon: 116.3786, lat: 39.8652 },
     { name: '天津南', lon: 117.105, lat: 38.93 },
