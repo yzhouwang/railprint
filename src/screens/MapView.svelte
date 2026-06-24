@@ -107,7 +107,9 @@
         map = new mapLib.Map({
           container,
           style: style as never,
-          attributionControl: false,
+          // Compact ⓘ control — aggregates the OSM basemap + N02 rail CC BY credits (both
+          // legally required to be visible). Collapsed by default so it stays out of the way.
+          attributionControl: { compact: true },
           dragRotate: false,
           pitchWithRotate: false,
           // JP focus default; fitBounds overrides once style is ready.

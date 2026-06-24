@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ready, offline, headline } from './lib/store';
+  import { ready, offline, headline, dataDegraded } from './lib/store';
   import { activeTab, markMode, type Tab } from './lib/ui';
   import { isDesktop } from './lib/media';
 
@@ -32,7 +32,10 @@
 </script>
 
 {#if !$ready}
-  <div class="splash"><span class="u-display">RailPrint</span></div>
+  <div class="splash">
+    <span class="u-display">RailPrint</span>
+    <span class="splash-load u-muted">鉄道網を読み込み中…</span>
+  </div>
 {:else if $isDesktop}
   <!-- D6: full-bleed map + persistent side panel (NOT a stretched mobile layout). -->
   <div class="desktop">
@@ -92,18 +95,43 @@
   </div>
 {/if}
 
+{#if $ready && $dataDegraded}
+  <!-- Stub fallback while the real network failed to load: the user has saved rides that
+       won't resolve here, so coverage is degraded, NOT zero. Reassure + auto-retries online. -->
+  <div class="degraded" role="status">
+    鉄道網データを読み込めませんでした。記録は保存されています。接続が戻り次第、自動で再試行します。
+  </div>
+{/if}
+
 <Toasts />
 
 <style>
   .splash {
     height: 100%;
     display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
     align-items: center;
     justify-content: center;
     background: var(--rail-bg);
   }
   .splash .u-display {
     font-size: 28px;
+  }
+  .splash-load {
+    font-size: var(--size-label);
+  }
+  .degraded {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 60;
+    padding: 8px var(--space-md);
+    text-align: center;
+    font-size: var(--size-label);
+    background: var(--rail-text);
+    color: var(--white);
   }
 
   /* ── mobile ── */

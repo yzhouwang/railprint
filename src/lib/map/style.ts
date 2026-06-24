@@ -7,8 +7,15 @@
 // map.setPaintProperty(...) whenever the lit set changes. Colorblind-safe: ridden is
 // THICKER (4px) not just greener (2px) — deuteranopia reads the network by thickness.
 
-import type { RailGeoPackage, RailSegment, RailStation } from '../../contract/types';
+import type { RailGeoPackage, RailSegment } from '../../contract/types';
 import { tokens, stroke } from '../../design/tokens';
+
+/**
+ * CC BY 4.0 credit for the rail network data (MLIT N02). REQUIRED to be visible — surfaced
+ * via the map's attribution control. Mirrors `N02_ATTRIBUTION` in pipeline/n02-ingest.ts.
+ */
+export const RAIL_ATTRIBUTION =
+  '鉄道データ: 国土数値情報（N02）2025年度版（国土交通省）を加工して作成（CC BY 4.0）';
 
 // ─────────────────────────────── GeoJSON sources ────────────────────────────────
 
@@ -174,7 +181,9 @@ export function buildBaseStyle({ packages, litSegmentIds: lit }: BaseStyleInput)
         attribution: '© OpenStreetMap contributors',
         maxzoom: 19,
       },
-      [SEGMENTS_SOURCE]: { type: 'geojson', data: buildSegmentCollection(packages) },
+      // The rail data CC BY credit rides on its own source so the attribution control shows
+      // it alongside the OSM basemap credit (CC BY requires it to be visible).
+      [SEGMENTS_SOURCE]: { type: 'geojson', data: buildSegmentCollection(packages), attribution: RAIL_ATTRIBUTION },
       [STATIONS_SOURCE]: { type: 'geojson', data: buildStationCollection(packages) },
     },
     layers: [
@@ -250,7 +259,7 @@ export function networkBounds(packages: RailGeoPackage[]): LngLatBounds | null {
     if (lat > n) n = lat;
   };
   for (const pkg of packages) {
-    for (const st of pkg.stations as RailStation[]) consider(st.lon, st.lat);
+    for (const st of pkg.stations) consider(st.lon, st.lat);
   }
   if (!any) return null;
   return [

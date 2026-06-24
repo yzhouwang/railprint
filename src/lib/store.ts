@@ -27,6 +27,13 @@ export const events = writable<RideEvent[]>([]);
 export const ready = writable<boolean>(false);
 /** True only while the browser reports it is offline (drives the D4 offline overlay). */
 export const offline = writable<boolean>(typeof navigator !== 'undefined' && !navigator.onLine);
+/**
+ * True when the real JP package failed to load and we're running on the stub. The real
+ * package is retried on the next `online` event. Surfaced so the UI can warn that coverage
+ * is degraded (events pinned to the real package won't resolve against the stub) instead of
+ * silently rendering a returning user's rides as 0% / gone.
+ */
+export const usingFallback = writable<boolean>(false);
 
 // ─────────────────────────────── geo index ──────────────────────────────────
 
@@ -127,15 +134,81 @@ export const litSegmentIds: Readable<string[]> = derived(coverages, ($coverages)
   return [...set].sort();
 });
 
+/**
+ * Coverage is DEGRADED: we fell back to the stub but the user has saved rides that are pinned
+ * to the real package and won't resolve here — so their % would read as 0 / gone. The UI
+ * shows a 'network data unavailable, retrying' banner instead of presenting that as truth.
+ */
+export const dataDegraded: Readable<boolean> = derived(
+  [usingFallback, events],
+  ([$usingFallback, $events]) => $usingFallback && $events.length > 0,
+);
+
 // ───────────────────────────────── actions ──────────────────────────────────
 
 let initialized = false;
 
-/** Boot the app: open db, load events + (stub) packages. Idempotent. */
+/** The built N02 RailGeoPackage, served as a static asset (built by pipeline/build-jp.ts). */
+const JP_PACKAGE_URL = `${import.meta.env.BASE_URL}rail/jp-2025.json`;
+
+/**
+ * Fetch the real JP network package. Returns `{ ok:false, pkgs: STUB }` on any failure
+ * (offline, 404, malformed) so the app always boots with SOMETHING rather than a blank map.
+ */
+async function fetchJpPackages(): Promise<{ ok: boolean; pkgs: RailGeoPackage[] }> {
+  try {
+    const res = await fetch(JP_PACKAGE_URL);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const pkg = (await res.json()) as RailGeoPackage;
+    if (!pkg?.lines?.length || !pkg?.segments?.length) throw new Error('empty package');
+    return { ok: true, pkgs: [pkg] };
+  } catch (err) {
+    console.warn(`[store] real JP package unavailable (${String(err)}); using stub`);
+    return { ok: false, pkgs: STUB_PACKAGES };
+  }
+}
+
+let retryBound = false;
+let retryInFlight = false;
+/**
+ * After a failed first load we're on the stub. Re-attempt the real package on the events
+ * most correlated with "the network might be healthy now": coming back online, refocusing the
+ * tab, or the tab becoming visible. The first failure is often transient (a 404 during deploy,
+ * a flaky mobile handoff) and `online` alone misses the case where the browser stayed online —
+ * so we also retry on focus/visibility. An in-flight guard prevents overlapping fetches; we
+ * unbind on the first success.
+ */
+function bindFallbackRetry(): void {
+  if (retryBound || typeof window === 'undefined') return;
+  retryBound = true;
+  const events: ('online' | 'focus' | 'visibilitychange')[] = ['online', 'focus', 'visibilitychange'];
+  const attempt = async (): Promise<void> => {
+    if (retryInFlight) return; // never overlap concurrent re-fetches
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+    retryInFlight = true;
+    try {
+      const { ok, pkgs } = await fetchJpPackages();
+      if (ok) {
+        packages.set(pkgs);
+        usingFallback.set(false);
+        for (const ev of events) window.removeEventListener(ev, handler);
+      }
+    } finally {
+      retryInFlight = false;
+    }
+  };
+  const handler = (): void => { void attempt(); };
+  for (const ev of events) window.addEventListener(ev, handler);
+}
+
+/** Boot the app: open db, load events + the real (or fallback) packages. Idempotent. */
 export async function init(): Promise<void> {
   if (initialized) return;
   initialized = true;
-  packages.set(STUB_PACKAGES);
+  const { ok, pkgs } = await fetchJpPackages();
+  packages.set(pkgs);
+  usingFallback.set(!ok);
+  if (!ok) bindFallbackRetry();
   await refresh();
   if (typeof window !== 'undefined') {
     const sync = (): void => offline.set(!navigator.onLine);
@@ -145,7 +218,7 @@ export async function init(): Promise<void> {
   ready.set(true);
 }
 
-/** Swap the stub for the engine's real RailGeoPackage(s) once T2/T3/T7 are green. */
+/** Swap in explicit RailGeoPackage(s) — used by tests and the importer's package override. */
 export function loadPackages(pkgs: RailGeoPackage[]): void {
   packages.set(pkgs);
 }
@@ -158,22 +231,30 @@ export function loadPackages(pkgs: RailGeoPackage[]): void {
  */
 export async function seedDemo(): Promise<void> {
   if (get(events).length > 0) return;
-  const jp = STUB_PACKAGES.find((p) => p.country === 'JP');
+  const jp = get(packages).find((p) => p.country === 'JP');
   if (!jp) return;
   const createdAt = new Date().toISOString();
   const ev: RideEvent[] = [];
-  const ride = (lineId: string, keep: (s: RailSegment) => boolean, date: string): void => {
+  const segCount = (lineId: string): number => jp.segments.reduce((n, s) => (s.lineId === lineId ? n + 1 : n), 0);
+  // Reference lines by name, but pick the BIGGEST match — line names are not unique across
+  // operators (山手線 = JR East Tokyo loop AND 神戸市 Kobe subway), and the demo wants the
+  // iconic Tokyo line, which has far more segments than the Kobe namesake.
+  const lineByName = (re: RegExp): RailLine | undefined =>
+    jp.lines.filter((l) => re.test(l.name)).sort((a, b) => segCount(b.lineId) - segCount(a.lineId))[0];
+  const ride = (re: RegExp, keep: (s: RailSegment) => boolean, date: string): void => {
+    const line = lineByName(re);
+    if (!line) return;
     const tripId = db.newId();
-    for (const s of jp.segments.filter((s) => s.lineId === lineId && keep(s))) {
+    for (const s of jp.segments.filter((s) => s.lineId === line.lineId && keep(s))) {
       ev.push({
         id: db.newId(), segmentId: s.segmentId, railGeoVersion: jp.version,
         date, source: 'manual', tripId, createdAt,
       });
     }
   };
-  ride('jr-yamanote', () => true, '2025-11-03');                      // full 山手線 loop
-  ride('jr-tokaido-shinkansen', (s) => s.toSeq <= 12, '2025-09-14');  // 東京 → 名古屋
-  ride('tokyu-toyoko', () => true, '2025-10-21');                     // 渋谷 → 横浜
+  ride(/^山手線$/, () => true, '2025-11-03');                        // 山手線 (品川→田端 arc)
+  ride(/^東海道新幹線$/, (s) => s.toSeq <= 10, '2025-09-14');         // 東京 → 名古屋あたり
+  ride(/^大阪環状線$/, () => true, '2025-10-21');                     // 大阪環状線 full loop
   await addEvents(ev);
 }
 
