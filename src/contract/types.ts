@@ -26,6 +26,8 @@ export interface RailLine {
   lineId: string;
   name: string;
   nameRoma?: string;     // romaji line name (山手線 → "Yamanote Line"); OSM/Wikidata-sourced [steering bump]
+  color?: string;        // official line color (hex); ALWAYS set — sourced or operator-default [steering bump]
+  logo?: string;         // path under /rail/logos/ to the line's logo, only when sourced [steering bump]
   country: Country;
   isHSR: boolean;        // JP: keyed off 事業者種別 N02_002==1
   isLoop: boolean;
