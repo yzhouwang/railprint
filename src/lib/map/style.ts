@@ -2,13 +2,26 @@
 // distinguishes ridden vs unridden. NO maplibre import here (so this is safe to import in
 // any context, incl. tests). MapView consumes these to construct the actual GL layers.
 //
+// HUE = each line's OFFICIAL color (identity), set ONCE as a STATIC per-segment `color`
+// feature property (NOT a 594-line match rewritten per frame). Ridden-state rides OPACITY
+// + THICKNESS only — never color: unridden = faded + desaturated + thin (2px); ridden =
+// full official color + thick (4px) + a soft glow in the LINE'S OWN color. Colorblind-safe:
+// ridden is THICKER, not just brighter (deuteranopia reads the network by thickness).
+//
 // DESIGN decision (do NOT use per-feature setFeatureState): ridden vs unridden is ONE
-// data-driven style expression keyed off the live litSegmentIds array. We update it with
-// map.setPaintProperty(...) whenever the lit set changes. Colorblind-safe: ridden is
-// THICKER (4px) not just greener (2px) — deuteranopia reads the network by thickness.
+// data-driven style expression keyed off the live litSegmentIds array. `repaint()` updates
+// the opacity + width channels only (via setPaintProperty); the base color is static per
+// segment and never re-set.
 
 import type { RailGeoPackage, RailLine, RailSegment } from '../../contract/types';
 import { tokens, stroke } from '../../design/tokens';
+
+/**
+ * Fallback line color when a RailLine carries no `color` (the contract says it's ALWAYS
+ * set, but the stub or a boundary-version package may omit it). A neutral mid-grey so an
+ * uncolored line still reads as track, not as missing data.
+ */
+export const DEFAULT_LINE_COLOR = '#7C8A82';
 
 /**
  * CC BY 4.0 credit for the rail network data (MLIT N02). REQUIRED to be visible — surfaced
@@ -30,12 +43,16 @@ export interface SegmentFeatureProps {
   segmentId: string;
   lineId: string;
   isHSR: boolean;
+  /** STATIC per-segment official line color (hex). The line hue keys off ['get','color']. */
+  color: string;
 }
 export interface StationFeatureProps {
   stationId: string;
   lineId: string;
   name: string;
   nameRoma?: string; // C5 popup reads this for the bilingual label (日本語 + romaji)
+  /** Cross-line station group (N02_005g) — the hover popup keys geo.stationGroupById off it. */
+  stationGroupId?: string;
   seq: number;
 }
 
@@ -47,38 +64,55 @@ export const STATIONS_SOURCE = 'rp-stations';
 export const SEGMENTS_LAYER = 'rp-segments-line';
 export const SEGMENTS_GLOW_LAYER = 'rp-segments-glow';
 export const STATIONS_LAYER = 'rp-stations-dot';
-// C1 — the SELECTION highlight. A dedicated red line + red station layer sit ABOVE the base
-// segments so a selected line wins over emerald even when it is also ridden. They are driven by
-// a setFilter on the selected ids (NOT setFeatureState — same data-driven design rule), and are
-// empty (filter matches nothing) until a line is selected.
-export const HIGHLIGHT_LINE_LAYER = 'rp-segments-highlight';
+// C3 — the SELECTION highlight is a DARK CASING UNDERLAY (not the old red top-highlight, and
+// NOT white — white is invisible on the near-white OSM basemap). It is a wide dark line that
+// sits BELOW the base segments; the line's own official hue paints on top, so the dark halo
+// peeking out around it reads as "selected". Driven by setFilter on the selected ids (NOT
+// setFeatureState — design rule), empty (matches nothing) until a line is selected.
+export const SELECTION_CASING_LAYER = 'rp-segments-casing';
+// The selected line's stations get a dark ring above the base dots (same setFilter mechanism).
 export const HIGHLIGHT_STATION_LAYER = 'rp-stations-highlight';
 
-/** The transient selection red — outside the emerald monochrome on purpose (it is not coverage). */
-export const HIGHLIGHT_COLOR = '#E4002B';
+/** Dark casing color for the selection underlay — tokens.ink, visible on the light basemap. */
+export const CASING_COLOR = tokens.ink;
 
 /** A maplibre filter that matches a feature whose `prop` is in `ids` (empty ⇒ matches nothing). */
 export function inFilter(prop: 'segmentId' | 'stationId', ids: string[]): unknown[] {
   return ['in', ['get', prop], ['literal', ids]];
 }
 
-/** One LineString feature per RailSegment across ALL loaded packages. */
+/**
+ * One LineString feature per RailSegment across ALL loaded packages. Each feature carries a
+ * STATIC `color` prop = its line's official `RailLine.color` (C1) so the line hue is a plain
+ * ['get','color'] paint set ONCE — never a per-frame match. Lines lacking a color fall back to
+ * DEFAULT_LINE_COLOR.
+ */
 export function buildSegmentCollection(packages: RailGeoPackage[]): SegmentCollection {
   const features: GeoJSON.Feature<GeoJSON.LineString, SegmentFeatureProps>[] = [];
   for (const pkg of packages) {
+    const colorByLine = new Map<string, string>();
+    for (const l of pkg.lines) colorByLine.set(l.lineId, l.color ?? DEFAULT_LINE_COLOR);
     for (const seg of pkg.segments) {
       features.push({
         type: 'Feature',
         id: seg.segmentId,
         geometry: seg.geometry,
-        properties: { segmentId: seg.segmentId, lineId: seg.lineId, isHSR: seg.isHSR },
+        properties: {
+          segmentId: seg.segmentId,
+          lineId: seg.lineId,
+          isHSR: seg.isHSR,
+          color: colorByLine.get(seg.lineId) ?? DEFAULT_LINE_COLOR,
+        },
       });
     }
   }
   return { type: 'FeatureCollection', features };
 }
 
-/** One Point feature per RailStation across ALL loaded packages. */
+/**
+ * One Point feature per RailStation across ALL loaded packages. Carries `stationGroupId` (C5)
+ * so a hover can look up every line through the physical station via geo.stationGroupById.
+ */
 export function buildStationCollection(packages: RailGeoPackage[]): StationCollection {
   const features: GeoJSON.Feature<GeoJSON.Point, StationFeatureProps>[] = [];
   for (const pkg of packages) {
@@ -92,6 +126,7 @@ export function buildStationCollection(packages: RailGeoPackage[]): StationColle
           lineId: st.lineId,
           name: st.name,
           ...(st.nameRoma ? { nameRoma: st.nameRoma } : {}),
+          ...(st.stationGroupId ? { stationGroupId: st.stationGroupId } : {}),
           seq: st.seq,
         },
       });
@@ -101,23 +136,36 @@ export function buildStationCollection(packages: RailGeoPackage[]): StationColle
 }
 
 // ───────────────────────── data-driven paint expressions ─────────────────────────
-// We pass the lit segmentId array as an inline ['literal', [...]] and key the case
-// expression off the feature's segmentId. One expression, swapped via setPaintProperty.
+// HUE is a STATIC per-segment property (`color`) — set once, never re-set. Ridden-state
+// rides the OPACITY + WIDTH channels: those are the only paint props `repaint()` swaps via
+// setPaintProperty, keyed off the live litSegmentIds array (passed inline as ['literal',…]).
 
 /** True iff the feature's segmentId is in `litArray`. */
 function isLit(litArray: string[]): unknown[] {
   return ['in', ['get', 'segmentId'], ['literal', litArray]];
 }
 
-/** Ridden = emerald (railLit); unridden = grey (railDim). Hue alone is NOT the signal. */
-export function lineColorExpression(litArray: string[]): unknown[] {
-  return ['case', isLit(litArray), tokens.railLit, tokens.railDim];
+/**
+ * The line hue: the feature's STATIC official `color` (C1). Set ONCE on layer add and never
+ * re-set per frame. `coalesce` guards a feature missing `color` (→ DEFAULT_LINE_COLOR).
+ */
+export function lineColorExpression(): unknown[] {
+  return ['coalesce', ['get', 'color'], DEFAULT_LINE_COLOR];
+}
+
+/**
+ * Ridden = full official color (opacity 1); unridden = faded (~0.35) so the dense national
+ * network recedes. Opacity is one of the two lit-keyed channels `repaint()` updates.
+ */
+export const UNRIDDEN_OPACITY = 0.35;
+export function lineOpacityExpression(litArray: string[]): unknown[] {
+  return ['case', isLit(litArray), 1, UNRIDDEN_OPACITY];
 }
 
 /**
  * Ridden = 4px, unridden = 2px (DESIGN.md stroke tokens). THICKNESS is the colorblind-safe
- * differentiator. Width also scales gently with zoom so the network reads at JP-fit zoom
- * and stays legible zoomed-in.
+ * differentiator (opacity alone is not). Width also scales gently with zoom so the network
+ * reads at JP-fit zoom and stays legible zoomed-in.
  */
 export function lineWidthExpression(litArray: string[]): unknown[] {
   return [
@@ -133,7 +181,13 @@ export function lineWidthExpression(litArray: string[]): unknown[] {
   ];
 }
 
-/** Soft luminous halo under ridden lines only (the "glow"); zero width when unridden. */
+/**
+ * Soft luminous halo under ridden lines only (the "glow"), in the LINE'S OWN color (NOT a
+ * hard-coded emerald) — so a ridden line glows in its identity hue. Zero width when unridden.
+ */
+export function glowColorExpression(): unknown[] {
+  return ['coalesce', ['get', 'color'], DEFAULT_LINE_COLOR];
+}
 export function glowWidthExpression(litArray: string[]): unknown[] {
   return ['case', isLit(litArray), 11, 0];
 }
@@ -160,9 +214,10 @@ export function litStationIds(litSegmentIds: string[], packages: RailGeoPackage[
   return [...stations].sort();
 }
 
-// ───────────────────────── selection highlight (C1) ──────────────────────────
+// ───────────────────────── selection highlight (C3) ──────────────────────────
 // Mirror litStationIds, but keyed off a SELECTED line rather than the ridden set. The MapView
-// feeds these arrays to setFilter on the red highlight layers when a line is picked/inferred.
+// feeds these arrays to setFilter on the dark casing + station-ring layers when a line is
+// picked/inferred.
 
 /** Every segmentId on the selected line (across packages — lineId is globally unique). */
 export function selectedLineSegmentIds(line: RailLine | null, packages: RailGeoPackage[]): string[] {
@@ -184,11 +239,16 @@ export function selectedLineStationIds(line: RailLine | null, packages: RailGeoP
   return ids.sort();
 }
 
+/**
+ * C4 — NEUTRAL station dots. Hue is now reserved for LINES, so dots encode ridden by
+ * LIGHTNESS, not by emerald/grey hue: ridden = dark ink, unridden = light grey. (A transfer
+ * station's per-line colors live in the hover popup, not on the dot.)
+ */
 export function stationColorExpression(litStationArray: string[]): unknown[] {
   return [
     'case',
     ['in', ['get', 'stationId'], ['literal', litStationArray]],
-    tokens.railLit,
+    tokens.ink,
     tokens.railDim,
   ];
 }
@@ -265,46 +325,51 @@ export function buildBaseStyle({
           'raster-brightness-max': 0.98,
         },
       },
+      // C3 — DARK SELECTION CASING, UNDERLAY: a wide dark line BELOW everything rail so the
+      // picked line's dark halo peeks out around its own hue (white would vanish on the light
+      // basemap). Empty filter ⇒ paints nothing until a line is selected; MapView swaps the
+      // filter via setFilter (no setFeatureState — design rule).
+      {
+        id: SELECTION_CASING_LAYER,
+        type: 'line',
+        source: SEGMENTS_SOURCE,
+        filter: inFilter('segmentId', selected),
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': CASING_COLOR,
+          // Wider than the base ridden line (4px) so the dark casing reads as a halo under it.
+          'line-width': [
+            'interpolate', ['linear'], ['zoom'],
+            4, stroke.ridden * 1.4,
+            9, stroke.ridden * 2,
+            14, stroke.ridden * 2.6,
+          ],
+          'line-opacity': 0.9,
+        },
+      },
+      // The "glow" — a soft halo under the RIDDEN lines, in each line's OWN official color.
       {
         id: SEGMENTS_GLOW_LAYER,
         type: 'line',
         source: SEGMENTS_SOURCE,
         layout: { 'line-cap': 'round', 'line-join': 'round' },
         paint: {
-          'line-color': tokens.railLit,
+          'line-color': glowColorExpression(),
           'line-width': glowWidthExpression(lit),
           'line-opacity': glowOpacityExpression(lit),
           'line-blur': 4,
         },
       },
+      // The base rail line — STATIC official color (C1) + lit-keyed opacity + width (C2).
       {
         id: SEGMENTS_LAYER,
         type: 'line',
         source: SEGMENTS_SOURCE,
         layout: { 'line-cap': 'round', 'line-join': 'round' },
         paint: {
-          'line-color': lineColorExpression(lit),
+          'line-color': lineColorExpression(),
+          'line-opacity': lineOpacityExpression(lit),
           'line-width': lineWidthExpression(lit),
-        },
-      },
-      // C1 — RED selection highlight ABOVE the base segments, so the picked line wins over
-      // emerald even when it's also ridden. Empty filter ⇒ paints nothing until a line is
-      // selected; MapView swaps the filter via setFilter (no setFeatureState — design rule).
-      {
-        id: HIGHLIGHT_LINE_LAYER,
-        type: 'line',
-        source: SEGMENTS_SOURCE,
-        filter: inFilter('segmentId', selected),
-        layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: {
-          'line-color': HIGHLIGHT_COLOR,
-          // A touch thicker than ridden (4px) so the selection reads on top of a lit line.
-          'line-width': [
-            'interpolate', ['linear'], ['zoom'],
-            4, stroke.ridden * 0.7,
-            9, stroke.ridden + 1,
-            14, stroke.ridden * 1.8,
-          ],
         },
       },
       {
@@ -318,21 +383,21 @@ export function buildBaseStyle({
           'circle-stroke-width': 1,
         },
       },
-      // C1 — RED selection station dots above the base dots (same setFilter mechanism).
+      // C3 — dark selection ring on the picked line's stations, above the base dots.
       {
         id: HIGHLIGHT_STATION_LAYER,
         type: 'circle',
         source: STATIONS_SOURCE,
         filter: inFilter('stationId', selectedStations),
         paint: {
-          'circle-color': HIGHLIGHT_COLOR,
+          'circle-color': tokens.white,
           'circle-radius': [
             'interpolate', ['linear'], ['zoom'],
             5, 2.8,
             12, 5.5,
           ],
-          'circle-stroke-color': tokens.white,
-          'circle-stroke-width': 1.5,
+          'circle-stroke-color': CASING_COLOR,
+          'circle-stroke-width': 2,
         },
       },
     ],
