@@ -47,12 +47,17 @@ export interface RailSegment {
 }
 
 export interface RailStation {
-  stationId: string;
+  stationId: string;     // UNIQUE per (line, station). For N02: `${lineId}:${N02_005g}`.
   name: string;
   lineId: string;
   seq: number;
   lon: number;
   lat: number;
+  // The cross-line station-group code (N02_005g): SHARED by the same physical station
+  // across lines (新宿 on 7 lines → same stationGroupId, different stationId). Optional;
+  // present for N02-sourced packages. Enables future transfer detection without colliding
+  // stationId (which MUST stay line-unique, or geo.stationById collapses). [steering bump]
+  stationGroupId?: string;
 }
 
 // ─────────────────────────── COVERAGE + RIDE EVENTS ──────────────────────────

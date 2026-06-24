@@ -12,4 +12,29 @@
 
 ---
 
+## Deferred (captured by /ship 2026-06-24 — N02 integration review + adversarial)
+
+### Map render perf at scale
+- **Priority:** P1
+- **What:** `litStationIds` (map/style.ts) rebuilds a ~9,442-entry segment→station Map from scratch on every repaint; `MapView.repaint()` is the per-frame flood callback (up to 48×) → ~453k Map inserts per import flood on the main thread. Memoize the static adjacency once on package load; when measured, precompute a `lit` boolean into feature props (or feature-state) so paint is O(1) per feature instead of O(features × ridden-set).
+- **Why:** Flagged CRITICAL by the adversarial pass; matches the eng-review's deferred "ship-as-is + measure" render-perf decision. Bites flood animations and completionist users (thousands of ridden segments).
+- **Depends on:** real-device /qa showing the jank before optimizing (boring-by-default).
+
+### markRide concurrent-mark race
+- **Priority:** P2
+- **What:** `markRide` reads `get(events)` synchronously, then `await db.putEvents`. Two back-to-back marks (fast double-tap, importer/corridor paths) read the same pre-write snapshot and both persist events for the same segments with different ids — `bulkPut` doesn't dedup, so the durable log + CSV export bloat (coverage % is unaffected, it's set-based). Same class as the fixed partial-overlap re-stamp. Add an in-flight guard in `markRide` (the UI guards via `busy`, but the function doesn't).
+
+### Offline / PWA tier + first-paint perf
+- **Priority:** P2
+- **What:** The ~1.6 MB gzip package fetch + OSM raster basemap need an offline story (the eng-review flagged the raster basemap as an online-only dependency). Consider region-tiling / lazy-load and worker-parsing the package so first paint never blocks on the full national network.
+
+### Adapter robustness
+- **Priority:** P3
+- Synthetic bridge km (~5 km / 0.02% network-wide) is baked into segment `km` and thus `totalKm`; enforce a network-wide synthetic-km bound in `verify-jp`, or subtract it, if bridging ever grows.
+- Loop classifier: `LOOP_ISO_RATIO=0.04` is blunt for high-aspect-ratio rectangular loops, and single-section closed loops are discarded at the `a===b` graph guard. Harden if a real loop is mis-classified.
+- Add a synthetic branch/lollipop unit test that directly triggers the under-length chord repair (currently only gated on real data via `verify-jp`).
+- DRY in `map/style.ts`: extract an `inLiteral(prop, arr)` membership helper (repeated 4×) and a `boundsOf(points)` reducer shared by `networkBounds`/`riddenBounds`.
+
+---
+
 _Promoted to v0 (not deferred): one China corridor (京沪高铁) through the pipeline to validate the country-agnostic schema — see docs/DESIGN.md → Implementation Tasks T9._
