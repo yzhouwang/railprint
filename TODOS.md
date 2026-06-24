@@ -39,11 +39,8 @@
 
 ## Deferred (captured by /plan-eng-review 2026-06-24 — record-highlight + bilingual feature)
 
-### Line-name romaji: operator-aware join (FAST-FOLLOW)
-- **Priority:** P2
-- **What:** Line romaji is 287/594 (48%) from an exact-name Wikidata join. Shared names carry operator-prefix errors (中央線→"Osaka Metro Chuo Line", 甘木線→"Amagi Railway Amagi Line"). Make the `pipeline/build-readings.ts` line join operator-aware: match N02 operator + name, strip operator prefixes ("Osaka Metro ", "JR ", "<Op> Railway ") from Wikidata labels, normalize 本線↔線. Expected ~75-85% coverage + fixes the collisions.
-- **Why:** A4 decision was "stations + lines bilingual"; stations done (97.6%), lines are the remaining half, with a few visibly-wrong labels on high-profile lines. Shipped core without it (graceful degradation: Japanese where romaji absent).
-- **Context:** Data already cached at `data/readings/wikidata-lines.json` (1517 JP lines). Reuse the existing `<operator>\x00<name>` key format + the curated-14 override.
+### Line-name romaji: operator-aware join — DONE (v0.5.0.0)
+- **Completed:** v0.5.0.0 (2026-06-25). The colors/logos engine lane made the line join operator-aware (operator+name, fail-closed on ambiguous), which fixed the collisions: 中央線 (JR East) → "Chuo Line" not "Osaka Metro Chuo Line"; 山手線 Tokyo ≠ Kobe. Coverage is now 256/594 (43%) — slightly down from the 287 exact-name matches, but correct-only (no wrong operator-prefixed labels). Further coverage gains (75-85%) would need fuzzy 本線↔線 matching — a P3 follow-up if desired.
 
 ### Station romaji residual review
 - **Priority:** P3

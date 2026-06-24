@@ -2,6 +2,19 @@
 
 All notable changes to RailPrint are documented here.
 
+## [0.5.0.0] - 2026-06-25
+
+### Added
+- **Every line in its official color.** The map now draws each line in its real color (山手線 yellow-green #9ACD32, 大阪環状線 red, 東海道新幹線 blue…) instead of one emerald monochrome — 594/594 lines colored (≈300 sourced from Wikidata, the rest an operator-default brand color). Ridden lines saturate, thicken, and glow in their own color; unridden lines show the color faded — so completion still reads, now in full color.
+- **Hover a station to see its lines.** A hover popup lists every line through a station, each with its color swatch, its **logo** (227 lines have one, from Wikimedia Commons), and the bilingual name. Logos also appear in the line picker, search results, and the selection panel.
+
+### Changed
+- The selected line now reads via a dark casing under it (the old red highlight collided with the new line colors). Station dots became a neutral ridden/unridden channel. The app's emerald brand (header, stats, Wrapped cards) is unchanged — only the map is multicolor.
+- Contract: `RailLine.color` / `RailLine.logo`. Rail-data credit now also attributes Wikimedia Commons for the logos.
+
+### Fixed
+- Lines that share a name across operators no longer get the wrong color/reading: 山手線 (JR East) and 山手線 (神戸市) are distinct, 中央線 (JR East) ≠ 中央線 (Osaka Metro). The same operator-aware join fixed the line-romaji mismatch.
+
 ## [0.4.0.0] - 2026-06-24
 
 ### Added
