@@ -2,6 +2,17 @@
 
 All notable changes to RailPrint are documented here.
 
+## [0.4.0.0] - 2026-06-24
+
+### Added
+- **Bilingual station names (romaji + 日本語).** Every station carries a romaji reading — 97.6% of ~10,000 stations — from OpenStreetMap + Wikidata, joined by Japanese name + nearest coordinate so the irregular readings come out right (日暮里 = Nippori, 放出 = Hanaten, and the three 神戸 = Kobe / Godo / Kambe told apart by location). A golden gate enforces ≥97% coverage and the known-hard readings as part of `npm test`.
+- **Record a ride by typing a station, not just tapping.** Search any station by 日本語, romaji, or かな (新宿 / Shinjuku / しんじゅく all resolve), pick from transfer-station matches (渋谷 lists all 7 of its lines), and the line linking your two stations is inferred automatically — with a small picker when they share more than one line, and a clear message when they share none.
+- **The selected line highlights in red** while you record, so it's obvious which line you're marking; the line's stations light up too. A hover/tap popup shows a station's name in both scripts.
+- Romaji line names where available (山手線 → Yamanote Line).
+
+### Changed
+- Contract gained optional `nameRoma` / `romaSource` on stations and `nameRoma` on lines; the rail-data map credit now also attributes OpenStreetMap (ODbL) for the romanizations.
+
 ## [0.3.0.0] - 2026-06-24
 
 ### Added
