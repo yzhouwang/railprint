@@ -25,6 +25,7 @@ export interface RailGeoPackage {
 export interface RailLine {
   lineId: string;
   name: string;
+  nameRoma?: string;     // romaji line name (山手線 → "Yamanote Line"); OSM/Wikidata-sourced [steering bump]
   country: Country;
   isHSR: boolean;        // JP: keyed off 事業者種別 N02_002==1
   isLoop: boolean;
@@ -49,6 +50,9 @@ export interface RailSegment {
 export interface RailStation {
   stationId: string;     // UNIQUE per (line, station). For N02: `${lineId}:${N02_005g}`.
   name: string;
+  nameRoma?: string;     // romaji reading (新宿 → "Shinjuku"); keyed by stationGroupId at build time,
+  //                        so transfer stations share one reading. ~97% coverage. [steering bump]
+  romaSource?: 'osm' | 'wikidata' | 'manual'; // provenance for ODbL attribution + accuracy audit
   lineId: string;
   seq: number;
   lon: number;
