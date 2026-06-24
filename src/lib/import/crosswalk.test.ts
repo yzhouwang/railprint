@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import type { Country, RailGeoPackage, RailLine, RailSegment, RailStation } from '../../contract/types';
-import type { GeoIndex } from '../store';
 import { JP_PACKAGE, STUB_PACKAGES } from '../../fixtures/stubPackage';
+import { buildGeoIndex } from '../store';
 import {
   diceSimilarity,
   normStation,
@@ -10,29 +9,6 @@ import {
   resolveStation,
   segmentJoining,
 } from './crosswalk';
-
-// Build a GeoIndex exactly the way the `geo` derived store does, but synchronously for
-// pure-logic tests (no Svelte store subscription).
-function buildGeoIndex(pkgs: RailGeoPackage[]): GeoIndex {
-  const lineById = new Map<string, RailLine>();
-  const stationById = new Map<string, RailStation>();
-  const segmentById = new Map<string, RailSegment>();
-  const linesByCountry = new Map<Country, RailLine[]>();
-  const stationsByLine = new Map<string, RailStation[]>();
-  for (const pkg of pkgs) {
-    for (const l of pkg.lines) {
-      lineById.set(l.lineId, l);
-      (linesByCountry.get(pkg.country) ?? linesByCountry.set(pkg.country, []).get(pkg.country)!).push(l);
-    }
-    for (const s of pkg.stations) {
-      stationById.set(s.stationId, s);
-      (stationsByLine.get(s.lineId) ?? stationsByLine.set(s.lineId, []).get(s.lineId)!).push(s);
-    }
-    for (const seg of pkg.segments) segmentById.set(seg.segmentId, seg);
-  }
-  for (const list of stationsByLine.values()) list.sort((a, b) => a.seq - b.seq);
-  return { lineById, stationById, segmentById, linesByCountry, stationsByLine };
-}
 
 const geo = buildGeoIndex(STUB_PACKAGES);
 
