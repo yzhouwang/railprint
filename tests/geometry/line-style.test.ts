@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildPackageFromN02 } from '../../pipeline/n02-ingest.ts';
-import { buildLineStyleIndex, isValidHexColor, logoCredit } from '../../pipeline/line-style.ts';
+import { buildLineStyleIndex, isValidHexColor, logoCredit, logoMatchesOperatorFamily } from '../../pipeline/line-style.ts';
 
 type Pos = [number, number];
 
@@ -96,4 +96,81 @@ test('logo credits use the required manifest shape', () => {
     src,
     license: 'Wikimedia Commons',
   });
+});
+
+test('JR logos are picked by operator family instead of arbitrary first match', () => {
+  const jre = 'http://commons.wikimedia.org/wiki/Special:FilePath/Shinkansen%20jre.svg';
+  const jrw = 'http://commons.wikimedia.org/wiki/Special:FilePath/Shinkansen%20jrw.svg';
+  const lineStyles = buildLineStyleIndex([
+    { operator: '東日本旅客鉄道', name: '北陸新幹線', n02_002: '1' },
+    { operator: '西日本旅客鉄道', name: '北陸新幹線', n02_002: '1' },
+  ], {
+    results: { bindings: [
+      wikiStyle('東日本旅客鉄道', '北陸新幹線', '008000', jrw),
+      wikiStyle('東日本旅客鉄道', '北陸新幹線', '008000', jre),
+      wikiStyle('西日本旅客鉄道', '北陸新幹線', '008000', jrw),
+      wikiStyle('西日本旅客鉄道', '北陸新幹線', '008000', jre),
+    ] },
+  }, {
+    arbitraryEastName: { file: 'logos-raw/east.png', src: jre },
+    arbitraryWestName: { file: 'logos-raw/west.png', src: jrw },
+  });
+
+  const east = lineStyles['東日本旅客鉄道\u0000北陸新幹線'];
+  const west = lineStyles['西日本旅客鉄道\u0000北陸新幹線'];
+  assert.equal(east.logoSrc, jre);
+  assert.equal(east.logoFile, 'logos-raw/east.png');
+  assert.equal(west.logoSrc, jrw);
+  assert.equal(west.logoFile, 'logos-raw/west.png');
+});
+
+test('JR logos fail closed when no candidate matches the operator family', () => {
+  const jrw = 'http://commons.wikimedia.org/wiki/Special:FilePath/Shinkansen%20jrw.svg';
+  const lineStyles = buildLineStyleIndex([
+    { operator: '東日本旅客鉄道', name: '北陸新幹線', n02_002: '1' },
+  ], {
+    results: { bindings: [
+      wikiStyle('東日本旅客鉄道', '北陸新幹線', '008000', jrw),
+    ] },
+  }, {
+    arbitraryWestName: { file: 'logos-raw/west.png', src: jrw },
+  });
+
+  const style = lineStyles['東日本旅客鉄道\u0000北陸新幹線'];
+  assert.equal(style.logoSrc, undefined);
+  assert.equal(style.logoFile, undefined);
+});
+
+test('non-JR logos use deterministic src-indexed pick and color tiebreak', () => {
+  const b = 'http://commons.wikimedia.org/wiki/Special:FilePath/Private%20B.svg';
+  const a = 'http://commons.wikimedia.org/wiki/Special:FilePath/Private%20A.svg';
+  const missing = 'http://commons.wikimedia.org/wiki/Special:FilePath/Private%200.svg';
+  const lineStyles = buildLineStyleIndex([
+    { operator: '私鉄', name: '私鉄線', n02_002: '2' },
+  ], {
+    results: { bindings: [
+      wikiStyle('私鉄', '私鉄線', 'BBBBBB', b),
+      wikiStyle('私鉄', '私鉄線', 'AAAAAA', a),
+      wikiStyle('私鉄', '私鉄線', 'CCCCCC', missing),
+    ] },
+  }, {
+    bName: { file: 'logos-raw/b.png', src: b },
+    aName: { file: 'logos-raw/a.png', src: a },
+  });
+
+  const style = lineStyles['私鉄\u0000私鉄線'];
+  assert.equal(style.color, '#AAAAAA');
+  assert.equal(style.logoSrc, a);
+  assert.equal(style.logoFile, 'logos-raw/a.png');
+});
+
+test('operator family matching uses decoded Commons filenames', () => {
+  assert.equal(
+    logoMatchesOperatorFamily('東日本旅客鉄道', 'http://commons.wikimedia.org/wiki/Special:FilePath/JR%20JY%20line%20symbol.svg'),
+    true,
+  );
+  assert.equal(
+    logoMatchesOperatorFamily('東日本旅客鉄道', 'http://commons.wikimedia.org/wiki/Special:FilePath/JRW%20kinki-O.svg'),
+    false,
+  );
 });

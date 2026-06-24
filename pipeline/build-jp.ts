@@ -23,7 +23,6 @@ const rawLines = groupN02(RS, ST);
 const lineStyles = buildLineStyleIndex(rawLines, wikidataStyle, logoIndex);
 const styleByLineId = new Map(rawLines.map((raw) => [lineId(raw.operator, raw.name), lineStyles[`${raw.operator}\u0000${raw.name}`]]));
 
-const t0 = Date.now();
 const { pkg, stats } = buildPackageFromN02(RS, ST, {
   country: 'JP',
   version: '2025.1.0',
@@ -33,7 +32,6 @@ const { pkg, stats } = buildPackageFromN02(RS, ST, {
   lineReadings,
   lineStyles,
 });
-console.log('built in', ((Date.now() - t0) / 1000).toFixed(1), 's');
 console.log('stats', stats);
 console.log('package: lines', pkg.lines.length, 'segments', pkg.segments.length, 'stations', pkg.stations.length);
 
@@ -53,7 +51,9 @@ for (const [op, name, expect] of checks) {
   console.log(`  ${name}: km=${km.toFixed(1)} stations=${l.stationOrder.length} segs=${segs.length} loop=${l.isLoop} hsr=${l.isHSR}   [expect ${expect}]`);
 }
 
-const out = process.argv.includes('--out') ? process.argv[process.argv.indexOf('--out') + 1] : 'data/n02/jp-package.json';
+const explicitOutIndex = process.argv.indexOf('--out');
+const hasExplicitOut = explicitOutIndex >= 0;
+const out = hasExplicitOut ? process.argv[explicitOutIndex + 1] : 'data/n02/jp-package.json';
 const logoDir = 'public/rail/logos';
 const logoCredits: Record<string, { src: string; license: 'Wikimedia Commons' }> = {};
 rmSync(logoDir, { recursive: true, force: true });
@@ -72,3 +72,7 @@ console.log('logos', Object.keys(logoCredits).length, 'wrote public/rail/logo-cr
 const json = JSON.stringify(pkg);
 writeFileSync(out, json);
 console.log('wrote', out, (json.length / 1e6).toFixed(1), 'MB');
+if (!hasExplicitOut) {
+  writeFileSync('public/rail/jp-2025.json', json);
+  console.log('wrote public/rail/jp-2025.json', (json.length / 1e6).toFixed(1), 'MB');
+}

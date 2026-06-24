@@ -3,12 +3,24 @@
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Okinawa%20City%20Monorail%20Logo.svg",
     "license": "Wikimedia Commons"
   },
+  "jp-わたらせ渓谷鐵道-わたらせ渓谷線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Watarase%20Keikoku%20Railway%20icon.svg",
+    "license": "Wikimedia Commons"
+  },
   "jp-愛知高速交通-東部丘陵線": {
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Linimo%20logo.svg",
     "license": "Wikimedia Commons"
   },
   "jp-伊豆急行-伊豆急行線": {
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Number%20prefix%20Izukyu.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-伊豆箱根鉄道-駿豆線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Number%20prefix%20Sunzu.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-伊豆箱根鉄道-大雄山線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Number%20prefix%20Daiyuzan.svg",
     "license": "Wikimedia Commons"
   },
   "jp-叡山電鉄-鞍馬線": {
@@ -21,6 +33,14 @@
   },
   "jp-横浜高速鉄道-みなとみらい21線": {
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Minatomirai%20Line%20logo.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-横浜市-1号線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Yokohama%20Municipal%20Subway%20Blue%20Line%20symbol.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-横浜市-3号線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Yokohama%20Municipal%20Subway%20Blue%20Line%20symbol.svg",
     "license": "Wikimedia Commons"
   },
   "jp-横浜シーサイドライン-金沢シーサイドライン": {
@@ -203,12 +223,16 @@
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/KT%20number-L.svg",
     "license": "Wikimedia Commons"
   },
-  "jp-九州旅客鉄道-山陽線": {
-    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/JRW%20kinki-A.svg",
-    "license": "Wikimedia Commons"
-  },
   "jp-広島高速交通-広島新交通1号線": {
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Astram%20Logo.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-弘南鉄道-弘南線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Konan%20Konan%20Line%20symbol.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-弘南鉄道-大鰐線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Konan%20Owani%20Line%20symbol.svg",
     "license": "Wikimedia Commons"
   },
   "jp-江ノ島電鉄-江ノ島電鉄線": {
@@ -219,6 +243,10 @@
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Number%20prefix%20Hankyu%20K%C5%8Dbe%20line.svg",
     "license": "Wikimedia Commons"
   },
+  "jp-阪急電鉄-京都線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Number%20prefix%20Hankyu%20Ky%C5%8Dto%20line.svg",
+    "license": "Wikimedia Commons"
+  },
   "jp-阪急電鉄-甲陽線": {
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Number%20prefix%20Hankyu%20K%C5%8Dbe%20line.svg",
     "license": "Wikimedia Commons"
@@ -227,8 +255,20 @@
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Number%20prefix%20Hankyu%20K%C5%8Dbe%20line.svg",
     "license": "Wikimedia Commons"
   },
+  "jp-阪急電鉄-神戸高速線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Number%20prefix%20Hankyu%20K%C5%8Dbe%20line.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-阪急電鉄-神戸線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Number%20prefix%20Hankyu%20K%C5%8Dbe%20line.svg",
+    "license": "Wikimedia Commons"
+  },
   "jp-阪急電鉄-千里線": {
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Number%20prefix%20Hankyu%20Ky%C5%8Dto%20line.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-阪急電鉄-宝塚線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Number%20prefix%20Hankyu%20Takarazuka%20line.svg",
     "license": "Wikimedia Commons"
   },
   "jp-阪急電鉄-箕面線": {
@@ -283,8 +323,20 @@
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Hokusei%20Railway%20logomark.svg",
     "license": "Wikimedia Commons"
   },
+  "jp-山陽電気鉄道-本線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Number%20prefix%20San-yo%20Railway%20line.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-山陽電気鉄道-網干線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Number%20prefix%20San-yo%20Railway%20line.svg",
+    "license": "Wikimedia Commons"
+  },
   "jp-芝山鉄道-芝山鉄道線": {
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Number%20prefix%20Shibayama.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-首都圏新都市鉄道-常磐新線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Tsukuba%20Express%20symbol.svg",
     "license": "Wikimedia Commons"
   },
   "jp-小田急電鉄-江ノ島線": {
@@ -303,6 +355,22 @@
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Number%20prefix%20Keisei.svg",
     "license": "Wikimedia Commons"
   },
+  "jp-神戸市-海岸線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Subway%20KobeKaigan.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-神戸市-山手線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Subway%20KobeSeishin.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-神戸市-西神延伸線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Subway%20KobeSeishin.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-神戸市-西神線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Subway%20KobeSeishin.svg",
+    "license": "Wikimedia Commons"
+  },
   "jp-神戸電鉄-粟生線": {
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Number%20prefix%20Kobe%20Railway.svg",
     "license": "Wikimedia Commons"
@@ -312,6 +380,10 @@
     "license": "Wikimedia Commons"
   },
   "jp-神戸電鉄-三田線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Number%20prefix%20Kobe%20Railway.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-神戸電鉄-神戸高速線": {
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Number%20prefix%20Kobe%20Railway.svg",
     "license": "Wikimedia Commons"
   },
@@ -341,6 +413,10 @@
   },
   "jp-西日本旅客鉄道-関西空港線": {
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/JRW%20kinki-S.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-西日本旅客鉄道-関西線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/JRW%20kinki-D.svg",
     "license": "Wikimedia Commons"
   },
   "jp-西日本旅客鉄道-吉備線": {
@@ -377,6 +453,14 @@
   },
   "jp-西日本旅客鉄道-山陽新幹線": {
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Shinkansen%20jrw.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-西日本旅客鉄道-山陽線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/JRW%20hiro-R.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-西日本旅客鉄道-赤穂線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/JRW%20kinki-A.svg",
     "license": "Wikimedia Commons"
   },
   "jp-西日本旅客鉄道-草津線": {
@@ -423,6 +507,10 @@
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/JRW%20kinki-H.svg",
     "license": "Wikimedia Commons"
   },
+  "jp-西日本旅客鉄道-北陸線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/JRW%20kinki-A.svg",
+    "license": "Wikimedia Commons"
+  },
   "jp-西日本旅客鉄道-木次線": {
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/JRW%20san-E.svg",
     "license": "Wikimedia Commons"
@@ -445,6 +533,10 @@
   },
   "jp-西武鉄道-新宿線": {
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/SeibuShinjuku.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-西武鉄道-西武園線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/SeibuKokubunji.svg",
     "license": "Wikimedia Commons"
   },
   "jp-西武鉄道-西武秩父線": {
@@ -473,6 +565,18 @@
   },
   "jp-西武鉄道-豊島線": {
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/SeibuIkebukuro.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-仙台市-南北線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Sendai%20City%20Subway%20Logo.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-千葉都市モノレール-1号線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Number%20prefix%20Chiba%20monorail.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-千葉都市モノレール-2号線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Number%20prefix%20Chiba%20monorail.svg",
     "license": "Wikimedia Commons"
   },
   "jp-相模鉄道-相鉄いずみ野線": {
@@ -539,6 +643,10 @@
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/JR%20Central%20Gotemba%20Line.svg",
     "license": "Wikimedia Commons"
   },
+  "jp-東海旅客鉄道-高山線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/JR%20Central%20Takayama%20Line.svg",
+    "license": "Wikimedia Commons"
+  },
   "jp-東海旅客鉄道-身延線": {
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/JR%20Central%20Minobu%20Line.svg",
     "license": "Wikimedia Commons"
@@ -547,8 +655,16 @@
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/JR%20Central%20Taita%20Line.svg",
     "license": "Wikimedia Commons"
   },
+  "jp-東海旅客鉄道-中央線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/JR%20Central%20Chuo%20Line.svg",
+    "license": "Wikimedia Commons"
+  },
   "jp-東海旅客鉄道-東海道新幹線": {
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Shinkansen%20jrc.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-東海旅客鉄道-東海道線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/JR%20Central%20Tokaido%20Line.svg",
     "license": "Wikimedia Commons"
   },
   "jp-東海旅客鉄道-飯田線": {
@@ -631,6 +747,30 @@
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Logo%20of%20Tokyo%20Metro%20Hanz%C5%8Dmon%20Line.svg",
     "license": "Wikimedia Commons"
   },
+  "jp-東京都-1号線浅草線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Toei%20Asakusa%20line%20symbol.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-東京都-6号線三田線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Toei%20Mita%20line%20symbol.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-東京都-10号線新宿線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Toei%20Shinjuku%20line%20symbol.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-東京都-12号線大江戸線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Toei%20Oedo%20line%20symbol.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-東京都-荒川線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Tokyo%20Sakura%20Tram%20symbol.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-東京臨海高速鉄道-臨海副都心線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Rinkai%20Line%20symbol.svg",
+    "license": "Wikimedia Commons"
+  },
   "jp-東日本旅客鉄道-伊東線": {
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/JR%20JT%20line%20symbol.svg",
     "license": "Wikimedia Commons"
@@ -683,6 +823,10 @@
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/JR%20JI%20line%20symbol.svg",
     "license": "Wikimedia Commons"
   },
+  "jp-東日本旅客鉄道-東海道線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/JR%20JT%20line%20symbol.svg",
+    "license": "Wikimedia Commons"
+  },
   "jp-東日本旅客鉄道-東北新幹線": {
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Shinkansen%20jre.svg",
     "license": "Wikimedia Commons"
@@ -693,6 +837,10 @@
   },
   "jp-東日本旅客鉄道-武蔵野線": {
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/JR%20JM%20line%20symbol.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-東日本旅客鉄道-北陸新幹線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Shinkansen%20jre.svg",
     "license": "Wikimedia Commons"
   },
   "jp-東武鉄道-伊勢崎線": {
@@ -739,8 +887,44 @@
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Tobu%20Nikko%20Line%20%28TN%29%20symbol.svg",
     "license": "Wikimedia Commons"
   },
+  "jp-東武鉄道-野田線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Tobu%20Noda%20Line%20%28TD%29%20symbol.svg",
+    "license": "Wikimedia Commons"
+  },
   "jp-東葉高速鉄道-東葉高速線": {
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Number%20prefix%20Toyo-Rapid.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-南海電気鉄道-加太線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Number%20prefix%20Nankai%20Railway%20line.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-南海電気鉄道-空港線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Nankai%20airport%20line%20symbol.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-南海電気鉄道-鋼索線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Nankai%20koya%20line%20symbol.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-南海電気鉄道-高師浜線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Number%20prefix%20Nankai%20Railway%20line.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-南海電気鉄道-高野線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Nankai%20koya%20line%20symbol.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-南海電気鉄道-多奈川線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Number%20prefix%20Nankai%20Railway%20line.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-南海電気鉄道-南海本線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Number%20prefix%20Nankai%20Railway%20line.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-南海電気鉄道-和歌山港線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Number%20prefix%20Nankai%20Railway%20line.svg",
     "license": "Wikimedia Commons"
   },
   "jp-能勢電鉄-日生線": {
@@ -749,6 +933,18 @@
   },
   "jp-能勢電鉄-妙見線": {
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Number%20prefix%20Nose%20Railway%20line.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-小田急箱根-鋼索線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Odakyu%20Hakone%20StaNo.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-小田急箱根-鉄道線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Odakyu%20Hakone%20StaNo.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-舞浜リゾートライン-ディズニーリゾートライン": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Disney%20Resort%20Line.svg",
     "license": "Wikimedia Commons"
   },
   "jp-福岡市-1号線(空港線)": {
@@ -769,6 +965,14 @@
   },
   "jp-北越急行-ほくほく線": {
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Hokuhoku-Line%20Logo.png",
+    "license": "Wikimedia Commons"
+  },
+  "jp-神戸市-北神線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/U-line.png",
+    "license": "Wikimedia Commons"
+  },
+  "jp-北総鉄道-北総線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Number%20prefix%20Hokus%C5%8D.svg",
     "license": "Wikimedia Commons"
   },
   "jp-名古屋市-1号線東山線": {
@@ -827,6 +1031,10 @@
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/NP-HM.svg",
     "license": "Wikimedia Commons"
   },
+  "jp-名古屋鉄道-三河線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/NP-MY.svg",
+    "license": "Wikimedia Commons"
+  },
   "jp-名古屋鉄道-小牧線": {
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/NP-KM.svg",
     "license": "Wikimedia Commons"
@@ -859,6 +1067,10 @@
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/NP-TB.svg",
     "license": "Wikimedia Commons"
   },
+  "jp-名古屋鉄道-尾西線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/NP-BS.svg",
+    "license": "Wikimedia Commons"
+  },
   "jp-名古屋鉄道-豊川線": {
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/NP-TK.svg",
     "license": "Wikimedia Commons"
@@ -871,12 +1083,28 @@
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/NP-NH.svg",
     "license": "Wikimedia Commons"
   },
+  "jp-名古屋臨海高速鉄道-西名古屋港線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Aonami%20line%20logo.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-ゆりかもめ-東京臨海新交通臨海線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Yurikamome%20line%20symbol.svg",
+    "license": "Wikimedia Commons"
+  },
   "jp-近畿日本鉄道-けいはんな線": {
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/KT%20number-C.svg",
     "license": "Wikimedia Commons"
   },
+  "jp-神戸新交通-ポートアイランド線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Port%20Island%20Line%20logo.svg",
+    "license": "Wikimedia Commons"
+  },
   "jp-大阪市高速電気軌道-8号線(今里筋線)": {
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Osaka%20Metro%20Imazatosuji%20line%20symbol.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-横浜市-4号線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Yokohama%20Municipal%20Subway%20Green%20Line%20symbol.svg",
     "license": "Wikimedia Commons"
   },
   "jp-東京都-日暮里・舎人ライナー": {
@@ -893,6 +1121,18 @@
   },
   "jp-養老鉄道-養老線": {
     "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Yoro%20Railway%20logomark%201911.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-伊賀鉄道-伊賀線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Iga%20Railway%20logomark%201917.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-西日本旅客鉄道-北陸新幹線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Shinkansen%20jrw.svg",
+    "license": "Wikimedia Commons"
+  },
+  "jp-仙台市-東西線": {
+    "src": "http://commons.wikimedia.org/wiki/Special:FilePath/Sendai%20City%20Subway%20Logo.svg",
     "license": "Wikimedia Commons"
   },
   "jp-北海道旅客鉄道-北海道新幹線": {
