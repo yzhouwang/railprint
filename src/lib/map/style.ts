@@ -154,10 +154,13 @@ export function lineColorExpression(): unknown[] {
 }
 
 /**
- * Ridden = full official color (opacity 1); unridden = faded (~0.35) so the dense national
- * network recedes. Opacity is one of the two lit-keyed channels `repaint()` updates.
+ * Ridden = full official color (opacity 1, 4px, glow); unridden = the official color at 0.7
+ * so the lines READ as their colors even before you ride them (the whole point of the feature)
+ * while ridden still pops via thickness + glow + the last bit of opacity. 0.35 washed the
+ * colors out to invisible pastels on the light basemap (browser-verified). Opacity is one of
+ * the two lit-keyed channels `repaint()` updates.
  */
-export const UNRIDDEN_OPACITY = 0.35;
+export const UNRIDDEN_OPACITY = 0.7;
 export function lineOpacityExpression(litArray: string[]): unknown[] {
   return ['case', isLit(litArray), 1, UNRIDDEN_OPACITY];
 }
