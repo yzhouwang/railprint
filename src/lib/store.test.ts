@@ -185,4 +185,20 @@ describe('markRoute (cross-line, one trip)', () => {
     expect(ids.length).toBe(2);
     expect(ids.length).toBe(new Set(ids).size);
   });
+
+  it('returns added:0 / restamped:N when every leg was already ridden (drives the 記録済み toast)', async () => {
+    const segs = ['jr-kururi:0-1', 'jr-kururi:1-2'];
+    await markRoute(route(segs));
+    const res = await markRoute(route(segs)); // re-mark the whole route
+    expect(res.added).toBe(0);
+    expect(res.restamped).toBe(2);
+  });
+
+  it('fills date on a previously-dateless leg when re-marked with a date', async () => {
+    await markRoute(route(['jr-kururi:0-1'])); // marked with no date
+    const res = await markRoute(route(['jr-kururi:0-1', 'jr-kururi:1-2']), { date: '2025-06-01' });
+    expect(res.restamped).toBe(1);
+    const leg = get(events).find((e) => e.segmentId === 'jr-kururi:0-1')!;
+    expect(leg.date).toBe('2025-06-01'); // was absent → filled from the new mark
+  });
 });

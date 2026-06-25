@@ -87,6 +87,7 @@
   let pickedB = $state<StationHit | null>(null);
   let routeChoices = $state<RouteCandidate[]>([]); // cross-line route picker (search-mode)
   let noRoute = $state(false); // the two stations have no rail path between them
+  let searching = $state(false); // route-finding in flight (paints "探索中" before the sync call)
   let searchSeq = 0; // guards out-of-order async resolves (latest query wins)
 
   // The bilingual search index — rebuilt only when the geo index changes (i.e. packages swap).
@@ -119,6 +120,7 @@
     pickedB = null;
     routeChoices = [];
     noRoute = false;
+    searching = false;
   }
 
   // Lines available to pick, grouped by country (geo.linesByCountry).
@@ -560,26 +562,40 @@
       pickedB = hit;
       hitsB = [];
     }
-    tryInfer();
+    void tryInfer();
   }
 
   // Once both endpoints are pinned, find the cross-line route(s) and let the user pick. A single-line
   // A→B is just the degenerate 0-change route — same picker, no special case (the search-mode unify).
-  function tryInfer(): void {
+  // findRoutes is synchronous and bounded (caps), but a long national pair can take ~250ms, so we paint
+  // a "探索中" state first (yield a frame) rather than freeze silently.
+  async function tryInfer(): Promise<void> {
     routeChoices = [];
     noRoute = false;
-    selectedLine = null;
     if (!pickedA || !pickedB) return;
-    if (pickedA.station.stationId === pickedB.station.stationId) {
+    const a = pickedA;
+    const b = pickedB;
+    if (a.station.stationId === b.station.stationId) {
       toast('出発駅と到着駅が同じです', 'info');
       return;
     }
-    const pkg = get(packages).find((p) => p.lines.some((l) => l.lineId === pickedA!.line.lineId));
+    const pkg = get(packages).find((p) => p.lines.some((l) => l.lineId === a.line.lineId));
     if (!pkg) {
       toast('地図の読み込みに失敗', 'error');
       return;
     }
-    const routes = findRoutes(pkg, groupKeyForHit(pickedA), groupKeyForHit(pickedB));
+    searching = true;
+    await new Promise((r) => requestAnimationFrame(() => r(null))); // let the 探索中 state paint
+    if (pickedA !== a || pickedB !== b) {
+      searching = false;
+      return; // a newer pick superseded this one
+    }
+    let routes: RouteCandidate[];
+    try {
+      routes = findRoutes(pkg, groupKeyForHit(a), groupKeyForHit(b));
+    } finally {
+      searching = false;
+    }
     if (routes.length === 0) {
       noRoute = true; // warm no-route state with a leg-by-leg fallback
       return;
@@ -858,7 +874,9 @@
           {/if}
         </div>
 
-        {#if routeChoices.length > 0}
+        {#if searching}
+          <p class="mark-hint" aria-live="polite">経路を探索中…</p>
+        {:else if routeChoices.length > 0}
           <!-- Cross-line route picker: pick the way you actually rode (a single-line A→B is just
                the degenerate 0-change route, rendered as a plain chip). -->
           <p class="mark-title">経路を選択</p>
