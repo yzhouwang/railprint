@@ -235,6 +235,7 @@ expectLogoToken('東日本旅客鉄道', '山手線', 'JR J');
 expectLogoToken('西日本旅客鉄道', '大阪環状線', 'JRW ');
 expectLogoToken('東日本旅客鉄道', '北陸新幹線', 'Shinkansen jre', 'Shinkansen jrw');
 expectLogoToken('西日本旅客鉄道', '北陸新幹線', 'Shinkansen jrw', 'Shinkansen jre');
+expectLogoToken('東海旅客鉄道', '東海道新幹線', 'Shinkansen jrc', 'Shinkansen jre');
 
 const logoFamilyViolations: string[] = [];
 for (const line of logoLines) {
