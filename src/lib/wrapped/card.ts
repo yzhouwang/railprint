@@ -80,9 +80,12 @@ export function buildWrappedData(inputs: WrappedInputs): WrappedData {
   const now = inputs.now ?? new Date();
 
   // ── hero stats (always defined; zero-safe) ──
+  // The % is the JAPAN figure, never the JP+China blend — the share card must not report a
+  // misleading "全国 %". km/prefectures stay cross-country sums (legit totals, not percentages).
+  const jp = headline.byCountry.JP;
   const stats: WrappedStat[] = [
-    { value: fmtPct(headline.pctNational), unit: '%', caption: '全国の鉄道' },
-    { value: fmtPct(headline.pctHSR), unit: '%', caption: '新幹線・高速鉄道' },
+    { value: fmtPct(jp?.pctNational ?? headline.pctNational), unit: '%', caption: '全国の鉄道' },
+    { value: fmtPct(jp?.pctHSR ?? headline.pctHSR), unit: '%', caption: '新幹線・高速鉄道' },
     { value: fmtInt(headline.prefectures), unit: '', caption: '都道府県・地域' },
   ];
 

@@ -180,24 +180,36 @@ export const dataDegraded: Readable<boolean> = derived(
 
 let initialized = false;
 
-/** The built N02 RailGeoPackage, served as a static asset (built by pipeline/build-jp.ts). */
+/** Built RailGeoPackages, served as static assets (pipeline/build-jp.ts, build-cn.ts). */
 const JP_PACKAGE_URL = `${import.meta.env.BASE_URL}rail/jp-2025.json`;
+const CN_PACKAGE_URL = `${import.meta.env.BASE_URL}rail/cn-jinghu-2025.json`;
 
-/**
- * Fetch the real JP network package. Returns `{ ok:false, pkgs: STUB }` on any failure
- * (offline, 404, malformed) so the app always boots with SOMETHING rather than a blank map.
- */
-async function fetchJpPackages(): Promise<{ ok: boolean; pkgs: RailGeoPackage[] }> {
+/** Fetch one package; null on any failure (offline, 404, malformed) so callers can degrade. */
+async function fetchOne(url: string): Promise<RailGeoPackage | null> {
   try {
-    const res = await fetch(JP_PACKAGE_URL);
+    const res = await fetch(url);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const pkg = (await res.json()) as RailGeoPackage;
     if (!pkg?.lines?.length || !pkg?.segments?.length) throw new Error('empty package');
-    return { ok: true, pkgs: [pkg] };
+    return pkg;
   } catch (err) {
-    console.warn(`[store] real JP package unavailable (${String(err)}); using stub`);
+    console.warn(`[store] package ${url} unavailable (${String(err)})`);
+    return null;
+  }
+}
+
+/**
+ * Load the real network packages with PER-PACKAGE handling. JP is REQUIRED — its failure falls back
+ * to the stub so the app always boots with SOMETHING. The CN corridor is ADDITIVE: if it 404s or is
+ * malformed we boot JP-only rather than failing the whole map. `ok` reflects only the required JP load.
+ */
+async function fetchPackages(): Promise<{ ok: boolean; pkgs: RailGeoPackage[] }> {
+  const [jp, cn] = await Promise.all([fetchOne(JP_PACKAGE_URL), fetchOne(CN_PACKAGE_URL)]);
+  if (!jp) {
+    console.warn('[store] real JP package unavailable; using stub');
     return { ok: false, pkgs: STUB_PACKAGES };
   }
+  return { ok: true, pkgs: cn ? [jp, cn] : [jp] };
 }
 
 let retryBound = false;
@@ -219,7 +231,7 @@ function bindFallbackRetry(): void {
     if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
     retryInFlight = true;
     try {
-      const { ok, pkgs } = await fetchJpPackages();
+      const { ok, pkgs } = await fetchPackages();
       if (ok) {
         packages.set(pkgs);
         usingFallback.set(false);
@@ -237,7 +249,7 @@ function bindFallbackRetry(): void {
 export async function init(): Promise<void> {
   if (initialized) return;
   initialized = true;
-  const { ok, pkgs } = await fetchJpPackages();
+  const { ok, pkgs } = await fetchPackages();
   packages.set(pkgs);
   usingFallback.set(!ok);
   if (!ok) bindFallbackRetry();

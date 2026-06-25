@@ -59,9 +59,16 @@
         {:else if $activeTab === 'import'}
           <ImportScreen />
         {:else}
-          <StatCard pct={$headline.pctNational} riddenKm={$headline.riddenKm} caption="全国" />
-          {#if $headline.hsrTotalKm > 0}
-            <StatCard label="新幹線" pct={$headline.pctHSR} riddenKm={$headline.hsrRiddenKm} caption="高速鉄道" />
+          {@const jp = $headline.byCountry.JP}
+          {@const cn = $headline.byCountry.CN}
+          {#if jp}
+            <StatCard pct={jp.pctNational} riddenKm={jp.riddenKm} caption="日本 全国" />
+            {#if jp.hsrTotalKm > 0}
+              <StatCard label="新幹線" pct={jp.pctHSR} riddenKm={jp.hsrRiddenKm} caption="高速鉄道" />
+            {/if}
+          {/if}
+          {#if cn && cn.riddenKm > 0}
+            <StatCard label="中国" pct={cn.pctNational} riddenKm={cn.riddenKm} caption="高速鉄道" />
           {/if}
           <p class="hint u-muted">路線を選び、地図上で駅Aと駅Bをタップして記録します。</p>
         {/if}
