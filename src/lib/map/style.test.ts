@@ -19,6 +19,10 @@ import {
   SEGMENTS_GLOW_LAYER,
   STATIONS_LAYER,
   ROMAJI_ATTRIBUTION,
+  minzForRank,
+  RANK_MINZOOM,
+  lodFilter,
+  litStationIds,
 } from './style';
 import { tokens } from '../../design/tokens';
 import { STUB_PACKAGES, JP_PACKAGE } from '../../fixtures/stubPackage';
@@ -223,5 +227,44 @@ describe('C5 station features carry stationGroupId (for the hover popup)', () =>
       (f) => f.properties.lineId === 'jr-yamanote' && f.properties.name === '神田',
     )!;
     expect('stationGroupId' in kanda.properties).toBe(false);
+  });
+});
+
+describe('C9 zoom-tiered LOD (minz + lodFilter + adjacency memoize)', () => {
+  it('minzForRank maps tier → reveal zoom; undefined ⇒ 0 (always visible)', () => {
+    expect(RANK_MINZOOM).toEqual([4, 7, 9, 11, 12]);
+    expect(minzForRank(0)).toBe(4); // Shinkansen — national
+    expect(minzForRank(2)).toBe(9); // urban — city zoom
+    expect(minzForRank(4)).toBe(12); // minor — close zoom
+    expect(minzForRank(undefined)).toBe(0); // unranked (stub/CN) ⇒ never culled
+  });
+
+  it('buildSegmentCollection stamps minz from the line rank', () => {
+    const pkg = structuredClone(JP_PACKAGE);
+    pkg.lines.forEach((l) => { l.rank = l.lineId === 'jr-yamanote' ? 2 : 0; });
+    const fc = buildSegmentCollection([pkg]);
+    const yamanoteSeg = fc.features.find((f) => f.properties.lineId === 'jr-yamanote')!;
+    expect(yamanoteSeg.properties.minz).toBe(9); // rank 2 → 9
+  });
+
+  it('lodFilter = show by tier OR any always-visible set (ridden, selected)', () => {
+    const f = lodFilter('segmentId', ['a', 'b'], ['c']) as unknown[];
+    expect(f[0]).toBe('any');
+    expect(f[1]).toEqual(['>=', ['zoom'], ['get', 'minz']]); // the tier clause
+    expect(f[2]).toEqual(['in', ['get', 'segmentId'], ['literal', ['a', 'b']]]); // ridden
+    expect(f[3]).toEqual(['in', ['get', 'segmentId'], ['literal', ['c']]]); // selected
+  });
+
+  it('litStationIds is correct and memoizes the adjacency by package identity', () => {
+    const pkgs = STUB_PACKAGES;
+    const seg = JP_PACKAGE.segments[0];
+    const a = litStationIds([seg.segmentId], pkgs);
+    expect(a).toContain(seg.fromStationId);
+    expect(a).toContain(seg.toStationId);
+    // same array identity → cached path returns an equal result (no rebuild observable here,
+    // but correctness must hold across calls)
+    expect(litStationIds([seg.segmentId], pkgs)).toEqual(a);
+    // a fresh array (post-fallback-retry swap) still resolves correctly
+    expect(litStationIds([seg.segmentId], [...pkgs])).toEqual(a);
   });
 });

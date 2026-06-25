@@ -29,6 +29,7 @@ export interface RailLine {
   nameRoma?: string;     // romaji line name (山手線 → "Yamanote Line"); OSM/Wikidata-sourced [steering bump]
   color?: string;        // official line color (hex); ALWAYS set — sourced or operator-default [steering bump]
   logo?: string;         // path under /rail/logos/ to the line's logo, only when sourced [steering bump]
+  rank?: 0 | 1 | 2 | 3 | 4; // map LOD tier: 0 Shinkansen … 4 minor. Drives per-segment minz (zoom reveal). [steering bump]
   country: Country;
   isHSR: boolean;        // JP: keyed off 事業者種別 N02_002==1
   isLoop: boolean;
