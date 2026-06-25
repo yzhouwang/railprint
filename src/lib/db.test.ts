@@ -40,6 +40,12 @@ describe('addRideSegments (atomic dedup)', () => {
     expect(await segIds()).toEqual(['L:0-1', 'L:1-2', 'L:2-3']); // no duplicate L:0-1
   });
 
+  it('dedups repeats WITHIN one candidate set (a segmentId passed twice persists once)', async () => {
+    const out = await addRideSegments([ev('L:0-1'), ev('L:0-1'), ev('L:1-2')]);
+    expect(out.map((e) => e.segmentId).sort()).toEqual(['L:0-1', 'L:1-2']);
+    expect(await segIds()).toEqual(['L:0-1', 'L:1-2']); // not L:0-1 twice
+  });
+
   it('writes nothing when every candidate is already present', async () => {
     await putEvents([ev('L:0-1'), ev('L:1-2')]);
     expect(await addRideSegments([ev('L:0-1'), ev('L:1-2')])).toEqual([]);

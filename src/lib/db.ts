@@ -60,10 +60,13 @@ export async function addRideSegments(candidates: RideEvent[]): Promise<RideEven
   if (candidates.length === 0) return [];
   return db.transaction('rw', db.rideEvents, async () => {
     const ids = candidates.map((e) => e.segmentId);
-    const present = new Set(
+    // Seed with the already-persisted segments, then add each fresh segmentId as it passes —
+    // so the filter dedups against BOTH the log AND repeats within this candidate set (a caller
+    // that passes the same segmentId twice can't self-duplicate, independent of segmentsBetween).
+    const seen = new Set(
       (await db.rideEvents.where('segmentId').anyOf(ids).toArray()).map((e) => e.segmentId),
     );
-    const fresh = candidates.filter((e) => !present.has(e.segmentId));
+    const fresh = candidates.filter((e) => (seen.has(e.segmentId) ? false : (seen.add(e.segmentId), true)));
     if (fresh.length) await db.rideEvents.bulkAdd(fresh);
     return fresh;
   });

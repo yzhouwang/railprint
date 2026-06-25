@@ -222,6 +222,12 @@
   }
   function exposeE2EHandle(): void {
     if (!e2eEnabled() || !map) return;
+    // Cancel any poll chain still running from a prior mount/HMR before starting a new one,
+    // so an earlier chain can't keep ticking against a stale map.
+    if (e2eReadyTimer !== null) {
+      clearTimeout(e2eReadyTimer);
+      e2eReadyTimer = null;
+    }
     const w = window as unknown as E2EWindow;
     w.__map = map;
     w.__mapReady = false;
