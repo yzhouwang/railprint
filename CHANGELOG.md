@@ -2,6 +2,18 @@
 
 All notable changes to RailPrint are documented here.
 
+## [0.7.0.0] - 2026-06-25
+
+### Added
+- **Record a ride that spans more than one line.** A through-service like 特急ひのとり (津 → 大阪難波, which runs 近鉄名古屋線 → 大阪線 → 難波線) used to be impossible to log — marking only worked when both stations sat on the same line. Now, when you search two stations by name, the app finds the actual route(s) between them across the whole network and offers them in a route-picker: each candidate shows its line sequence (名古屋線 › 大阪線 › 難波線), distance, and number of lines, with the most direct route suggested first. Pick the one you rode and every leg lights at once, recorded as a single trip. If the two stations have no rail path between them, you get a clear message plus a one-tap "record each segment separately" fallback instead of a dead end.
+
+### Changed
+- Station-search marking is now route-based: a single-line ride is just the simplest (zero-change) route, so the route-picker also subsumes the old "which of these shared lines?" prompt. Tap-the-map marking is unchanged (pick a line, tap two stations). A route on the line you actually searched is always offered first, so a parallel Shinkansen between the same two stations can't get recorded by accident (and silently inflate your HSR %).
+- Contract: `RouteCandidate`.
+
+### Internal
+- New `route.ts`: a runtime graph (per-line station instances; segment edges weighted by km + zero-cost transfer edges between same-station-group instances) with Yen's k-shortest-paths over a lexicographic (line-changes, then km) cost, memoized per data package, with caps so a cross-country pair can't stall the UI. A whole route is recorded as one trip; re-marking a journey re-groups its already-ridden legs into the new trip by updating them in place — never duplicating the durable log. A Playwright/SwiftShader e2e drives the full search → route-picker → record flow.
+
 ## [0.6.1.0] - 2026-06-25
 
 ### Fixed
