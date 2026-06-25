@@ -12,3 +12,8 @@ data/raw/
 .gstack/
 rail-geo/generated/
 data/n02/
+
+# internal working docs — kept locally, not published (root-anchored so docs/DESIGN.md stays tracked)
+/AGENTS.md
+/DESIGN.md
+/TODOS.md
