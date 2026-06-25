@@ -45,6 +45,8 @@ export interface SegmentFeatureProps {
   isHSR: boolean;
   /** STATIC per-segment official line color (hex). The line hue keys off ['get','color']. */
   color: string;
+  /** C9 LOD: the zoom this segment's line appears at (from RailLine.rank). 0 ⇒ always visible. */
+  minz: number;
 }
 export interface StationFeatureProps {
   stationId: string;
@@ -54,6 +56,44 @@ export interface StationFeatureProps {
   /** Cross-line station group (N02_005g) — the hover popup keys geo.stationGroupById off it. */
   stationGroupId?: string;
   seq: number;
+  /** C9 LOD: this station record's reveal zoom = its OWN line's minz. */
+  minz: number;
+}
+
+// ───────────────────────────── C9 zoom-tiered LOD ─────────────────────────────
+// Each line carries a RailLine.rank 0-4 (0 Shinkansen … 4 minor). We map rank → a reveal
+// zoom and stamp it per segment/station as `minz`. The line + station layers then filter
+// ['any', zoom>=minz, isRidden] — show by tier OR if you've ridden it (visible at every zoom).
+// Lines with no rank (stub / non-JP boundary packages) default to minz 0 = always visible.
+// Reveal zooms per rank. LINES load early and generously — stations are gated SEPARATELY by
+// spacing (C9b), so a line showing early is just a clean stroke, not a cluttered dot-mess, which
+// lets us be aggressive here: z3 Shinkansen, z4 trunk (both at the national view), urban/local/
+// minor at z5/6/7 → the whole network is up by region/metro zoom. Was [4,6,7,8,9] (still too high).
+export const RANK_MINZOOM = [3, 4, 5, 6, 7] as const;
+export function minzForRank(rank: number | undefined): number {
+  return rank == null ? 0 : (RANK_MINZOOM[rank] ?? 0);
+}
+
+// C9b — STATION dot LOD by AVERAGE SPACING. A line is readable well before its dots are: a dense
+// line (山手線, subways ~1 km apart) crams ~30 dots into a tiny on-screen loop. So a dot reveals
+// only once adjacent dots would clear ~STATION_DOT_GAP_PX on screen — derived from the line's mean
+// inter-station distance. Web-mercator at ~lat 35°: km/px at zoom z = 40075·cosφ/(256·2^z), so a
+// gap of G px needs 2^z ≥ G·40075/(256·cosφ·avgKm); STATION_LOD_K folds those constants.
+const STATION_DOT_GAP_PX = 22;
+const STATION_LOD_K = (STATION_DOT_GAP_PX * 40075.017) / (256 * Math.cos((35 * Math.PI) / 180));
+const STATION_MINZ_CAP = 14; // never hold a dot past street zoom, however dense
+
+/** Reveal zoom for a line's STATION dots from its mean spacing; never earlier than the line itself. */
+export function stationMinzForLine(lineMinz: number, totalKm: number, stationCount: number): number {
+  if (stationCount < 2 || totalKm <= 0) return lineMinz; // no spacing to reason about
+  const avgSpacingKm = totalKm / (stationCount - 1);
+  const byDensity = Math.round(Math.log2(STATION_LOD_K / avgSpacingKm));
+  return Math.min(STATION_MINZ_CAP, Math.max(lineMinz, byDensity));
+}
+
+/** A maplibre membership test: feature's `prop` ∈ `ids` (empty ⇒ matches nothing). */
+export function inLiteral(prop: string, ids: string[]): unknown[] {
+  return ['in', ['get', prop], ['literal', ids]];
 }
 
 export type SegmentCollection = GeoJSON.FeatureCollection<GeoJSON.LineString, SegmentFeatureProps>;
@@ -78,7 +118,17 @@ export const CASING_COLOR = tokens.ink;
 
 /** A maplibre filter that matches a feature whose `prop` is in `ids` (empty ⇒ matches nothing). */
 export function inFilter(prop: 'segmentId' | 'stationId', ids: string[]): unknown[] {
-  return ['in', ['get', prop], ['literal', ids]];
+  return inLiteral(prop, ids);
+}
+
+/**
+ * C9 — the LOD visibility filter: show a feature once the zoom reaches its tier (`minz`), OR if
+ * it appears in any `alwaysVisible` set (the ridden set → your network shows at EVERY zoom; the
+ * SELECTED line → you can see + tap it even zoomed out). maplibre-gl 5.24 filters accept
+ * `['zoom']` mixed with feature data (verified in its source).
+ */
+export function lodFilter(idProp: 'segmentId' | 'stationId', ...alwaysVisible: string[][]): unknown[] {
+  return ['any', ['>=', ['zoom'], ['get', 'minz']], ...alwaysVisible.map((ids) => inLiteral(idProp, ids))];
 }
 
 /**
@@ -91,7 +141,11 @@ export function buildSegmentCollection(packages: RailGeoPackage[]): SegmentColle
   const features: GeoJSON.Feature<GeoJSON.LineString, SegmentFeatureProps>[] = [];
   for (const pkg of packages) {
     const colorByLine = new Map<string, string>();
-    for (const l of pkg.lines) colorByLine.set(l.lineId, l.color ?? DEFAULT_LINE_COLOR);
+    const minzByLine = new Map<string, number>();
+    for (const l of pkg.lines) {
+      colorByLine.set(l.lineId, l.color ?? DEFAULT_LINE_COLOR);
+      minzByLine.set(l.lineId, minzForRank(l.rank));
+    }
     for (const seg of pkg.segments) {
       features.push({
         type: 'Feature',
@@ -102,6 +156,7 @@ export function buildSegmentCollection(packages: RailGeoPackage[]): SegmentColle
           lineId: seg.lineId,
           isHSR: seg.isHSR,
           color: colorByLine.get(seg.lineId) ?? DEFAULT_LINE_COLOR,
+          minz: minzByLine.get(seg.lineId) ?? 0,
         },
       });
     }
@@ -116,7 +171,25 @@ export function buildSegmentCollection(packages: RailGeoPackage[]): SegmentColle
 export function buildStationCollection(packages: RailGeoPackage[]): StationCollection {
   const features: GeoJSON.Feature<GeoJSON.Point, StationFeatureProps>[] = [];
   for (const pkg of packages) {
+    // Per line: total track km (from segment km), the line's own reveal zoom, the spacing-derived
+    // DOT reveal zoom, and the two TERMINI (ends of a non-loop line) which anchor at the line's zoom.
+    const kmByLine = new Map<string, number>();
+    for (const s of pkg.segments) kmByLine.set(s.lineId, (kmByLine.get(s.lineId) ?? 0) + s.km);
+    const lineMinzByLine = new Map<string, number>();
+    const dotMinzByLine = new Map<string, number>();
+    const terminiByLine = new Map<string, Set<string>>();
+    for (const l of pkg.lines) {
+      const lineMinz = minzForRank(l.rank);
+      const n = l.stationOrder.length;
+      lineMinzByLine.set(l.lineId, lineMinz);
+      dotMinzByLine.set(l.lineId, stationMinzForLine(lineMinz, kmByLine.get(l.lineId) ?? 0, n));
+      if (!l.isLoop && n >= 2) terminiByLine.set(l.lineId, new Set([l.stationOrder[0], l.stationOrder[n - 1]]));
+    }
     for (const st of pkg.stations) {
+      const isTerminus = terminiByLine.get(st.lineId)?.has(st.stationId) ?? false;
+      const minz = isTerminus
+        ? (lineMinzByLine.get(st.lineId) ?? 0)
+        : (dotMinzByLine.get(st.lineId) ?? 0);
       features.push({
         type: 'Feature',
         id: st.stationId,
@@ -128,6 +201,7 @@ export function buildStationCollection(packages: RailGeoPackage[]): StationColle
           ...(st.nameRoma ? { nameRoma: st.nameRoma } : {}),
           ...(st.stationGroupId ? { stationGroupId: st.stationGroupId } : {}),
           seq: st.seq,
+          minz,
         },
       });
     }
@@ -203,12 +277,25 @@ export function glowOpacityExpression(litArray: string[]): unknown[] {
  * station set from the lit segment set + the package adjacency, then key the dot color/
  * radius off ['in', stationId, litStations]. Emerald (ridden) vs grey (unridden).
  */
+// P1 perf: the segment→{from,to} adjacency is STATIC per package set. `repaint()` runs up to
+// 48× during an import flood; rebuilding this 9,442-entry map each time was the flagged O(n)
+// landmine. Memoize by the `packages` ARRAY IDENTITY (a WeakMap, so a new array after the
+// fallback-retry self-heal auto-invalidates — NOT keyed by version, which collides JP/CN stub).
+const segmentIndexCache = new WeakMap<RailGeoPackage[], Map<string, RailSegment>>();
+function segmentIndex(packages: RailGeoPackage[]): Map<string, RailSegment> {
+  let byId = segmentIndexCache.get(packages);
+  if (!byId) {
+    byId = new Map<string, RailSegment>();
+    for (const pkg of packages) for (const s of pkg.segments) byId.set(s.segmentId, s);
+    segmentIndexCache.set(packages, byId);
+  }
+  return byId;
+}
+
 export function litStationIds(litSegmentIds: string[], packages: RailGeoPackage[]): string[] {
-  const litSet = new Set(litSegmentIds);
-  const byId = new Map<string, RailSegment>();
-  for (const pkg of packages) for (const s of pkg.segments) byId.set(s.segmentId, s);
+  const byId = segmentIndex(packages);
   const stations = new Set<string>();
-  for (const id of litSet) {
+  for (const id of litSegmentIds) {
     const seg = byId.get(id);
     if (!seg) continue;
     stations.add(seg.fromStationId);
@@ -248,23 +335,19 @@ export function selectedLineStationIds(line: RailLine | null, packages: RailGeoP
  * station's per-line colors live in the hover popup, not on the dot.)
  */
 export function stationColorExpression(litStationArray: string[]): unknown[] {
-  return [
-    'case',
-    ['in', ['get', 'stationId'], ['literal', litStationArray]],
-    tokens.ink,
-    tokens.railDim,
-  ];
+  return ['case', inLiteral('stationId', litStationArray), tokens.ink, tokens.railDim];
 }
 export function stationRadiusExpression(litStationArray: string[]): unknown[] {
   // Ridden dots a touch larger (reinforces thickness-not-just-hue). Scales with zoom.
+  const lit = inLiteral('stationId', litStationArray);
   return [
     'interpolate',
     ['linear'],
     ['zoom'],
     5,
-    ['case', ['in', ['get', 'stationId'], ['literal', litStationArray]], 2.4, 1.4],
+    ['case', lit, 2.4, 1.4],
     12,
-    ['case', ['in', ['get', 'stationId'], ['literal', litStationArray]], 5, 3],
+    ['case', lit, 5, 3],
   ];
 }
 
@@ -364,10 +447,12 @@ export function buildBaseStyle({
         },
       },
       // The base rail line — STATIC official color (C1) + lit-keyed opacity + width (C2).
+      // C9 LOD: only draw once zoom reaches the line's tier (minz) OR it's ridden/selected.
       {
         id: SEGMENTS_LAYER,
         type: 'line',
         source: SEGMENTS_SOURCE,
+        filter: lodFilter('segmentId', lit, selected),
         layout: { 'line-cap': 'round', 'line-join': 'round' },
         paint: {
           'line-color': lineColorExpression(),
@@ -379,6 +464,8 @@ export function buildBaseStyle({
         id: STATIONS_LAYER,
         type: 'circle',
         source: STATIONS_SOURCE,
+        // C9 LOD: a dot appears when its line's tier (minz) is reached, OR if ridden/selected.
+        filter: lodFilter('stationId', litStations, selectedStations),
         paint: {
           'circle-color': stationColorExpression(litStations),
           'circle-radius': stationRadiusExpression(litStations),

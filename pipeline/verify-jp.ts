@@ -18,6 +18,8 @@ import {
   logoMatchesOperatorFamily,
 } from './line-style.ts';
 import type { LogoIndex, WikiStyleCache } from './line-style.ts';
+import { rankHistogram } from './line-rank.ts';
+import type { RailLineRank } from './line-rank.ts';
 
 const pkg = JSON.parse(readFileSync('public/rail/jp-2025.json', 'utf8')) as RailGeoPackage;
 const stationReadings = JSON.parse(readFileSync('data/readings/station-readings.json', 'utf8')) as Record<string, { romaji?: string }>;
@@ -65,6 +67,51 @@ const health: Health[] = pkg.lines.map((line) => {
 
 // ── Romaji coverage and irregular readings. ──
 let failures = 0;
+
+console.log('━━━ rank LOD tiers ━━━');
+type RankedLine = RailLine & { rank?: RailLineRank };
+const rankedPkgLines = pkg.lines as RankedLine[];
+function isRailLineRank(rank: unknown): rank is RailLineRank {
+  return rank === 0 || rank === 1 || rank === 2 || rank === 3 || rank === 4;
+}
+const rankedLines = rankedPkgLines.filter((line) => isRailLineRank(line.rank));
+const rankCoverageOk = rankedLines.length === rankedPkgLines.length;
+if (!rankCoverageOk) failures += 1;
+console.log(`  ${rankCoverageOk ? '✓' : '✗'} rank coverage: ${rankedLines.length}/${rankedPkgLines.length}`);
+if (!rankCoverageOk) {
+  const missing = rankedPkgLines
+    .filter((line) => !isRailLineRank(line.rank))
+    .slice(0, 8);
+  for (const line of missing) console.log(`    invalid rank: ${line.lineId} rank=${String(line.rank)}`);
+}
+
+const ranks = rankHistogram(rankedPkgLines);
+const hsrLineCount = rankedPkgLines.filter((line) => line.isHSR).length;
+const tier0Ok = ranks[0] === hsrLineCount;
+if (!tier0Ok) failures += 1;
+console.log(`  ${tier0Ok ? '✓' : '✗'} tier-0 count equals HSR line count: ${ranks[0]}/${hsrLineCount}`);
+const emptyTiers = ([0, 1, 2, 3, 4] as RailLineRank[]).filter((rank) => ranks[rank] === 0);
+if (emptyTiers.length) failures += 1;
+console.log(`  ${emptyTiers.length === 0 ? '✓' : '✗'} no empty tiers`);
+console.log(`  histogram: rank0=${ranks[0]} rank1=${ranks[1]} rank2=${ranks[2]} rank3=${ranks[3]} rank4=${ranks[4]}`);
+
+function expectLineRank(label: string, operator: string, name: string, expected: RailLineRank): void {
+  const id = lineId(operator, name);
+  const line = rankedPkgLines.find((candidate) => candidate.lineId === id);
+  const ok = line?.rank === expected;
+  if (!ok) failures += 1;
+  console.log(`  ${ok ? '✓' : '✗'} ${label}→${expected}${line ? ` (${line.lineId}, rank=${String(line.rank)})` : ' (missing)'}`);
+}
+
+expectLineRank('東海道新幹線', '東海旅客鉄道', '東海道新幹線', 0);
+expectLineRank('東海道本線', '東海旅客鉄道', '東海道線', 1);
+expectLineRank('近鉄大阪線', '近畿日本鉄道', '大阪線', 1);
+expectLineRank('山手線', '東日本旅客鉄道', '山手線', 2);
+expectLineRank('大阪環状線', '西日本旅客鉄道', '大阪環状線', 2);
+expectLineRank('只見線', '東日本旅客鉄道', '只見線', 3);
+expectLineRank('広島電鉄 本線', '広島電鉄', '本線', 4);
+
+console.log('');
 
 console.log('━━━ operator coverage ━━━');
 const linesWithOperator = pkg.lines.filter((l) => typeof l.operator === 'string' && l.operator.trim().length > 0);

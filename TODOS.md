@@ -14,11 +14,10 @@
 
 ## Deferred (captured by /ship 2026-06-24 — N02 integration review + adversarial)
 
-### Map render perf at scale
-- **Priority:** P1
-- **What:** `litStationIds` (map/style.ts) rebuilds a ~9,442-entry segment→station Map from scratch on every repaint; `MapView.repaint()` is the per-frame flood callback (up to 48×) → ~453k Map inserts per import flood on the main thread. Memoize the static adjacency once on package load; when measured, precompute a `lit` boolean into feature props (or feature-state) so paint is O(1) per feature instead of O(features × ridden-set).
-- **Why:** Flagged CRITICAL by the adversarial pass; matches the eng-review's deferred "ship-as-is + measure" render-perf decision. Bites flood animations and completionist users (thousands of ridden segments).
-- **Depends on:** real-device /qa showing the jank before optimizing (boring-by-default).
+### Map render perf at scale — PARTIALLY DONE (v0.6.0.0)
+- **Priority:** P1 → P3 (residual)
+- **Done (v0.6.0.0):** the ~9,442-entry segment→station adjacency is now memoized by package IDENTITY (a WeakMap), so `litStationIds()` no longer rebuilds it on every repaint. Zoom-tiered LOD also cuts the rendered-feature count at low zoom, shrinking the `['in', id, literal]` cost.
+- **Residual (P3, measure-first):** the per-paint `['in', stationId, ['literal', litArray]]` is still O(rendered × ridden-set) (an indexOf, per Codex). The O(1) fix is per-feature state, which touches the lit channel architecture — only do it if a real-device flood still janks.
 
 ### markRide concurrent-mark race
 - **Priority:** P2

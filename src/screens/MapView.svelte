@@ -31,6 +31,7 @@
     selectedLineSegmentIds,
     selectedLineStationIds,
     inFilter,
+    lodFilter,
     DEFAULT_LINE_COLOR,
     SEGMENTS_LAYER,
     SEGMENTS_GLOW_LAYER,
@@ -310,6 +311,20 @@
     map.setPaintProperty(SEGMENTS_GLOW_LAYER, 'line-opacity', glowOpacityExpression(lit));
     map.setPaintProperty(STATIONS_LAYER, 'circle-color', stationColorExpression(litStations));
     map.setPaintProperty(STATIONS_LAYER, 'circle-radius', stationRadiusExpression(litStations));
+    applyLodFilters(lit, litStations);
+  }
+
+  // C9 LOD — refresh the zoom-tier visibility filters. The "always-visible" clause is the
+  // current ridden set + the selected line, so your ridden network and a picked line stay
+  // visible at every zoom while everything else reveals by tier. Called on every lit change
+  // (the flood) AND on selection change (so a picked minor line is visible to tap).
+  function applyLodFilters(lit: string[], litStations: string[]): void {
+    if (!map || !styleLoaded) return;
+    const pkgs = get(packages);
+    const selSeg = selectedLine ? selectedLineSegmentIds(selectedLine, pkgs) : [];
+    const selSt = selectedLine ? selectedLineStationIds(selectedLine, pkgs) : [];
+    map.setFilter(SEGMENTS_LAYER, lodFilter('segmentId', lit, selSeg));
+    map.setFilter(STATIONS_LAYER, lodFilter('stationId', litStations, selSt));
   }
 
   // React to litSegmentIds changes: small/equal → snap; big grow → D5 flood wave.
@@ -345,6 +360,9 @@
     const stIds = selectedLineStationIds(line, get(packages));
     map.setFilter(SELECTION_CASING_LAYER, inFilter('segmentId', segIds));
     map.setFilter(HIGHLIGHT_STATION_LAYER, inFilter('stationId', stIds));
+    // C9 LOD: re-apply visibility so the selected line shows even if its tier zoom isn't reached.
+    const curLit = get(litSegmentIds);
+    applyLodFilters(curLit, litStationIds(curLit, get(packages)));
   });
 
   // ── marking interaction ──────────────────────────────────────────────────────
