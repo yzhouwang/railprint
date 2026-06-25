@@ -166,6 +166,7 @@
           fadeDuration: prefersReducedMotion() ? 0 : 200,
         });
         map.touchZoomRotate?.disableRotation?.();
+        exposeE2EHandle();
 
         map.on('load', () => {
           if (disposed) return;
@@ -195,8 +196,48 @@
       popup = null;
       map?.remove?.();
       map = null;
+      clearE2EHandle();
     };
   });
+
+  // ── QA hook (E2E only) ──────────────────────────────────────────────────────
+  // Headless `$B` browse has no WebGL and CDP can't drive zoom, so the zoom-tiered
+  // LOD has been un-QA-able. When the page is opened with ?e2e=1 we expose the live
+  // maplibre map + a ready flag on window so a Playwright/SwiftShader run can call
+  // setZoom + queryRenderedFeatures and assert which line tiers are visible. Gated on
+  // the flag so NO global map handle ships to real users. See tests/e2e/map-lod.spec.ts.
+  interface E2EWindow {
+    __map?: unknown;
+    __mapReady?: boolean;
+  }
+  function e2eEnabled(): boolean {
+    return (
+      typeof window !== 'undefined' &&
+      new URLSearchParams(window.location.search).has('e2e')
+    );
+  }
+  function exposeE2EHandle(): void {
+    if (!e2eEnabled() || !map) return;
+    const w = window as unknown as E2EWindow;
+    w.__map = map;
+    w.__mapReady = false;
+    // Readiness polls map.loaded() rather than the 'load'/'idle' events: under a flaky or
+    // offline basemap (e.g. CI with no internet) the raster source retries forever so those
+    // events never fire, but loaded() still flips true once the local rail layers are
+    // rendered and queryable — which is all the LOD assertions need.
+    const m = map;
+    const markReady = (): void => {
+      if (m.loaded()) w.__mapReady = true;
+      else setTimeout(markReady, 100);
+    };
+    markReady();
+  }
+  function clearE2EHandle(): void {
+    if (typeof window === 'undefined') return;
+    const w = window as unknown as E2EWindow;
+    delete w.__map;
+    w.__mapReady = false;
+  }
 
   function fitToNetwork(): void {
     const pkgs = get(packages);

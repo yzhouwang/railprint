@@ -14,7 +14,8 @@
     "test": "node --test tests/geometry/*.test.ts && node pipeline/verify-jp.ts && vitest run",
     "test:geometry": "node --test tests/geometry/*.test.ts",
     "test:app": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "dexie": "^4.0.11",
@@ -23,6 +24,7 @@
     "wanakana": "^5.3.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@sveltejs/vite-plugin-svelte": "^5.0.3",
     "@tsconfig/svelte": "^5.0.4",
     "@types/geojson": "^7946.0.14",
