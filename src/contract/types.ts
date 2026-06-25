@@ -108,6 +108,23 @@ export type SegmentsBetween = (
   lineId: string, fromStationId: string, toStationId: string, pkg: RailGeoPackage
 ) => string[]; // throws if stations are not on the same line
 
+// Cross-line route-finding (search-mode). A candidate path A→B across one or more lines, found by
+// Yen k-shortest over the segment + transfer graph (src/lib/route.ts, engine lane). The route-picker
+// renders these; marking lights the chosen route's segments under one trip. [steering bump]
+export interface RouteCandidate {
+  segmentIds: string[];   // segments to light, in travel order A→B
+  lines: string[];        // distinct lineIds traversed, in order (length 1 = single-line, 0-change route)
+  totalKm: number;
+  lineChanges: number;    // line-id switches along the path — NOT "transfers" (a through-train is one seat)
+  railGeoVersion: string; // pinned from the (single) package the route was found in
+}
+// Engine-lane route-finder. Pure, deterministic; internally memoizes the graph by package identity.
+// Returns up to k candidates ranked (lineChanges asc, then totalKm asc); every single-line (0-change)
+// route is preserved (never dropped by the k cap). [] when A==B or no path exists.
+export type FindRoutes = (
+  pkg: RailGeoPackage, fromGroupKey: string, toGroupKey: string, k?: number
+) => RouteCandidate[];
+
 // ───────────────────────────────── IMPORT ───────────────────────────────────
 // Importer (Opus 4.8, T4) and the D2 review-and-resolve screen are BOTH Opus 4.8;
 // these types are intra-lane but kept here so the engine's golden tests can assert them.
