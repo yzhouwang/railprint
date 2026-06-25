@@ -12,7 +12,8 @@
   import Button from '../components/Button.svelte';
   import Pill from '../components/Pill.svelte';
   import Diorama from '../components/Diorama.svelte';
-  import { headline, coverages, geo } from '../lib/store';
+  import { headline, coverages, geo, events } from '../lib/store';
+  import { summarizeDiary } from '../lib/trips';
   import { toast } from '../lib/ui';
   import { buildWrappedData, renderWrappedBlobSync } from '../lib/wrapped/card';
   import { ensureWrappedFonts } from '../lib/wrapped/font';
@@ -23,6 +24,57 @@
   const wrapped = $derived(
     buildWrappedData({ headline: $headline, coverages: $coverages, geo: $geo }),
   );
+
+  // 旅の記録 — the journey diary (D2: date-led rows; a repeat ride is just another dated row,
+  // never collapsed). Built from summarizeDiary over each loaded package's events, then sorted
+  // newest-first. Endpoints + line/model names are resolved against the geo index here so the
+  // pure trips lib stays geometry-faithful and name-free.
+  interface DiaryRow {
+    /** unique across packages (a tripId can repeat across JP/CN once China lands). */
+    key: string;
+    tripId: string;
+    date?: string;
+    from: string;
+    to: string;
+    km: number;
+    segCount: number;
+    lineLabel: string;
+    trainModels: string[];
+    createdAt: string;
+  }
+  const diaryRows = $derived.by(() => {
+    const idx = $geo;
+    const stationName = (id: string) => idx.stationById.get(id)?.name ?? '?';
+    const rows: DiaryRow[] = [];
+    for (const { pkg } of $coverages) {
+      for (const t of summarizeDiary($events, pkg).trips) {
+        const lineNames: string[] = [];
+        for (const id of t.lineIds) {
+          const n = idx.lineById.get(id)?.name;
+          if (n) lineNames.push(n);
+        }
+        rows.push({
+          key: `${pkg.country}:${t.tripId}`,
+          tripId: t.tripId,
+          date: t.date,
+          from: t.fromStationId ? stationName(t.fromStationId) : '?',
+          to: t.toStationId ? stationName(t.toStationId) : '?',
+          km: t.km,
+          segCount: t.segmentIds.length,
+          lineLabel: lineNames.length === 1 ? lineNames[0] : `${t.lineIds.length}路線`,
+          trainModels: t.trainModels,
+          createdAt: t.createdAt,
+        });
+      }
+    }
+    // Newest journeys first (createdAt is the stable key; date may be absent on imports).
+    rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return rows;
+  });
+
+  // "2025-11-03" → "2025.11.03"; undated imports read 日付なし rather than an empty cell.
+  const dateLabel = (d: string | undefined): string =>
+    d ? d.replaceAll('-', '.') : '日付なし';
 
   let busy = $state(false);
 
@@ -93,6 +145,33 @@
           </div>
         {/each}
       </div>
+    </FolderTabCard>
+
+    <FolderTabCard label="旅の記録">
+      {#if diaryRows.length > 0}
+        <ul class="trips">
+          {#each diaryRows as t (t.key)}
+            <li class="trip">
+              <div class="trip-head">
+                <span class="trip-date">{dateLabel(t.date)}</span>
+                <span class="trip-km u-muted">{t.km.toLocaleString()} km</span>
+              </div>
+              <div class="trip-route">
+                {t.from} <span class="arrow u-muted" aria-hidden="true">→</span> {t.to}
+              </div>
+              <div class="trip-meta">
+                <span class="u-muted">{t.lineLabel} · {t.segCount}区間</span>
+                {#each t.trainModels as m (m)}<Pill>{m}</Pill>{/each}
+              </div>
+            </li>
+          {/each}
+        </ul>
+      {:else}
+        <div class="zero">
+          <Diorama variant="board" width={140} label="まだ旅の記録がありません" />
+          <p class="cta-copy u-muted">区間をマークすると、ここに旅がたまっていきます。</p>
+        </div>
+      {/if}
     </FolderTabCard>
 
     <FolderTabCard label="Wrapped">
@@ -178,5 +257,56 @@
     margin: 0;
     font-size: var(--size-body);
     line-height: 1.6;
+  }
+  /* 旅の記録 — date-led journey rows; the date is the primary identifier so repeat rides
+     read as two distinct dated trips, not a duplicate. Rows live in ONE folder-tab card. */
+  .trips {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+  }
+  .trip {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding-bottom: var(--space-md);
+    border-bottom: 1px solid var(--rail-dim);
+  }
+  .trip:last-child {
+    padding-bottom: 0;
+    border-bottom: none;
+  }
+  .trip-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-md);
+  }
+  .trip-date {
+    font-weight: var(--weight-label);
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+  }
+  .trip-km {
+    font-size: var(--size-label);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .trip-route {
+    color: var(--ink);
+    overflow-wrap: anywhere;
+  }
+  .arrow {
+    padding: 0 2px;
+  }
+  .trip-meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    font-size: var(--size-label);
   }
 </style>

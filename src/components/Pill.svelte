@@ -32,7 +32,8 @@
     white-space: nowrap;
   }
   button.pill {
-    min-height: 32px;
+    /* interactive chips meet the 44px touch-target minimum (DESIGN.md) */
+    min-height: 44px;
   }
   .pill.active {
     background: var(--rail-text);

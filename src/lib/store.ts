@@ -17,6 +17,7 @@ import type {
 import { coverageWarnings, resolveCoverage, segmentsBetween, type CoverageWarning } from './resolver';
 import * as db from './db';
 import { STUB_PACKAGES } from '../fixtures/stubPackage';
+import { canonicalizeTrainModel } from './train-models';
 
 // ───────────────────────────────── state ────────────────────────────────────
 
@@ -294,21 +295,23 @@ async function refresh(): Promise<void> {
 }
 
 export interface MarkResult {
-  /** Newly-lit segments (0 ⇒ the whole slice was already ridden — show the guard). */
+  /** Event rows written for this trip. Coverage may already have included some/all segments. */
   added: number;
   /** Total segments in the A→B slice. */
   sliceLength: number;
+  /** Slice segments that were already lit before this mark. */
+  alreadyCovered: number;
   tripId: string;
   /** The full A→B slice. */
   segmentIds: string[];
-  /** ONLY the newly-lit segments — sum km over these so the toast doesn't count re-rides. */
+  /** Segment ids for rows written by this call. */
   addedSegmentIds: string[];
 }
 
 /**
  * Line-first marking: record riding `from`→`to` on one line as a single trip.
- * Guards a fully-redundant mark (design: "この区間は記録済み"). Throws (via
- * segmentsBetween) if the two stations are not on the same line.
+ * Repeat rides append a new trip; coverage is derived and deduped downstream.
+ * Throws (via segmentsBetween) if the two stations are not on the same line.
  */
 export async function markRide(opts: {
   lineId: string;
@@ -320,21 +323,19 @@ export async function markRide(opts: {
   source?: RideSource;
 }): Promise<MarkResult> {
   const segmentIds = segmentsBetween(opts.lineId, opts.fromStationId, opts.toStationId, opts.pkg);
-  const lit = new Set(resolveCoverage(get(events), opts.pkg).litSegmentIds);
-  const added = segmentIds.filter((id) => !lit.has(id));
-  if (added.length === 0) {
-    return { added: 0, sliceLength: segmentIds.length, tripId: '', segmentIds, addedSegmentIds: [] };
-  }
+  // Read the already-derived lit set (same as markRoute) instead of recomputing a full
+  // per-package coverage pass on every mark — segmentIds belong to opts.pkg, so membership holds.
+  const lit = new Set(get(litSegmentIds));
+  const alreadyCovered = segmentIds.filter((id) => lit.has(id)).length;
   const tripId = db.newId();
   const createdAt = new Date().toISOString();
-  // Persist ONLY the newly-lit segments — never re-stamp already-ridden ones on a
-  // partial-overlap re-mark (that bloated the durable log + corrupted per-event stats).
-  const candidates: RideEvent[] = added.map((segmentId) => ({
-    id: db.newId(),
+  const trainModel = opts.trainModel === undefined ? undefined : canonicalizeTrainModel(opts.trainModel) || undefined;
+  const candidates: RideEvent[] = segmentIds.map((segmentId) => ({
+    id: `${tripId}:${segmentId}`,
     segmentId,
     railGeoVersion: opts.pkg.version,
     date: opts.date,
-    trainModel: opts.trainModel,
+    trainModel,
     source: opts.source ?? 'manual',
     tripId,
     createdAt,
@@ -344,6 +345,7 @@ export async function markRide(opts: {
   return {
     added: persisted.length,
     sliceLength: segmentIds.length,
+    alreadyCovered,
     tripId,
     segmentIds,
     addedSegmentIds: persisted.map((e) => e.segmentId),
@@ -351,37 +353,40 @@ export async function markRide(opts: {
 }
 
 export interface MarkRouteResult {
-  /** Legs freshly added to the log. */
+  /** Event rows written for this trip. Coverage may already have included some/all segments. */
   added: number;
-  /** Already-ridden legs re-grouped into this trip (re-stamped in place, not duplicated). */
-  restamped: number;
   tripId: string;
   /** Route distance, from the chosen candidate. */
   totalKm: number;
   /** Every leg of the route. */
   segmentIds: string[];
+  /** Route legs that were already lit before this mark. */
+  alreadyCovered: number;
 }
 
 /**
- * Mark a whole cross-line route (the route-picker's chosen candidate) as ONE trip. Lights every leg;
- * already-ridden legs are re-grouped into the new trip rather than duplicated (db.markRouteSegments).
+ * Mark a whole cross-line route (the route-picker's chosen candidate) as ONE trip.
+ * Repeat rides append a new trip; coverage is derived and deduped downstream.
  */
 export async function markRoute(
   route: RouteCandidate,
   opts?: { date?: string; trainModel?: string; source?: RideSource },
 ): Promise<MarkRouteResult> {
+  const lit = new Set(get(litSegmentIds));
+  const alreadyCovered = route.segmentIds.filter((id) => lit.has(id)).length;
   const tripId = db.newId();
   const createdAt = new Date().toISOString();
+  const trainModel = opts?.trainModel === undefined ? undefined : canonicalizeTrainModel(opts.trainModel) || undefined;
   const res = await db.markRouteSegments(route.segmentIds, {
     railGeoVersion: route.railGeoVersion,
     date: opts?.date,
-    trainModel: opts?.trainModel,
+    trainModel,
     source: opts?.source ?? 'manual',
     tripId,
     createdAt,
   });
   await refresh();
-  return { ...res, tripId, totalKm: route.totalKm, segmentIds: route.segmentIds };
+  return { added: res.added, tripId, totalKm: route.totalKm, segmentIds: route.segmentIds, alreadyCovered };
 }
 
 /** Persist already-built events (importer commit, corridor seed). Merge semantics. */
@@ -398,6 +403,13 @@ export async function replaceEvents(newEvents: RideEvent[]): Promise<void> {
 
 export async function removeImportBatch(importBatchId: string): Promise<void> {
   await db.deleteImportBatch(importBatchId);
+  await refresh();
+}
+
+/** Delete every event of one trip. The append model's undo primitive — the toast-undo UI that
+ *  will call it is a deferred fast-follow; for now it backs tests + a future diary edit/delete. */
+export async function removeTrip(tripId: string): Promise<void> {
+  await db.deleteTrip(tripId);
   await refresh();
 }
 

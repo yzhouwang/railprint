@@ -1,10 +1,11 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { get } from 'svelte/store';
 import {
   loadPackages,
   clearAllRides,
   markRide,
   markRoute,
+  removeTrip,
   addEvents,
   removeImportBatch,
   replaceEvents,
@@ -12,6 +13,7 @@ import {
   headline,
   litSegmentIds,
 } from './store';
+import { resolveCoverage } from './resolver';
 import { JP_PACKAGE, STUB_PACKAGES, stationByName } from '../fixtures/stubPackage';
 import type { RideEvent, RouteCandidate } from '../contract/types';
 
@@ -41,6 +43,7 @@ describe('markRide', () => {
       date: '2025-03-01',
     });
     expect(res.added).toBe(4);
+    expect(res.alreadyCovered).toBe(0);
     expect(get(litSegmentIds)).toEqual(
       ['jr-kururi:0-1', 'jr-kururi:1-2', 'jr-kururi:2-3', 'jr-kururi:3-4'].sort(),
     );
@@ -59,21 +62,31 @@ describe('markRide', () => {
     expect([...tripIds][0]).toBeTruthy();
   });
 
-  it('guards a fully-redundant re-mark (この区間は記録済み)', async () => {
+  it('re-riding the same slice appends a second trip while coverage stays stable', async () => {
     const opts = {
       lineId: 'jr-kururi',
       fromStationId: sid('jr-kururi', '木更津'),
       toStationId: sid('jr-kururi', '横田'),
       pkg: JP_PACKAGE,
     };
-    await markRide(opts);
-    const countAfterFirst = get(events).length;
+    const first = await markRide(opts);
+    const firstRows = get(events);
+    const firstCoverage = resolveCoverage(firstRows, JP_PACKAGE);
     const second = await markRide(opts);
-    expect(second.added).toBe(0);
-    expect(get(events).length).toBe(countAfterFirst); // nothing new persisted
+    const all = get(events);
+    const secondCoverage = resolveCoverage(all, JP_PACKAGE);
+
+    expect(first.added).toBe(4);
+    expect(second.added).toBe(4);
+    expect(second.alreadyCovered).toBe(4);
+    expect(all).toHaveLength(8);
+    expect(secondCoverage.litSegmentIds).toHaveLength(firstCoverage.litSegmentIds.length);
+    expect(secondCoverage.riddenKm).toBe(firstCoverage.riddenKm);
+    expect(new Set(all.map((e) => e.tripId)).size).toBe(2);
+    expect(all.find((e) => e.id === firstRows[0].id)).toEqual(firstRows[0]);
   });
 
-  it('a concurrent double-mark of the same slice persists each segment once', async () => {
+  it('a concurrent double-mark records two trips but still lights each segment once', async () => {
     const args = {
       lineId: 'jr-kururi',
       fromStationId: sid('jr-kururi', '木更津'),
@@ -81,15 +94,13 @@ describe('markRide', () => {
       pkg: JP_PACKAGE,
     };
     const [a, b] = await Promise.all([markRide(args), markRide(args)]);
-    // The slice is 4 segments; across both calls exactly 4 are newly added, not 8.
-    expect(a.added + b.added).toBe(4);
-    // The durable log holds each segment exactly once.
-    const ids = get(events).map((e) => e.segmentId);
-    expect(ids.length).toBe(new Set(ids).size);
-    expect(ids.length).toBe(4);
+    expect(a.added + b.added).toBe(8);
+    expect(get(events)).toHaveLength(8);
+    expect(get(litSegmentIds)).toHaveLength(4);
+    expect(new Set(get(events).map((e) => e.tripId)).size).toBe(2);
   });
 
-  it('persists only the NEW segments on a partial-overlap re-mark (no duplicate events)', async () => {
+  it('persists the full slice on a partial-overlap re-mark', async () => {
     await markRide({
       lineId: 'jr-kururi',
       fromStationId: sid('jr-kururi', '木更津'),
@@ -103,10 +114,41 @@ describe('markRide', () => {
       toStationId: sid('jr-kururi', '馬来田'), // overlaps the first 4 segs + 2 new
       pkg: JP_PACKAGE,
     });
-    expect(second.added).toBe(2);
-    expect(get(events).length).toBe(6); // 4 + 2, NOT 4 + 6 — no re-stamped duplicates
-    const ids = get(events).map((e) => e.segmentId);
-    expect(new Set(ids).size).toBe(ids.length); // each ridden segment logged exactly once
+    expect(second.added).toBe(6);
+    expect(second.alreadyCovered).toBe(4);
+    expect(get(events).length).toBe(10); // first 4 + full second slice of 6
+    expect(get(litSegmentIds)).toHaveLength(6);
+  });
+
+  it('a same-trip double-submit overwrites deterministic event ids instead of duplicating', async () => {
+    const uuid = '00000000-0000-4000-8000-000000000000' as ReturnType<typeof crypto.randomUUID>;
+    const spy = vi.spyOn(crypto, 'randomUUID').mockReturnValue(uuid);
+    try {
+      const opts = {
+        lineId: 'jr-kururi',
+        fromStationId: sid('jr-kururi', '木更津'),
+        toStationId: sid('jr-kururi', '横田'),
+        pkg: JP_PACKAGE,
+      };
+      await markRide(opts);
+      const second = await markRide(opts);
+      expect(second.alreadyCovered).toBe(4);
+      expect(get(events)).toHaveLength(4);
+      expect(new Set(get(events).map((e) => e.tripId))).toEqual(new Set([uuid]));
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('canonicalizes trainModel on the stored event', async () => {
+    await markRide({
+      lineId: 'jr-kururi',
+      fromStationId: sid('jr-kururi', '木更津'),
+      toStationId: sid('jr-kururi', '横田'),
+      pkg: JP_PACKAGE,
+      trainModel: 'n700-s',
+    });
+    expect(get(events)[0].trainModel).toBe('N700S');
   });
 
   it('throws when the two stations are not on the same line', async () => {
@@ -146,6 +188,18 @@ describe('event log operations', () => {
     await replaceEvents([imported(JP_PACKAGE.segments[5].segmentId, 'b2')]);
     expect(get(litSegmentIds)).toEqual([JP_PACKAGE.segments[5].segmentId]);
   });
+
+  it('can remove a just-made trip', async () => {
+    const res = await markRide({
+      lineId: 'jr-kururi',
+      fromStationId: sid('jr-kururi', '木更津'),
+      toStationId: sid('jr-kururi', '横田'),
+      pkg: JP_PACKAGE,
+    });
+    expect(get(events)).toHaveLength(4);
+    await removeTrip(res.tripId);
+    expect(get(events)).toHaveLength(0);
+  });
 });
 
 describe('markRoute (cross-line, one trip)', () => {
@@ -154,51 +208,49 @@ describe('markRoute (cross-line, one trip)', () => {
   it('marks every leg of a route under one tripId', async () => {
     const res = await markRoute(route(SEGS), { date: '2025-06-01' });
     expect(res.added).toBe(3);
-    expect(res.restamped).toBe(0);
+    expect(res.alreadyCovered).toBe(0);
     const evs = get(events).filter((e) => SEGS.includes(e.segmentId));
     expect(evs).toHaveLength(3);
     expect(new Set(evs.map((e) => e.tripId)).size).toBe(1);
     expect(evs[0].tripId).toBe(res.tripId);
   });
 
-  it('re-stamps an overlapping leg into the new trip WITHOUT duplicating it', async () => {
+  it('appends overlapping legs into a new trip without mutating the old trip', async () => {
     await markRoute(route(['jr-kururi:0-1']), { date: '2025-01-01' });
     const before = get(events).length;
-    const firstTrip = get(events).find((e) => e.segmentId === 'jr-kururi:0-1')!.tripId;
+    const firstLeg = get(events).find((e) => e.segmentId === 'jr-kururi:0-1')!;
 
     const res = await markRoute(route(['jr-kururi:0-1', 'jr-kururi:1-2']), { date: '2025-06-01' });
-    expect(res.added).toBe(1); // only :1-2 is new
-    expect(res.restamped).toBe(1); // :0-1 was re-stamped, not re-inserted
-    expect(get(events).length).toBe(before + 1); // NO bloat — one new event, never a duplicate
+    expect(res.added).toBe(2);
+    expect(res.alreadyCovered).toBe(1);
+    expect(get(events).length).toBe(before + 2);
 
-    const leg = get(events).find((e) => e.segmentId === 'jr-kururi:0-1')!;
-    expect(leg.tripId).toBe(res.tripId); // re-grouped into the new trip
-    expect(leg.tripId).not.toBe(firstTrip);
-    expect(leg.date).toBe('2025-01-01'); // original ride date preserved, not clobbered
+    expect(get(events).find((e) => e.id === firstLeg.id)).toEqual(firstLeg);
+    const newLeg = get(events).find((e) => e.id === `${res.tripId}:jr-kururi:0-1`)!;
+    expect(newLeg.tripId).toBe(res.tripId);
+    expect(newLeg.date).toBe('2025-06-01');
   });
 
-  it('keeps one event per segment after a full re-mark of the same route', async () => {
+  it('creates a second trip after a full re-mark of the same route', async () => {
     const segs = ['jr-kururi:0-1', 'jr-kururi:1-2'];
-    await markRoute(route(segs));
-    await markRoute(route(segs));
+    const first = await markRoute(route(segs));
+    const second = await markRoute(route(segs));
     const ids = get(events).map((e) => e.segmentId).filter((s) => segs.includes(s));
-    expect(ids.length).toBe(2);
-    expect(ids.length).toBe(new Set(ids).size);
+    expect(ids.length).toBe(4);
+    expect(new Set(get(events).map((e) => e.tripId))).toEqual(new Set([first.tripId, second.tripId]));
+    expect(second.alreadyCovered).toBe(2);
   });
 
-  it('returns added:0 / restamped:N when every leg was already ridden (drives the 記録済み toast)', async () => {
+  it('returns alreadyCovered:N when every leg was already ridden', async () => {
     const segs = ['jr-kururi:0-1', 'jr-kururi:1-2'];
     await markRoute(route(segs));
     const res = await markRoute(route(segs)); // re-mark the whole route
-    expect(res.added).toBe(0);
-    expect(res.restamped).toBe(2);
+    expect(res.added).toBe(2);
+    expect(res.alreadyCovered).toBe(2);
   });
 
-  it('fills date on a previously-dateless leg when re-marked with a date', async () => {
-    await markRoute(route(['jr-kururi:0-1'])); // marked with no date
-    const res = await markRoute(route(['jr-kururi:0-1', 'jr-kururi:1-2']), { date: '2025-06-01' });
-    expect(res.restamped).toBe(1);
-    const leg = get(events).find((e) => e.segmentId === 'jr-kururi:0-1')!;
-    expect(leg.date).toBe('2025-06-01'); // was absent → filled from the new mark
+  it('canonicalizes trainModel on route events', async () => {
+    await markRoute(route(['jr-kururi:0-1']), { trainModel: 'N700 S系' });
+    expect(get(events)[0].trainModel).toBe('N700S');
   });
 });

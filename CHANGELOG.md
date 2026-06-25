@@ -2,6 +2,15 @@
 
 All notable changes to RailPrint are documented here.
 
+## [0.8.0.0] - 2026-06-25
+
+### Added
+- **旅の記録 — a trip diary on 統計.** Your marked rides now read as a list of journeys: each row shows the date, the route across lines (e.g. 津 → 大阪難波), distance, line(s), and any train model. Rows are date-led, so the same journey ridden twice reads as two distinct dated trips, not a duplicate.
+- **Train-model capture.** An optional 車両 field in the mark flow (with recent + known-model chips) records what you rode (N700S, CR400AF, …), canonicalized so N700S / N700s / N700S系 collapse to one model. It surfaces on the diary row and round-trips through CSV export/import.
+
+### Changed
+- **The ride log is now an append-only journey log.** Marking a segment or route you've already ridden records it as a *new* trip (a soft "もう一度記録" rather than the old hard block), so repeat rides and per-ride train models are kept faithfully. Coverage %/km are unchanged — they still derive from the deduped set of ridden segments, so a repeat ride never inflates the map.
+
 ## [0.7.0.1] - 2026-06-25
 
 ### Fixed

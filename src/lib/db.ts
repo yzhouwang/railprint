@@ -50,35 +50,27 @@ export async function putEvents(events: RideEvent[]): Promise<void> {
 }
 
 /**
- * Atomically persist ride events for segments not already present in the log. The dedup read
- * and the insert run in ONE rw transaction, so two concurrent marks of the same segment can't
- * both write it: the second serializes behind the first's commit and sees it already present.
- * Returns ONLY the events actually inserted — callers size the km toast off this, not the
- * pre-transaction snapshot, so a race can never over-count.
+ * Atomically persist ride events at journey grain. The rideEvents log is append-only by
+ * trip/event id: a repeat ride over an already-covered segment is still a real diary event.
+ * Dedup only within this batch by primary key so a double-submit overwrites the same events,
+ * while a new tripId's ids append new rows.
  */
 export async function addRideSegments(candidates: RideEvent[]): Promise<RideEvent[]> {
   if (candidates.length === 0) return [];
   return db.transaction('rw', db.rideEvents, async () => {
-    const ids = candidates.map((e) => e.segmentId);
-    // Seed with the already-persisted segments, then add each fresh segmentId as it passes —
-    // so the filter dedups against BOTH the log AND repeats within this candidate set (a caller
-    // that passes the same segmentId twice can't self-duplicate, independent of segmentsBetween).
-    const seen = new Set(
-      (await db.rideEvents.where('segmentId').anyOf(ids).toArray()).map((e) => e.segmentId),
-    );
-    const fresh = candidates.filter((e) => (seen.has(e.segmentId) ? false : (seen.add(e.segmentId), true)));
-    if (fresh.length) await db.rideEvents.bulkAdd(fresh);
-    return fresh;
+    const seen = new Set<string>();
+    const rows = candidates.filter((e) => (seen.has(e.id) ? false : (seen.add(e.id), true)));
+    if (rows.length) await db.rideEvents.bulkPut(rows);
+    return rows;
   });
 }
 
 /**
- * Persist a whole route (multiple legs) as ONE trip. Existing legs are RE-STAMPED IN PLACE — their
- * tripId is updated (and date/trainModel filled only if absent), keeping the same row id, so the
- * durable log stays one-event-per-segment. This is NOT the v0.2.0.0 bug: that was a duplicate INSERT
- * of an already-ridden segment; this is an UPDATE by primary key (bulkPut on the existing id). Missing
- * legs are inserted. The most-recent marking re-groups overlapping legs into the new trip (D6-B).
- * Returns how many legs were freshly added vs re-stamped. Atomic + concurrency-safe (one rw txn).
+ * Persist a whole route (multiple legs) as ONE new trip at journey grain. Segment coverage is
+ * derived downstream and dedups by segmentId, so appending a repeat ride preserves the diary
+ * without changing coverage %. The deterministic id `${tripId}:${segmentId}` makes a re-submit
+ * of the same trip idempotent, while a fresh tripId appends another journey over the same legs.
+ * Atomic + concurrency-safe (one rw txn).
  */
 export async function markRouteSegments(
   segmentIds: string[],
@@ -90,54 +82,27 @@ export async function markRouteSegments(
     tripId: string;
     createdAt: string;
   },
-): Promise<{ added: number; restamped: number }> {
-  if (segmentIds.length === 0) return { added: 0, restamped: 0 };
+): Promise<{ added: number }> {
+  if (segmentIds.length === 0) return { added: 0 };
   return db.transaction('rw', db.rideEvents, async () => {
-    const present = await db.rideEvents.where('segmentId').anyOf(segmentIds).toArray();
-    // segmentId is a NON-unique index — the log can hold >1 row per segment (e.g. two import batches).
-    // Group ALL rows per segment so the re-stamp re-groups every one of them; collapsing to a single
-    // row (a Map) would strand the duplicates under their old trip.
-    const presentBySeg = new Map<string, RideEvent[]>();
-    for (const e of present) {
-      const list = presentBySeg.get(e.segmentId);
-      if (list) list.push(e);
-      else presentBySeg.set(e.segmentId, [e]);
-    }
-    const restamp: RideEvent[] = [];
-    const inserts: RideEvent[] = [];
+    const rows: RideEvent[] = [];
     const seen = new Set<string>();
     for (const segmentId of segmentIds) {
       if (seen.has(segmentId)) continue; // in-call dedup
       seen.add(segmentId);
-      const existing = presentBySeg.get(segmentId);
-      if (existing && existing.length) {
-        // re-stamp the grouping in place on EVERY existing row; keep id + createdAt, and don't clobber
-        // an existing leg's own ride date/train (only fill when it had none) — the trip groups them,
-        // it doesn't rewrite when each leg was ridden.
-        for (const e of existing) {
-          restamp.push({
-            ...e,
-            tripId: fields.tripId,
-            date: e.date ?? fields.date,
-            trainModel: e.trainModel ?? fields.trainModel,
-          });
-        }
-      } else {
-        inserts.push({
-          id: newId(),
-          segmentId,
-          railGeoVersion: fields.railGeoVersion,
-          date: fields.date,
-          trainModel: fields.trainModel,
-          source: fields.source,
-          tripId: fields.tripId,
-          createdAt: fields.createdAt,
-        });
-      }
+      rows.push({
+        id: `${fields.tripId}:${segmentId}`,
+        segmentId,
+        railGeoVersion: fields.railGeoVersion,
+        date: fields.date,
+        trainModel: fields.trainModel,
+        source: fields.source,
+        tripId: fields.tripId,
+        createdAt: fields.createdAt,
+      });
     }
-    if (restamp.length) await db.rideEvents.bulkPut(restamp); // bulkPut by id == update in place
-    if (inserts.length) await db.rideEvents.bulkAdd(inserts);
-    return { added: inserts.length, restamped: restamp.length };
+    if (rows.length) await db.rideEvents.bulkPut(rows);
+    return { added: rows.length };
   });
 }
 
@@ -149,6 +114,11 @@ export async function deleteEvents(ids: string[]): Promise<void> {
 /** Remove every event from one import batch — backs "undo this import". */
 export async function deleteImportBatch(importBatchId: string): Promise<number> {
   return db.rideEvents.where('importBatchId').equals(importBatchId).delete();
+}
+
+/** Remove every event from one trip — backs undoing a just-made journey. */
+export async function deleteTrip(tripId: string): Promise<number> {
+  return db.rideEvents.where('tripId').equals(tripId).delete();
 }
 
 /** Replace the entire log atomically (merge-vs-replace = replace). */
