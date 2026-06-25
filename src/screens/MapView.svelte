@@ -56,6 +56,7 @@
     type LineCandidate,
   } from '../lib/search';
   import { buildPopupModel, popupHtml } from '../lib/map/popup';
+  import { companyFor } from '../lib/company';
 
   // Loaded lazily so the module-eval is browser-free.
   type MapLib = typeof import('maplibre-gl');
@@ -565,6 +566,12 @@
   {/if}
 {/snippet}
 
+<!-- C8 — the railway company, muted, to the LEFT of the logo + name. A SIBLING of the
+     badge (not inside it), de-duped when the line name already leads with the brand. -->
+{#snippet companyTag(line: RailLine)}
+  {#if companyFor(line.operator, line.name)}<span class="line-co">{companyFor(line.operator, line.name)}</span>{/if}
+{/snippet}
+
 <div class="map-root">
   <div
     bind:this={container}
@@ -622,8 +629,9 @@
             {#each lineGroups as group (group.country)}
               {#each group.lines as line (line.lineId)}
                 <button class="line-chip" onclick={() => pickLine(line)}>
+                  {@render companyTag(line)}
                   {@render lineMark(line)}
-                  <span class="line-name">{bilingualLabel(line.name, line.nameRoma)}</span>
+                  <span class="line-name" title={bilingualLabel(line.name, line.nameRoma)}>{bilingualLabel(line.name, line.nameRoma)}</span>
                   {#if line.isHSR}<span class="hsr">新幹線</span>{/if}
                 </button>
               {/each}
@@ -632,7 +640,7 @@
         {:else}
           <div class="mark-step">
             <button class="back" onclick={backToLinePicker} aria-label="路線選択に戻る">‹</button>
-            <span class="picked">{@render lineMark(selectedLine)}<span class="picked-name">{bilingualLabel(selectedLine.name, selectedLine.nameRoma)}</span>{#if selectedLine.isHSR}<span class="hsr">新幹線</span>{/if}</span>
+            <span class="picked">{@render companyTag(selectedLine)}{@render lineMark(selectedLine)}<span class="picked-name">{bilingualLabel(selectedLine.name, selectedLine.nameRoma)}</span>{#if selectedLine.isHSR}<span class="hsr">新幹線</span>{/if}</span>
           </div>
           <p class="mark-hint" aria-live="polite">
             {#if !stationA}
@@ -648,7 +656,7 @@
           <label class="search-label" for="rp-q-a">出発駅</label>
           {#if pickedA}
             <div class="picked-station">
-              <span class="picked-station-label">{bilingualLabel(pickedA.station.name, pickedA.station.nameRoma)} · {@render lineMark(pickedA.line)}{pickedA.line.name}</span>
+              <span class="picked-station-label">{bilingualLabel(pickedA.station.name, pickedA.station.nameRoma)} · {@render companyTag(pickedA.line)}{@render lineMark(pickedA.line)}{pickedA.line.name}</span>
               <button class="clear" aria-label="出発駅をクリア" onclick={() => { pickedA = null; queryA = ''; tryInfer(); }}>×</button>
             </div>
           {:else}
@@ -667,7 +675,7 @@
                   <li>
                     <button class="hit" onclick={() => pickHit('A', h)}>
                       <span class="hit-name">{bilingualLabel(h.station.name, h.station.nameRoma)}</span>
-                      <span class="hit-line">{@render lineMark(h.line)}{h.line.name}</span>
+                      <span class="hit-line">{@render companyTag(h.line)}{@render lineMark(h.line)}{h.line.name}</span>
                     </button>
                   </li>
                 {/each}
@@ -680,7 +688,7 @@
           <label class="search-label" for="rp-q-b">到着駅</label>
           {#if pickedB}
             <div class="picked-station">
-              <span class="picked-station-label">{bilingualLabel(pickedB.station.name, pickedB.station.nameRoma)} · {@render lineMark(pickedB.line)}{pickedB.line.name}</span>
+              <span class="picked-station-label">{bilingualLabel(pickedB.station.name, pickedB.station.nameRoma)} · {@render companyTag(pickedB.line)}{@render lineMark(pickedB.line)}{pickedB.line.name}</span>
               <button class="clear" aria-label="到着駅をクリア" onclick={() => { pickedB = null; queryB = ''; tryInfer(); }}>×</button>
             </div>
           {:else}
@@ -699,7 +707,7 @@
                   <li>
                     <button class="hit" onclick={() => pickHit('B', h)}>
                       <span class="hit-name">{bilingualLabel(h.station.name, h.station.nameRoma)}</span>
-                      <span class="hit-line">{@render lineMark(h.line)}{h.line.name}</span>
+                      <span class="hit-line">{@render companyTag(h.line)}{@render lineMark(h.line)}{h.line.name}</span>
                     </button>
                   </li>
                 {/each}
@@ -714,8 +722,9 @@
           <div class="line-list">
             {#each lineChoices as c (c.line.lineId)}
               <button class="line-chip" onclick={() => pickInferredLine(c)}>
+                {@render companyTag(c.line)}
                 {@render lineMark(c.line)}
-                <span class="line-name">{bilingualLabel(c.line.name, c.line.nameRoma)}</span>
+                <span class="line-name" title={bilingualLabel(c.line.name, c.line.nameRoma)}>{bilingualLabel(c.line.name, c.line.nameRoma)}</span>
                 {#if c.line.isHSR}<span class="hsr">新幹線</span>{/if}
               </button>
             {/each}
@@ -852,6 +861,21 @@
   }
   .line-name {
     flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* C8 — railway company: muted secondary label, left of logo + name. #6B756F = ink-muted
+     (DESIGN.md "secondary text, labels"; AA on white). Stays grey — monochrome discipline. */
+  :global(.line-co) {
+    flex: none;
+    font-size: 0.78em;
+    color: var(--ink-muted);
+    white-space: nowrap;
+    max-width: 8em;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .hsr {
     font-size: var(--size-label);
@@ -968,13 +992,24 @@
     font-size: var(--size-body);
     text-align: left;
   }
+  .hit-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .hit-line {
     display: inline-flex;
     align-items: center;
     gap: 6px;
     color: var(--ink-muted);
     font-size: var(--size-label);
-    flex: none;
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 60%;
+    overflow: hidden;
+    white-space: nowrap;
   }
   .picked-station-label {
     display: inline-flex;
@@ -1049,7 +1084,19 @@
     min-height: 18px;
   }
   :global(.rp-line-name) {
+    flex: 1;
+    min-width: 0;
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* C8 — company label in the hover popup: muted, left of the badge (matches .line-co). */
+  :global(.rp-line-co) {
+    flex: none;
+    font-size: 0.82em;
+    color: var(--ink-muted);
+    white-space: nowrap;
+    max-width: 7em;
     overflow: hidden;
     text-overflow: ellipsis;
   }

@@ -39,6 +39,14 @@ describe('C5 buildPopupModel — lists every line through a station group', () =
     expect(toyoko.logo).toBeUndefined(); // no logo → swatch fallback
   });
 
+  it('each row carries the company label, de-duped against the line name', () => {
+    const model = buildPopupModel(geo, stationId('jr-yamanote', '渋谷'))!;
+    const yamanote = model.lines.find((l) => l.lineId === 'jr-yamanote')!;
+    const toyoko = model.lines.find((l) => l.lineId === 'tokyu-toyoko')!;
+    expect(yamanote.company).toBe('JR東日本'); // shown: 山手線 doesn't lead with the brand
+    expect(toyoko.company).toBe(''); // suppressed: 東急東横線 already says 東急
+  });
+
   it('rows are bilingual + sorted by label, deduped per line', () => {
     const model = buildPopupModel(geo, stationId('jr-yamanote', '渋谷'))!;
     const labels = model.lines.map((l) => l.label);
@@ -75,14 +83,27 @@ describe('C5 popupHtml — swatch + logo rendering', () => {
     expect(html).toContain('class="rp-line-list"');
   });
 
-  it('lineBadgeHtml prefers the logo, else the swatch', () => {
-    expect(lineBadgeHtml({ lineId: 'x', label: 'X', color: '#abc', logo: '/l.png' })).toContain('<img');
-    expect(lineBadgeHtml({ lineId: 'x', label: 'X', color: '#abc' })).toContain('rp-line-swatch');
+  it('renders the company label span when present, omits it when suppressed', () => {
+    const model = buildPopupModel(geo, stationId('jr-yamanote', '渋谷'))!;
+    const html = popupHtml(model);
+    expect(html).toContain('class="rp-line-co"');
+    expect(html).toContain('>JR東日本<'); // Yamanote company shows
+    // Toyoko is suppressed — no 東急 company span injected for it (name already says 東急)
+    expect(html).not.toContain('>東急<');
   });
 
-  it('escapes HTML in names + logo paths (no injection)', () => {
+  it('lineBadgeHtml prefers the logo, else the swatch', () => {
+    expect(lineBadgeHtml({ lineId: 'x', company: '', label: 'X', color: '#abc', logo: '/l.png' })).toContain('<img');
+    expect(lineBadgeHtml({ lineId: 'x', company: '', label: 'X', color: '#abc' })).toContain('rp-line-swatch');
+  });
+
+  it('escapes HTML in names, company, and logo paths (no injection)', () => {
     expect(escapeHtml('<b>&"\'')).toBe('&lt;b&gt;&amp;&quot;&#39;');
-    const html = lineBadgeHtml({ lineId: 'x', label: 'X', color: '#abc', logo: '"><script>' });
+    const html = lineBadgeHtml({ lineId: 'x', company: '', label: 'X', color: '#abc', logo: '"><script>' });
     expect(html).not.toContain('<script>');
+    // a malicious operator string is escaped in the row HTML
+    const evil = popupHtml({ name: 'S', lines: [{ lineId: 'x', company: '<img onerror=x>', label: 'L', color: '#abc' }] });
+    expect(evil).not.toContain('<img onerror');
+    expect(evil).toContain('&lt;img onerror');
   });
 });

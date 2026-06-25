@@ -31,6 +31,7 @@ interface StationSeed {
 interface LineSeed {
   lineId: string;
   name: string;
+  operator?: string;
   nameRoma?: string;
   country: Country;
   isHSR: boolean;
@@ -102,6 +103,7 @@ function buildLine(seed: LineSeed): BuiltLine {
   const line: RailLine = {
     lineId: seed.lineId,
     name: seed.name,
+    ...(seed.operator ? { operator: seed.operator } : {}),
     ...(seed.nameRoma ? { nameRoma: seed.nameRoma } : {}),
     ...(seed.color ? { color: seed.color } : {}),
     ...(seed.logo ? { logo: seed.logo } : {}),
@@ -139,6 +141,7 @@ function assemble(
 const YAMANOTE: LineSeed = {
   lineId: 'jr-yamanote',
   name: '山手線',
+  operator: '東日本旅客鉄道',
   country: 'JP',
   isHSR: false,
   isLoop: true,
@@ -239,6 +242,7 @@ const KURURI: LineSeed = {
 const TOKYU_TOYOKO: LineSeed = {
   lineId: 'tokyu-toyoko',
   name: '東急東横線',
+  operator: '東急電鉄',
   country: 'JP',
   isHSR: false,
   isLoop: false,

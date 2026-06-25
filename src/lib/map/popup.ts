@@ -6,11 +6,14 @@
 import type { GeoIndex } from '../store';
 import { groupKeyOf } from '../store';
 import { bilingualLabel } from '../search';
+import { companyFor } from '../company';
 import { DEFAULT_LINE_COLOR } from './style';
 
 /** One line through a station, with the data the popup row needs. */
 export interface PopupLineRow {
   lineId: string;
+  /** Short railway-company label (muted, de-duped), e.g. `JR東日本`; '' when redundant/absent. */
+  company: string;
   /** Bilingual display label, e.g. `山手線 (Yamanote Line)`. */
   label: string;
   /** The line's official color (always a hex — falls back to DEFAULT_LINE_COLOR). */
@@ -49,6 +52,7 @@ export function buildPopupModel(
     seen.add(lineId);
     rows.push({
       lineId: line.lineId,
+      company: companyFor(line.operator, line.name),
       label: bilingualLabel(line.name, line.nameRoma),
       color: line.color ?? DEFAULT_LINE_COLOR,
       ...(line.logo ? { logo: line.logo } : {}),
@@ -84,7 +88,10 @@ export function popupHtml(model: PopupModel): string {
     ? `<span class="rp-popup-ja">${escapeHtml(model.name)}</span><span class="rp-popup-roma">${escapeHtml(model.nameRoma)}</span>`
     : `<span class="rp-popup-ja">${escapeHtml(model.name)}</span>`;
   const rows = model.lines
-    .map((r) => `<li class="rp-line-row">${lineBadgeHtml(r)}<span class="rp-line-name">${escapeHtml(r.label)}</span></li>`)
+    .map((r) => {
+      const co = r.company ? `<span class="rp-line-co">${escapeHtml(r.company)}</span>` : '';
+      return `<li class="rp-line-row">${co}${lineBadgeHtml(r)}<span class="rp-line-name">${escapeHtml(r.label)}</span></li>`;
+    })
     .join('');
   return (
     `<div class="rp-popup"><div class="rp-popup-head">${header}</div>` +
