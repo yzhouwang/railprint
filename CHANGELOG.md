@@ -7,10 +7,12 @@ All notable changes to RailPrint are documented here.
 ### Added
 - **Every line in its official color.** The map now draws each line in its real color (山手線 yellow-green #9ACD32, 大阪環状線 red, 東海道新幹線 blue…) instead of one emerald monochrome — 594/594 lines colored (≈300 sourced from Wikidata, the rest an operator-default brand color). Ridden lines saturate, thicken, and glow in their own color; unridden lines show the color faded — so completion still reads, now in full color.
 - **Hover a station to see its lines.** A hover popup lists every line through a station, each with its color swatch, its **logo** (227 lines have one, from Wikimedia Commons), and the bilingual name. Logos also appear in the line picker, search results, and the selection panel.
+- **Line logos, now on 349 lines (38% → 59%).** A 307-line audit checked every still-logoless line against Wikidata + ja-Wikipedia. Two fixes recovered ~120 logos already on disk (an operator-aware, src-keyed join — a JR-East line never gets a JR-West badge) and backfilled 62 more from systematic line symbols (JR Kyushu `JA/JD/JJ…`, Keihan `KH`, Shinkansen marks) + 3rd-sector company logomarks. The remaining gap is lines that genuinely have no official symbol (trams, cable cars, most rural branches).
+- **The railway company beside each line.** Every line now shows its operator as a muted grey label to the left of the logo and name (`JR東日本 [JY] 山手線`), everywhere a line is named — picker, selection, search, and the hover popup. De-duped when the line name already carries the brand.
 
 ### Changed
 - The selected line now reads via a dark casing under it (the old red highlight collided with the new line colors). Station dots became a neutral ridden/unridden channel. The app's emerald brand (header, stats, Wrapped cards) is unchanged — only the map is multicolor.
-- Contract: `RailLine.color` / `RailLine.logo`. Rail-data credit now also attributes Wikimedia Commons for the logos.
+- Contract: `RailLine.color` / `RailLine.logo` / `RailLine.operator`. Rail-data credit now also attributes Wikimedia Commons for the logos.
 
 ### Fixed
 - Lines that share a name across operators no longer get the wrong color/reading: 山手線 (JR East) and 山手線 (神戸市) are distinct, 中央線 (JR East) ≠ 中央線 (Osaka Metro). The same operator-aware join fixed the line-romaji mismatch.
