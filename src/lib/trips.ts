@@ -29,6 +29,10 @@ export interface TripSummary {
   lineIds: string[];
   /** distinct train models seen on the trip, sorted; [] if none recorded. */
   trainModels: string[];
+  /** trip endpoints (from/to station ids), precomputed against the shared segment index so a
+   * diary over N trips stays O(N + segments), not O(N × segments). Undefined for an empty trip. */
+  fromStationId?: string;
+  toStationId?: string;
   /** earliest dated event on the trip, if any leg carried a date. */
   date?: string;
   /** earliest createdAt across the trip's events (stable ordering key). */
@@ -38,6 +42,38 @@ export interface TripSummary {
 }
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
+
+/**
+ * The two endpoint stations of a trip's segments, against an ALREADY-BUILT segment index — so a
+ * diary that summarizes many trips builds the index ONCE, not per trip (O(N + segments), not
+ * O(N × segments)). Endpoints are the stations touching exactly one leg (a simple path);
+ * loops/branches fall back to the longest leg. Pure name-free geometry lookup.
+ */
+function endpointsOf(
+  segmentIds: string[],
+  segById: Map<string, RailSegment>,
+): { fromStationId: string; toStationId: string } | undefined {
+  if (segmentIds.length === 0) return undefined;
+  const touch = new Map<string, number>();
+  for (const id of segmentIds) {
+    const s = segById.get(id);
+    if (!s) continue;
+    touch.set(s.fromStationId, (touch.get(s.fromStationId) ?? 0) + 1);
+    touch.set(s.toStationId, (touch.get(s.toStationId) ?? 0) + 1);
+  }
+  const ends = [...touch.entries()].filter(([, c]) => c === 1).map(([id]) => id);
+  if (ends.length === 2) {
+    const [from, to] = [...ends].sort();
+    return { fromStationId: from, toStationId: to };
+  }
+  // Loop / branch / singleton: longest leg's endpoints.
+  let max = segById.get(segmentIds[0]);
+  for (const id of segmentIds) {
+    const s = segById.get(id);
+    if (s && (!max || s.km > max.km)) max = s;
+  }
+  return max ? { fromStationId: max.fromStationId, toStationId: max.toStationId } : undefined;
+}
 
 /**
  * Group ride events into trips by shared tripId. Untagged events each become their
@@ -107,6 +143,7 @@ export function summarizeTrips(events: RideEvent[], pkg: RailGeoPackage): TripSu
       km,
       lineIds,
       trainModels: [...b.trainModels].sort(),
+      ...endpointsOf(segmentIds, segById),
       date,
       createdAt,
       eventCount: b.eventCount,
@@ -164,25 +201,6 @@ export function tripEndpoints(
   trip: TripSummary,
   pkg: RailGeoPackage,
 ): { fromStationId: string; toStationId: string } | undefined {
-  if (trip.legs.length === 0) return undefined;
   const segById = new Map<string, RailSegment>(pkg.segments.map((s) => [s.segmentId, s]));
-  const touch = new Map<string, number>();
-  for (const id of trip.segmentIds) {
-    const s = segById.get(id);
-    if (!s) continue;
-    touch.set(s.fromStationId, (touch.get(s.fromStationId) ?? 0) + 1);
-    touch.set(s.toStationId, (touch.get(s.toStationId) ?? 0) + 1);
-  }
-  const ends = [...touch.entries()].filter(([, c]) => c === 1).map(([id]) => id);
-  if (ends.length === 2) {
-    const [from, to] = [...ends].sort();
-    return { fromStationId: from, toStationId: to };
-  }
-  // Loop / branch / singleton: longest leg's endpoints.
-  let max = segById.get(trip.segmentIds[0]);
-  for (const id of trip.segmentIds) {
-    const s = segById.get(id);
-    if (s && (!max || s.km > max.km)) max = s;
-  }
-  return max ? { fromStationId: max.fromStationId, toStationId: max.toStationId } : undefined;
+  return endpointsOf(trip.segmentIds, segById);
 }

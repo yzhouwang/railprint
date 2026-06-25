@@ -16,6 +16,7 @@
   import { packages, litSegmentIds, geo, events, markRide, markRoute } from '../lib/store';
   import { findRoutes } from '../lib/route';
   import Pill from '../components/Pill.svelte';
+  import { KNOWN_TRAIN_MODELS } from '../lib/train-models';
   import { markMode, toast } from '../lib/ui';
   import { tokens } from '../design/tokens';
   import type { RailLine, RouteCandidate } from '../contract/types';
@@ -116,20 +117,23 @@
     resetSearch();
   }
 
-  // Recent-then-common train models for the optional capture chips: the user's own recently
-  // tagged models first (by recency), padded with a few common ones. Cheap to recompute.
-  const COMMON_MODELS = ['N700S', 'E5系', 'E7系', '285系', 'CR400AF', 'CR400BF'];
+  // Recent-then-known train models for the optional capture chips. The user's most-recently
+  // tagged models first, padded with the canonical known models. A single O(events) pass tracks
+  // each model's latest timestamp, then only the (few) DISTINCT models are ranked — never a sort
+  // over the whole event log just to surface a handful of chips ($events is id-ordered, not by date).
   const modelSuggestions = $derived.by(() => {
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const e of [...$events].sort((a, b) => b.createdAt.localeCompare(a.createdAt))) {
-      if (e.trainModel && !seen.has(e.trainModel)) {
-        seen.add(e.trainModel);
-        out.push(e.trainModel);
-        if (out.length >= 6) break;
-      }
+    const latest = new Map<string, string>();
+    for (const e of $events) {
+      if (!e.trainModel) continue;
+      const prev = latest.get(e.trainModel);
+      if (prev === undefined || e.createdAt > prev) latest.set(e.trainModel, e.createdAt);
     }
-    for (const m of COMMON_MODELS) {
+    const out = [...latest.entries()]
+      .sort((a, b) => b[1].localeCompare(a[1]))
+      .slice(0, 6)
+      .map(([m]) => m);
+    const seen = new Set(out);
+    for (const m of KNOWN_TRAIN_MODELS) {
       if (out.length >= 8) break;
       if (!seen.has(m)) {
         seen.add(m);
@@ -529,7 +533,7 @@
       if (newlyLit.length === 0) {
         toast(`もう一度記録しました（${res.sliceLength}区間）`, 'success');
       } else {
-        const km = kmForSegments(newlyLit, pkg);
+        const km = kmOf(newlyLit);
         toast(`区間を記録しました（+${newlyLit.length}区間 / +${km.toFixed(1)} km）`, 'success');
       }
       pulse(res.segmentIds);
@@ -546,9 +550,11 @@
     }
   }
 
-  function kmForSegments(ids: string[], pkg: { segments: { segmentId: string; km: number }[] }): number {
-    const byId = new Map(pkg.segments.map((s) => [s.segmentId, s.km]));
-    return ids.reduce((sum, id) => sum + (byId.get(id) ?? 0), 0);
+  // Sum of build-time km over a set of segmentIds, via the shared geo index — one helper for
+  // both mark paths' toasts (tap-mark and route) so they never compute the same number two ways.
+  function kmOf(ids: string[]): number {
+    const segById = get(geo).segmentById;
+    return ids.reduce((sum, id) => sum + (segById.get(id)?.km ?? 0), 0);
   }
 
   // ── C4: station-first typed entry ───────────────────────────────────────────────
@@ -667,8 +673,7 @@
       if (newlyLit.length === 0) {
         toast(`もう一度記録しました（${r.segmentIds.length}区間 / ${res.totalKm.toFixed(1)} km）`, 'success');
       } else {
-        const segById = get(geo).segmentById;
-        const km = newlyLit.reduce((s, id) => s + (segById.get(id)?.km ?? 0), 0);
+        const km = kmOf(newlyLit);
         toast(`経路を記録しました（+${newlyLit.length}区間 / +${km.toFixed(1)} km）`, 'success');
       }
       pulse(r.segmentIds);

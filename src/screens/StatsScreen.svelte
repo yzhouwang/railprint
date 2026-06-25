@@ -13,7 +13,7 @@
   import Pill from '../components/Pill.svelte';
   import Diorama from '../components/Diorama.svelte';
   import { headline, coverages, geo, events } from '../lib/store';
-  import { summarizeDiary, tripEndpoints } from '../lib/trips';
+  import { summarizeDiary } from '../lib/trips';
   import { toast } from '../lib/ui';
   import { buildWrappedData, renderWrappedBlobSync } from '../lib/wrapped/card';
   import { ensureWrappedFonts } from '../lib/wrapped/font';
@@ -46,7 +46,6 @@
     const rows: DiaryRow[] = [];
     for (const { pkg } of $coverages) {
       for (const t of summarizeDiary($events, pkg).trips) {
-        const ep = tripEndpoints(t, pkg);
         const lineNames: string[] = [];
         for (const id of t.lineIds) {
           const n = idx.lineById.get(id)?.name;
@@ -55,8 +54,8 @@
         rows.push({
           tripId: t.tripId,
           date: t.date,
-          from: ep ? stationName(ep.fromStationId) : '?',
-          to: ep ? stationName(ep.toStationId) : '?',
+          from: t.fromStationId ? stationName(t.fromStationId) : '?',
+          to: t.toStationId ? stationName(t.toStationId) : '?',
           km: t.km,
           segCount: t.segmentIds.length,
           lineLabel: lineNames.length === 1 ? lineNames[0] : `${t.lineIds.length}路線`,

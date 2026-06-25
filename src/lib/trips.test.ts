@@ -90,6 +90,19 @@ describe('summarizeTrips', () => {
     const trips = summarizeTrips([ev('ghost-line:0-1', { tripId: 'g' })], JP_PACKAGE);
     expect(trips).toHaveLength(0);
   });
+
+  it('precomputes trip endpoints on the summary (shared index, not a per-trip package scan)', () => {
+    const legs = trip('jr-kururi', '木更津', '横田', { tripId: 'A' });
+    const [t] = summarizeTrips(legs, JP_PACKAGE);
+    const a = sid('jr-kururi', '木更津');
+    const b = sid('jr-kururi', '横田');
+    expect(new Set([t.fromStationId, t.toStationId])).toEqual(new Set([a, b]));
+    // the standalone helper now delegates to the same computation — they agree.
+    const ends = tripEndpoints(t, JP_PACKAGE)!;
+    expect(new Set([t.fromStationId, t.toStationId])).toEqual(
+      new Set([ends.fromStationId, ends.toStationId]),
+    );
+  });
 });
 
 describe('summarizeDiary', () => {

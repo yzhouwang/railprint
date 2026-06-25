@@ -323,7 +323,9 @@ export async function markRide(opts: {
   source?: RideSource;
 }): Promise<MarkResult> {
   const segmentIds = segmentsBetween(opts.lineId, opts.fromStationId, opts.toStationId, opts.pkg);
-  const lit = new Set(resolveCoverage(get(events), opts.pkg).litSegmentIds);
+  // Read the already-derived lit set (same as markRoute) instead of recomputing a full
+  // per-package coverage pass on every mark — segmentIds belong to opts.pkg, so membership holds.
+  const lit = new Set(get(litSegmentIds));
   const alreadyCovered = segmentIds.filter((id) => lit.has(id)).length;
   const tripId = db.newId();
   const createdAt = new Date().toISOString();
@@ -404,6 +406,8 @@ export async function removeImportBatch(importBatchId: string): Promise<void> {
   await refresh();
 }
 
+/** Delete every event of one trip. The append model's undo primitive — the toast-undo UI that
+ *  will call it is a deferred fast-follow; for now it backs tests + a future diary edit/delete. */
 export async function removeTrip(tripId: string): Promise<void> {
   await db.deleteTrip(tripId);
   await refresh();

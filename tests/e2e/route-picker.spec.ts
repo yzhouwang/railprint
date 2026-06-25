@@ -102,3 +102,22 @@ test('does NOT auto-pick while typing — a single match is a tappable suggestio
   await page.locator('.hit').first().click();
   await expect(page.locator('.picked-station')).toHaveCount(1);
 });
+
+test('captures the train model on a recorded route and surfaces it in the diary', async ({ page }) => {
+  await enterSearchMode(page);
+  await page.locator('#rp-q-a').fill('津');
+  await page.locator('.hit').first().click();
+  await page.locator('#rp-q-b').fill('大阪難波');
+  await page.locator('.hit').first().click();
+
+  // Tag the train via the optional 車両 field before recording (T2 capture path).
+  await page.locator('#rp-train').fill('N700S');
+  const routeChip = page.locator('.route-chip').first();
+  await expect(routeChip).toBeVisible({ timeout: 15_000 });
+  await routeChip.click();
+  await expect(page.getByText(/経路を記録しました/)).toBeVisible({ timeout: 10_000 });
+
+  // The captured model rides through to the diary row on 統計.
+  await page.getByRole('button', { name: /統計/ }).first().click();
+  await expect(page.getByText('N700S').first()).toBeVisible({ timeout: 15_000 });
+});
