@@ -115,3 +115,20 @@ test('line readings join exact normalized Wikidata labels and keep curated overr
   assert.equal(result.lineReadings['JR West\u0000架空線'], 'Fictional Line');
   assert.equal(result.lineReadings['JR West\u0000短線'], 'Short Line');
 });
+
+test('line readings fail closed for duplicated Japanese line names', () => {
+  const result = buildReadings({
+    n02Stations: { features: [
+      n02Station('s1', 'A', 139.0, 35.0, '東日本旅客鉄道', '重複線'),
+      n02Station('s2', 'B', 139.1, 35.1, '東海旅客鉄道', '重複線'),
+    ] },
+    osmStations: { elements: [] },
+    wikidataStations: { results: { bindings: [] } },
+    wikidataLines: { results: { bindings: [
+      wikiLine('重複線', 'Wrong Shared Line'),
+    ] } },
+  });
+
+  assert.equal(result.lineReadings['東日本旅客鉄道\u0000重複線'], undefined);
+  assert.equal(result.lineReadings['東海旅客鉄道\u0000重複線'], undefined);
+});

@@ -5,13 +5,33 @@
 //   2. Curated ground truth: Shinkansen 営業キロ are well-known and equal their 線名 length
 //      (each Shinkansen is one named line), so they're reliable anchors. Plus a few majors.
 // Exit non-zero if any anchor deviates >12% or any hard sanity check trips.
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import type { RailGeoPackage, RailLine } from '../src/contract/types.ts';
 import { haversineKm } from './geometry.ts';
+import { groupN02, lineId } from './n02-ingest.ts';
+import {
+  buildLineStyleIndex,
+  isValidHexColor,
+  jrOperatorLogoTokens,
+  logoFilenameFromSrc,
+  logoMatchesOperatorFamily,
+} from './line-style.ts';
+import type { LogoIndex, WikiStyleCache } from './line-style.ts';
 
 const pkg = JSON.parse(readFileSync('public/rail/jp-2025.json', 'utf8')) as RailGeoPackage;
 const stationReadings = JSON.parse(readFileSync('data/readings/station-readings.json', 'utf8')) as Record<string, { romaji?: string }>;
 const n02Stations = JSON.parse(readFileSync('data/n02/stations.json', 'utf8')) as { features: { properties: Record<string, unknown> }[] };
+const n02RailSections = JSON.parse(readFileSync('data/n02/rail-sections.json', 'utf8')) as never;
+const wikidataStyle = existsSync('data/readings/wikidata-line-style.json')
+  ? JSON.parse(readFileSync('data/readings/wikidata-line-style.json', 'utf8')) as WikiStyleCache
+  : {};
+const logoIndex = existsSync('data/readings/logo-index.json')
+  ? JSON.parse(readFileSync('data/readings/logo-index.json', 'utf8')) as LogoIndex
+  : {};
+const logoCredits = existsSync('public/rail/logo-credits.json')
+  ? JSON.parse(readFileSync('public/rail/logo-credits.json', 'utf8')) as Record<string, { src?: string; license?: string }>
+  : {};
 
 const lineKm = (id: string): number => pkg.segments.filter((s) => s.lineId === id).reduce((a, s) => a + s.km, 0);
 const lineStations = (id: string): { lon: number; lat: number }[] =>
@@ -45,6 +65,19 @@ const health: Health[] = pkg.lines.map((line) => {
 
 // ── Romaji coverage and irregular readings. ──
 let failures = 0;
+
+console.log('━━━ operator coverage ━━━');
+const linesWithOperator = pkg.lines.filter((l) => typeof l.operator === 'string' && l.operator.trim().length > 0);
+const operatorCoverageOk = linesWithOperator.length === pkg.lines.length;
+if (!operatorCoverageOk) failures += 1;
+console.log(`  ${operatorCoverageOk ? '✓' : '✗'} operator coverage: ${linesWithOperator.length}/${pkg.lines.length}`);
+if (!operatorCoverageOk) {
+  const missing = pkg.lines
+    .filter((l) => !(typeof l.operator === 'string' && l.operator.trim().length > 0))
+    .slice(0, 8);
+  for (const l of missing) console.log(`    missing operator: ${l.lineId}`);
+}
+
 console.log('━━━ romaji readings ━━━');
 const withRomaji = pkg.stations.filter((s) => typeof s.nameRoma === 'string' && s.nameRoma.trim().length > 0);
 const romajiCoverage = pkg.stations.length ? withRomaji.length / pkg.stations.length : 1;
@@ -87,6 +120,108 @@ expectStationReading('雑司が谷', 'Zoshigaya');
 expectStationReadingAt('神戸', 'jp-わたらせ渓谷鐵道-わたらせ渓谷線', 139.356565, 36.537505, 'Godo');
 expectStationReadingAt('神戸', 'jp-西日本旅客鉄道-山陽線', 135.17822, 34.67922, 'Kobe');
 expectStationReadingAt('神戸', 'jp-豊橋鉄道-渥美線', 137.27737, 34.66799, 'Kambe');
+
+// ── Line colors and logos. Sourced color means a Wikidata P465 match survived the
+// operator-aware join; total color includes operator/Shinkansen defaults.
+console.log('\n━━━ line styles ━━━');
+const rawLines = groupN02(n02RailSections, n02Stations as never);
+const lineStyles = buildLineStyleIndex(rawLines, wikidataStyle, logoIndex);
+const styleByLineId = new Map(rawLines.map((raw) => [lineId(raw.operator, raw.name), lineStyles[`${raw.operator}\u0000${raw.name}`]]));
+const rawByLineId = new Map(rawLines.map((raw) => [lineId(raw.operator, raw.name), raw]));
+const logoEntryBySrc = new Map(Object.values(logoIndex).filter((entry) => entry.src).map((entry) => [entry.src, entry]));
+const sourcedColor = pkg.lines.filter((l) => styleByLineId.get(l.lineId)?.colorSource === 'sourced');
+const colored = pkg.lines.filter((l) => typeof l.color === 'string' && l.color.trim().length > 0);
+const invalidColor = pkg.lines.filter((l) => !isValidHexColor(l.color));
+if (colored.length !== pkg.lines.length || invalidColor.length) failures += 1;
+console.log(`  ℹ sourced-color coverage: ${sourcedColor.length}/${pkg.lines.length} (${((sourcedColor.length / pkg.lines.length) * 100).toFixed(2)}%)`);
+console.log(`  ${colored.length === pkg.lines.length && invalidColor.length === 0 ? '✓' : '✗'} total-color coverage: ${colored.length}/${pkg.lines.length} (${((colored.length / pkg.lines.length) * 100).toFixed(2)}%)`);
+if (invalidColor.length) {
+  for (const l of invalidColor.slice(0, 8)) console.log(`    invalid ${l.lineId}: ${l.color ?? '(missing)'}`);
+}
+
+const logoLines = pkg.lines.filter((l) => typeof l.logo === 'string' && l.logo.startsWith('/rail/logos/'));
+const minSafeLogoCoverage = 280;
+const badLogoCredits = logoLines.filter((l) => {
+  const credit = logoCredits[l.lineId];
+  return l.logo !== `/rail/logos/${l.lineId}.png`
+    || !credit
+    || typeof credit.src !== 'string'
+    || credit.license !== 'Wikimedia Commons';
+});
+if (badLogoCredits.length) failures += 1;
+if (logoLines.length < minSafeLogoCoverage) failures += 1;
+console.log(`  ${badLogoCredits.length === 0 ? '✓' : '✗'} logo coverage: ${logoLines.length}/${pkg.lines.length} (${((logoLines.length / pkg.lines.length) * 100).toFixed(2)}%), credits=${Object.keys(logoCredits).length}`);
+console.log(`  ${logoLines.length >= minSafeLogoCoverage ? '✓' : '✗'} logo no-regression floor: ${logoLines.length}/${minSafeLogoCoverage} (baseline before S1: 227; ambiguous service-brand rows stay fail-closed)`);
+for (const l of badLogoCredits.slice(0, 8)) console.log(`    bad logo credit ${l.lineId}: ${l.logo ?? '(missing)'}`);
+
+function logoSrcForLine(line: RailLine): string | undefined {
+  return logoCredits[line.lineId]?.src;
+}
+
+function logoFilenameForLine(line: RailLine): string {
+  const src = logoSrcForLine(line);
+  const cacheFile = src ? logoEntryBySrc.get(src)?.file : undefined;
+  const commonsFile = src ? logoFilenameFromSrc(src) : undefined;
+  return commonsFile ?? cacheFile ?? '(missing)';
+}
+
+function expectLogoToken(operator: string, name: string, mustInclude: string, mustNotInclude?: string): void {
+  const id = lineId(operator, name);
+  const line = pkg.lines.find((l) => l.lineId === id);
+  const expectedSrc = styleByLineId.get(id)?.logoSrc;
+  const expectedFilename = expectedSrc ? logoFilenameFromSrc(expectedSrc) : undefined;
+  const src = line ? logoSrcForLine(line) : undefined;
+  const filename = line ? logoFilenameForLine(line) : '(missing)';
+  const lower = filename.toLowerCase();
+  const ok = !!line
+    && !!line.logo
+    && !!src
+    && src === expectedSrc
+    && filename === expectedFilename
+    && lower.includes(mustInclude.toLowerCase())
+    && (!mustNotInclude || !lower.includes(mustNotInclude.toLowerCase()));
+  if (!ok) failures += 1;
+  console.log(`  ${ok ? '✓' : '✗'} ${operator}-${name} logo: ${filename}${expectedFilename && filename !== expectedFilename ? ` (expected ${expectedFilename})` : ''}`);
+}
+
+expectLogoToken('東日本旅客鉄道', '山手線', 'JR J');
+expectLogoToken('西日本旅客鉄道', '大阪環状線', 'JRW ');
+expectLogoToken('東日本旅客鉄道', '北陸新幹線', 'Shinkansen jre', 'Shinkansen jrw');
+expectLogoToken('西日本旅客鉄道', '北陸新幹線', 'Shinkansen jrw', 'Shinkansen jre');
+
+const logoFamilyViolations: string[] = [];
+for (const line of logoLines) {
+  const raw = rawByLineId.get(line.lineId);
+  const src = logoSrcForLine(line);
+  if (!raw || !src || !jrOperatorLogoTokens(raw.operator)) continue;
+  if (!logoMatchesOperatorFamily(raw.operator, src)) {
+    logoFamilyViolations.push(`${line.lineId}: ${logoFilenameForLine(line)}`);
+  }
+}
+if (logoFamilyViolations.length) failures += 1;
+console.log(`  ${logoFamilyViolations.length === 0 ? '✓' : '✗'} JR operator-family logo invariant: ${logoFamilyViolations.length} violation(s)`);
+for (const v of logoFamilyViolations.slice(0, 12)) console.log(`    ${v}`);
+
+try {
+  const publicPackageBefore = readFileSync('public/rail/jp-2025.json', 'utf8');
+  const logoCreditsBefore = readFileSync('public/rail/logo-credits.json', 'utf8');
+  execFileSync(process.execPath, ['pipeline/build-jp.ts', '--out', 'public/rail/jp-2025.json'], { stdio: 'pipe' });
+  const publicPackageAfter = readFileSync('public/rail/jp-2025.json', 'utf8');
+  const logoCreditsAfter = readFileSync('public/rail/logo-credits.json', 'utf8');
+  const deterministic = publicPackageBefore === publicPackageAfter && logoCreditsBefore === logoCreditsAfter;
+  if (!deterministic) failures += 1;
+  console.log(`  ${deterministic ? '✓' : '✗'} deterministic rebuild bytes: public package + logo credits`);
+} catch (err) {
+  failures += 1;
+  const message = err instanceof Error ? err.message : String(err);
+  console.log(`  ✗ deterministic rebuild bytes: ${message}`);
+}
+
+const jrEastChuo = pkg.lines.find((l) => l.lineId === 'jp-東日本旅客鉄道-中央線');
+const osakaMetroChuo = pkg.lines.find((l) => l.lineId === 'jp-大阪市高速電気軌道-4号線(中央線)');
+const chuoDifferent = !!jrEastChuo?.color && !!osakaMetroChuo?.color && jrEastChuo.color !== osakaMetroChuo.color;
+if (!chuoDifferent) failures += 1;
+console.log(`  ${chuoDifferent ? '✓' : '✗'} 中央線 colors differ: JR East=${jrEastChuo?.color ?? 'missing'} Osaka Metro=${osakaMetroChuo?.color ?? 'missing'}`);
 
 // ── curated anchors (営業キロ). Shinkansen names are unique, so name match is safe. ──
 const ANCHORS: { name: string; opMatch?: RegExp; km: number; loop?: boolean }[] = [

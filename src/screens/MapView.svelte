@@ -22,7 +22,7 @@
     networkBounds,
     riddenBounds,
     litStationIds,
-    lineColorExpression,
+    lineOpacityExpression,
     lineWidthExpression,
     glowWidthExpression,
     glowOpacityExpression,
@@ -31,10 +31,11 @@
     selectedLineSegmentIds,
     selectedLineStationIds,
     inFilter,
+    DEFAULT_LINE_COLOR,
     SEGMENTS_LAYER,
     SEGMENTS_GLOW_LAYER,
     STATIONS_LAYER,
-    HIGHLIGHT_LINE_LAYER,
+    SELECTION_CASING_LAYER,
     HIGHLIGHT_STATION_LAYER,
   } from '../lib/map/style';
   import {
@@ -54,6 +55,8 @@
     type StationHit,
     type LineCandidate,
   } from '../lib/search';
+  import { buildPopupModel, popupHtml } from '../lib/map/popup';
+  import { companyFor } from '../lib/company';
 
   // Loaded lazily so the module-eval is browser-free.
   type MapLib = typeof import('maplibre-gl');
@@ -168,6 +171,7 @@
           styleLoaded = true;
           fitToNetwork();
           wireStationClicks();
+          void surfaceLogoCredits();
           status = 'ready';
         });
         map.on('error', (e: unknown) => {
@@ -232,32 +236,75 @@
     });
   }
 
-  // C5 — render the bilingual popup at the station's coordinates. Text-only HTML (escaped).
+  // C7 — surface the line-logo attribution. Commons logos (P154) need per-file credit; the
+  // engine lane ships `/rail/logo-credits.json`. We fetch it resiliently (missing file → no-op,
+  // logos just won't have a visible Commons credit yet) and append a compact credit line to the
+  // map's ⓘ attribution control, beside the existing N02 + OSM/ODbL credits.
+  async function surfaceLogoCredits(): Promise<void> {
+    try {
+      const res = await fetch(`${import.meta.env.BASE_URL}rail/logo-credits.json`);
+      if (!res.ok) return;
+      const data = (await res.json()) as
+        | { attribution?: string; credits?: { author?: string; license?: string }[] }
+        | Record<string, { author?: string; license?: string }>;
+      const credit = logoCreditLine(data);
+      if (!credit || !map) return;
+      // Append via a transient geojson source's attribution (cheapest: re-set the rail source's
+      // attribution is not supported live, so add a no-feature source carrying the credit text).
+      if (!map.getSource('rp-logo-credit')) {
+        map.addSource('rp-logo-credit', {
+          type: 'geojson',
+          data: { type: 'FeatureCollection', features: [] },
+          attribution: credit,
+        });
+      }
+    } catch {
+      // offline / malformed — logos still render; the credit is simply not shown this session.
+    }
+  }
+
+  // Reduce a logo-credits payload to ONE compact attribution line. Tolerant of either an
+  // explicit `attribution` string, a `credits` array, or a map of per-line credit objects.
+  function logoCreditLine(data: unknown): string {
+    if (!data || typeof data !== 'object') return '';
+    const obj = data as Record<string, unknown>;
+    if (typeof obj.attribution === 'string' && obj.attribution.trim()) return obj.attribution.trim();
+    const collectLicenses = (entries: { license?: unknown }[]): string => {
+      const licenses = new Set<string>();
+      for (const e of entries) if (typeof e?.license === 'string' && e.license) licenses.add(e.license);
+      const list = [...licenses].slice(0, 4).join(', ');
+      return list ? `路線ロゴ: Wikimedia Commons（${list}）` : '路線ロゴ: Wikimedia Commons';
+    };
+    if (Array.isArray(obj.credits)) return collectLicenses(obj.credits as { license?: unknown }[]);
+    const values = Object.values(obj).filter((v) => v && typeof v === 'object') as { license?: unknown }[];
+    if (values.length) return collectLicenses(values);
+    return '';
+  }
+
+  // C5 — render the hover→lines popup at the station's coordinates. Header = bilingual station
+  // name; below it, ONE ROW PER LINE through the physical station (its cross-line group), each
+  // `[logo <img> | color swatch] 線名 (Romaji)`. Missing logo → the color swatch. The list
+  // scrolls past ~6 lines (新宿 has 7). The model + HTML are built by the pure popup module.
   function showPopup(props: Record<string, unknown>): void {
     if (!map || !popup) return;
-    const st = get(geo).stationById.get(String(props.stationId));
-    const name = String(props.name);
-    const roma = props.nameRoma ? String(props.nameRoma) : st?.nameRoma;
+    const idx = get(geo);
+    const stationId = String(props.stationId);
+    const st = idx.stationById.get(stationId);
     const lon = st?.lon;
     const lat = st?.lat;
     if (lon === undefined || lat === undefined) return;
-    const html = roma
-      ? `<div class="rp-popup"><span class="rp-popup-ja">${esc(name)}</span><span class="rp-popup-roma">${esc(roma)}</span></div>`
-      : `<div class="rp-popup"><span class="rp-popup-ja">${esc(name)}</span></div>`;
-    popup.setLngLat([lon, lat]).setHTML(html).addTo(map);
+    const model = buildPopupModel(idx, stationId, String(props.lineId));
+    if (!model) return;
+    popup.setLngLat([lon, lat]).setHTML(popupHtml(model)).addTo(map);
   }
 
-  function esc(s: string): string {
-    return s.replace(/[&<>"']/g, (c) =>
-      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string,
-    );
-  }
-
-  // ── lit-set → paint updates (single data-driven expression, setPaintProperty) ──
+  // ── lit-set → paint updates (lit-keyed channels only; line color is STATIC per C1) ──
+  // C2: ridden-state rides OPACITY + WIDTH. The base line-color is the static ['get','color']
+  // set once at layer-add and is NEVER re-set here, so the flood sweeps in each line's own hue.
   function repaint(lit: string[]): void {
     if (!map || !styleLoaded) return;
     const litStations = litStationIds(lit, get(packages));
-    map.setPaintProperty(SEGMENTS_LAYER, 'line-color', lineColorExpression(lit));
+    map.setPaintProperty(SEGMENTS_LAYER, 'line-opacity', lineOpacityExpression(lit));
     map.setPaintProperty(SEGMENTS_LAYER, 'line-width', lineWidthExpression(lit));
     map.setPaintProperty(SEGMENTS_GLOW_LAYER, 'line-width', glowWidthExpression(lit));
     map.setPaintProperty(SEGMENTS_GLOW_LAYER, 'line-opacity', glowOpacityExpression(lit));
@@ -286,16 +333,17 @@
     prevLit = lit;
   });
 
-  // ── C1: RED selection highlight ────────────────────────────────────────────────
-  // When a line is selected (picked OR inferred), paint its whole length + stations RED via
-  // setFilter on the dedicated highlight layers (NO setFeatureState — design rule). Red sits
-  // above the base layers so it wins over emerald even on a ridden line. Cleared on deselect.
+  // ── C3: DARK CASING selection underlay ─────────────────────────────────────────
+  // When a line is selected (picked OR inferred), paint its whole length as a wide DARK casing
+  // UNDERLAY + dark station rings via setFilter on the dedicated layers (NO setFeatureState —
+  // design rule). The casing sits below the base line so its own hue shows on top and the dark
+  // halo around it reads as "selected" — visible on the near-white basemap. Cleared on deselect.
   $effect(() => {
     const line = selectedLine;
     if (!map || !styleLoaded) return;
     const segIds = selectedLineSegmentIds(line, get(packages));
     const stIds = selectedLineStationIds(line, get(packages));
-    map.setFilter(HIGHLIGHT_LINE_LAYER, inFilter('segmentId', segIds));
+    map.setFilter(SELECTION_CASING_LAYER, inFilter('segmentId', segIds));
     map.setFilter(HIGHLIGHT_STATION_LAYER, inFilter('stationId', stIds));
   });
 
@@ -501,7 +549,28 @@
 
   // expose for testing-free a11y label
   const segmentCount = $derived($packages.reduce((n, p) => n + p.segments.length, 0));
+
+  // C6 — a line's display color for the swatch fallback (used in chips/search/panel markup).
+  function lineColor(line: RailLine): string {
+    return line.color ?? DEFAULT_LINE_COLOR;
+  }
 </script>
+
+<!-- C6 — a line's leading mark: its logo (normalized to ~16px HEIGHT, width auto) when present,
+     else a color swatch in the line's official hue. Reused in every place a line is named. -->
+{#snippet lineMark(line: RailLine)}
+  {#if line.logo}
+    <img class="line-logo" src={line.logo} alt="" loading="lazy" />
+  {:else}
+    <span class="line-swatch" style={`background:${lineColor(line)}`} aria-hidden="true"></span>
+  {/if}
+{/snippet}
+
+<!-- C8 — the railway company, muted, to the LEFT of the logo + name. A SIBLING of the
+     badge (not inside it), de-duped when the line name already leads with the brand. -->
+{#snippet companyTag(line: RailLine)}
+  {#if companyFor(line.operator, line.name)}<span class="line-co">{companyFor(line.operator, line.name)}</span>{/if}
+{/snippet}
 
 <div class="map-root">
   <div
@@ -560,8 +629,9 @@
             {#each lineGroups as group (group.country)}
               {#each group.lines as line (line.lineId)}
                 <button class="line-chip" onclick={() => pickLine(line)}>
-                  <span class="dot" aria-hidden="true"></span>
-                  <span class="line-name">{bilingualLabel(line.name, line.nameRoma)}</span>
+                  {@render companyTag(line)}
+                  {@render lineMark(line)}
+                  <span class="line-name" title={bilingualLabel(line.name, line.nameRoma)}>{bilingualLabel(line.name, line.nameRoma)}</span>
                   {#if line.isHSR}<span class="hsr">新幹線</span>{/if}
                 </button>
               {/each}
@@ -570,7 +640,7 @@
         {:else}
           <div class="mark-step">
             <button class="back" onclick={backToLinePicker} aria-label="路線選択に戻る">‹</button>
-            <span class="picked">{bilingualLabel(selectedLine.name, selectedLine.nameRoma)}{#if selectedLine.isHSR}<span class="hsr">新幹線</span>{/if}</span>
+            <span class="picked">{@render companyTag(selectedLine)}{@render lineMark(selectedLine)}<span class="picked-name">{bilingualLabel(selectedLine.name, selectedLine.nameRoma)}</span>{#if selectedLine.isHSR}<span class="hsr">新幹線</span>{/if}</span>
           </div>
           <p class="mark-hint" aria-live="polite">
             {#if !stationA}
@@ -586,7 +656,7 @@
           <label class="search-label" for="rp-q-a">出発駅</label>
           {#if pickedA}
             <div class="picked-station">
-              <span>{bilingualLabel(pickedA.station.name, pickedA.station.nameRoma)} · {pickedA.line.name}</span>
+              <span class="picked-station-label">{bilingualLabel(pickedA.station.name, pickedA.station.nameRoma)} · {@render companyTag(pickedA.line)}{@render lineMark(pickedA.line)}{pickedA.line.name}</span>
               <button class="clear" aria-label="出発駅をクリア" onclick={() => { pickedA = null; queryA = ''; tryInfer(); }}>×</button>
             </div>
           {:else}
@@ -605,7 +675,7 @@
                   <li>
                     <button class="hit" onclick={() => pickHit('A', h)}>
                       <span class="hit-name">{bilingualLabel(h.station.name, h.station.nameRoma)}</span>
-                      <span class="hit-line">{h.line.name}</span>
+                      <span class="hit-line">{@render companyTag(h.line)}{@render lineMark(h.line)}{h.line.name}</span>
                     </button>
                   </li>
                 {/each}
@@ -618,7 +688,7 @@
           <label class="search-label" for="rp-q-b">到着駅</label>
           {#if pickedB}
             <div class="picked-station">
-              <span>{bilingualLabel(pickedB.station.name, pickedB.station.nameRoma)} · {pickedB.line.name}</span>
+              <span class="picked-station-label">{bilingualLabel(pickedB.station.name, pickedB.station.nameRoma)} · {@render companyTag(pickedB.line)}{@render lineMark(pickedB.line)}{pickedB.line.name}</span>
               <button class="clear" aria-label="到着駅をクリア" onclick={() => { pickedB = null; queryB = ''; tryInfer(); }}>×</button>
             </div>
           {:else}
@@ -637,7 +707,7 @@
                   <li>
                     <button class="hit" onclick={() => pickHit('B', h)}>
                       <span class="hit-name">{bilingualLabel(h.station.name, h.station.nameRoma)}</span>
-                      <span class="hit-line">{h.line.name}</span>
+                      <span class="hit-line">{@render companyTag(h.line)}{@render lineMark(h.line)}{h.line.name}</span>
                     </button>
                   </li>
                 {/each}
@@ -652,8 +722,9 @@
           <div class="line-list">
             {#each lineChoices as c (c.line.lineId)}
               <button class="line-chip" onclick={() => pickInferredLine(c)}>
-                <span class="dot" aria-hidden="true"></span>
-                <span class="line-name">{bilingualLabel(c.line.name, c.line.nameRoma)}</span>
+                {@render companyTag(c.line)}
+                {@render lineMark(c.line)}
+                <span class="line-name" title={bilingualLabel(c.line.name, c.line.nameRoma)}>{bilingualLabel(c.line.name, c.line.nameRoma)}</span>
                 {#if c.line.isHSR}<span class="hsr">新幹線</span>{/if}
               </button>
             {/each}
@@ -772,15 +843,39 @@
   .line-chip:active {
     transform: scale(0.99);
   }
-  .line-chip .dot {
-    width: 10px;
-    height: 10px;
-    border-radius: var(--radius-pill);
-    background: var(--rail-lit);
+  /* C6 — line mark: a logo (fixed 16px HEIGHT, width auto, left-aligned) or a color swatch. */
+  :global(.line-logo) {
+    height: 16px;
+    width: auto;
+    max-width: 48px;
+    object-fit: contain;
     flex: none;
+    display: block;
+  }
+  :global(.line-swatch) {
+    width: 14px;
+    height: 6px;
+    border-radius: 3px;
+    flex: none;
+    display: inline-block;
   }
   .line-name {
     flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* C8 — railway company: muted secondary label, left of logo + name. #6B756F = ink-muted
+     (DESIGN.md "secondary text, labels"; AA on white). Stays grey — monochrome discipline. */
+  :global(.line-co) {
+    flex: none;
+    font-size: 0.78em;
+    color: var(--ink-muted);
+    white-space: nowrap;
+    max-width: 8em;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .hsr {
     font-size: var(--size-label);
@@ -810,6 +905,7 @@
   .picked {
     display: inline-flex;
     align-items: center;
+    gap: var(--space-sm);
     font-size: var(--size-stat);
     font-weight: var(--weight-label);
     color: var(--ink);
@@ -896,10 +992,30 @@
     font-size: var(--size-body);
     text-align: left;
   }
+  .hit-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .hit-line {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     color: var(--ink-muted);
     font-size: var(--size-label);
-    flex: none;
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 60%;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .picked-station-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
   }
   .picked-station {
     display: flex;
@@ -926,12 +1042,18 @@
     flex: none;
   }
 
-  /* ── C5 bilingual station popup (HTML, NOT a glyph layer) ── */
+  /* ── C5 hover→lines popup (HTML, NOT a glyph layer) ── */
   :global(.rp-popup) {
     display: flex;
     flex-direction: column;
     line-height: 1.2;
     padding: 2px 2px;
+    min-width: 140px;
+    max-width: 240px;
+  }
+  :global(.rp-popup-head) {
+    display: flex;
+    flex-direction: column;
   }
   :global(.rp-popup-ja) {
     font-size: var(--size-body);
@@ -941,6 +1063,58 @@
   :global(.rp-popup-roma) {
     font-size: var(--size-label);
     color: var(--ink-muted);
+  }
+  /* One row per line through the station; scrolls past ~6 lines (新宿 has 7). */
+  :global(.rp-line-list) {
+    list-style: none;
+    margin: 6px 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 168px; /* ~6 rows then scroll */
+    overflow-y: auto;
+  }
+  :global(.rp-line-row) {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--size-label);
+    color: var(--ink);
+    min-height: 18px;
+  }
+  :global(.rp-line-name) {
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* C8 — company label in the hover popup: muted, left of the badge (matches .line-co). */
+  :global(.rp-line-co) {
+    flex: none;
+    font-size: 0.82em;
+    color: var(--ink-muted);
+    white-space: nowrap;
+    max-width: 7em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* Popup-scoped copies of the C6 line mark (the popup is innerHTML, outside Svelte scoping). */
+  :global(.rp-line-logo) {
+    height: 16px;
+    width: auto;
+    max-width: 48px;
+    object-fit: contain;
+    flex: none;
+    display: block;
+  }
+  :global(.rp-line-swatch) {
+    width: 14px;
+    height: 6px;
+    border-radius: 3px;
+    flex: none;
+    display: inline-block;
   }
   :global(.maplibregl-popup-content) {
     padding: 6px 10px;

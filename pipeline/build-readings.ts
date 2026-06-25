@@ -41,6 +41,7 @@ interface WikiBinding {
 }
 
 interface WikiLineBinding {
+  op?: { value?: string };
   ja?: { value?: string };
   en?: { value?: string };
 }
@@ -296,26 +297,58 @@ function normalizeWikiJaLineLabel(label: string): string {
   }
 }
 
-function parseWikiLineReadings(wikidataLines: { results?: { bindings?: WikiLineBinding[] } } | undefined): Map<string, string> {
-  const byName = new Map<string, string[]>();
+function parseWikiLineReadings(wikidataLines: { results?: { bindings?: WikiLineBinding[] } } | undefined): {
+  byOperatorName: Map<string, string>;
+  byName: Map<string, string>;
+} {
+  const byOperatorNameRaw = new Map<string, string[]>();
+  const byNameRaw = new Map<string, string[]>();
   for (const b of wikidataLines?.results?.bindings ?? []) {
+    const op = b.op?.value;
     const ja = b.ja?.value;
     const en = b.en?.value;
     if (!ja || !en) continue;
     const name = normalizeWikiJaLineLabel(ja);
     const romaji = normalizeRomaji(en, false);
     if (!name || !romaji) continue;
-    const arr = byName.get(name);
+    if (op) {
+      const key = n02LineReadingKey(op, name);
+      const arr = byOperatorNameRaw.get(key);
+      if (arr) arr.push(romaji);
+      else byOperatorNameRaw.set(key, [romaji]);
+    }
+    const arr = byNameRaw.get(name);
     if (arr) arr.push(romaji);
-    else byName.set(name, [romaji]);
+    else byNameRaw.set(name, [romaji]);
   }
 
-  const out = new Map<string, string>();
-  for (const [name, labels] of byName) {
-    labels.sort((a, b) => a.length - b.length || a.localeCompare(b));
-    out.set(name, labels[0]);
-  }
-  return out;
+  const pick = (src: Map<string, string[]>): Map<string, string> => {
+    const out = new Map<string, string>();
+    for (const [name, labels] of src) {
+      labels.sort((a, b) => a.length - b.length || a.localeCompare(b));
+      out.set(name, labels[0]);
+    }
+    return out;
+  };
+  return { byOperatorName: pick(byOperatorNameRaw), byName: pick(byNameRaw) };
+}
+
+function lineNameCounts(groups: LineGroup[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const g of groups) counts.set(g.name, (counts.get(g.name) ?? 0) + 1);
+  return counts;
+}
+
+function unambiguousWikiLineReading(
+  key: string,
+  name: string,
+  nameCounts: Map<string, number>,
+  wikiLineReadings: ReturnType<typeof parseWikiLineReadings>,
+): string | undefined {
+  const exact = wikiLineReadings.byOperatorName.get(key);
+  if (exact) return exact;
+  if ((nameCounts.get(name) ?? 0) !== 1) return undefined;
+  return wikiLineReadings.byName.get(name);
 }
 
 export function buildReadings(inputs: JoinInputs): JoinResult {
@@ -418,11 +451,13 @@ export function buildReadings(inputs: JoinInputs): JoinResult {
 
   const lineReadings = curatedLineReadings();
   const wikiLineReadings = parseWikiLineReadings(inputs.wikidataLines);
-  for (const g of parseLineGroups(inputs.n02RailSections ?? inputs.n02Stations)) {
+  const lineGroups = parseLineGroups(inputs.n02RailSections ?? inputs.n02Stations);
+  const nameCounts = lineNameCounts(lineGroups);
+  for (const g of lineGroups) {
     const key = n02LineReadingKey(g.operator, g.name);
     if (lineReadings[key]) continue;
 
-    const wikiReading = wikiLineReadings.get(g.name);
+    const wikiReading = unambiguousWikiLineReading(key, g.name, nameCounts, wikiLineReadings);
     if (wikiReading) {
       lineReadings[key] = wikiReading;
       continue;

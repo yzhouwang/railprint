@@ -39,11 +39,8 @@
 
 ## Deferred (captured by /plan-eng-review 2026-06-24 — record-highlight + bilingual feature)
 
-### Line-name romaji: operator-aware join (FAST-FOLLOW)
-- **Priority:** P2
-- **What:** Line romaji is 287/594 (48%) from an exact-name Wikidata join. Shared names carry operator-prefix errors (中央線→"Osaka Metro Chuo Line", 甘木線→"Amagi Railway Amagi Line"). Make the `pipeline/build-readings.ts` line join operator-aware: match N02 operator + name, strip operator prefixes ("Osaka Metro ", "JR ", "<Op> Railway ") from Wikidata labels, normalize 本線↔線. Expected ~75-85% coverage + fixes the collisions.
-- **Why:** A4 decision was "stations + lines bilingual"; stations done (97.6%), lines are the remaining half, with a few visibly-wrong labels on high-profile lines. Shipped core without it (graceful degradation: Japanese where romaji absent).
-- **Context:** Data already cached at `data/readings/wikidata-lines.json` (1517 JP lines). Reuse the existing `<operator>\x00<name>` key format + the curated-14 override.
+### Line-name romaji: operator-aware join — DONE (v0.5.0.0)
+- **Completed:** v0.5.0.0 (2026-06-25). The colors/logos engine lane made the line join operator-aware (operator+name, fail-closed on ambiguous), which fixed the collisions: 中央線 (JR East) → "Chuo Line" not "Osaka Metro Chuo Line"; 山手線 Tokyo ≠ Kobe. Coverage is now 256/594 (43%) — slightly down from the 287 exact-name matches, but correct-only (no wrong operator-prefixed labels). Further coverage gains (75-85%) would need fuzzy 本線↔線 matching — a P3 follow-up if desired.
 
 ### Station romaji residual review
 - **Priority:** P3
@@ -55,5 +52,19 @@
 - Rollup inlined `wanakana` into the main entry (small, single-consumer). True lazy-chunk-split is a minor build optimization if bundle size matters; runtime laziness already holds (only runs on a search cache-miss).
 
 ---
+
+---
+
+## Deferred (captured by /plan-eng-review 2026-06-25 — line-logo coverage S1+S2+S3)
+
+Coverage went 227→287 (S1, operator-aware src-index) →349 (S2, ja-infobox audit backfill) = **58.8%**.
+A 307-line audit verified the remainder: ~93 had a findable symbol, **214 genuinely have none**
+(trams, cable cars, most rural 3rd-sector + rural JR — no official line symbol exists anywhere).
+
+### Logo follow-ups (P3)
+- **QID crosswalk / S3** — deferred (Codex outside voice: premature; the src-index + operator-family pick met the correctness aim). Revisit only if a residue of cross-operator collisions appears that operator-family matching can't resolve. See `docs/plans/line-logo-coverage-s1s2s3.md`.
+- **Per-file license tags** — `logo-credits.json` still uses a generic "Wikimedia Commons" credit. ~40 CC-BY files (Kintetsu/Meitetsu/Kobe/Sapporo + new 3rd-sector logomarks) want accurate per-file license + author. Changing it touches the C7 attribution UI, so it's its own task.
+- **Deferred audit candidates (28 lines)** — 11 giant numbering-chart PNGs (伊予鉄/西鉄 — 2200px, render poorly at 16px; need cropping/SVG substitutes), 13 low-confidence, 3 contested JR line-codes (筑豊 JE, 山陰 san-A, 総武 JO — agents disagreed). See `scratchpad/s2-dropped.json`.
+- **Within-company JR line-code accuracy** — the operator-family gate catches cross-company JR errors but NOT wrong-code-within-a-company (e.g. JO vs JM on a JR-East line). The high-agreement picks are trusted; a future pass could add exact-code golden assertions per JR line.
 
 _Promoted to v0 (not deferred): one China corridor (京沪高铁) through the pipeline to validate the country-agnostic schema — see docs/DESIGN.md → Implementation Tasks T9._
