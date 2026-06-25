@@ -12,6 +12,7 @@ import type {
   RailStation,
   RideEvent,
   RideSource,
+  RouteCandidate,
 } from '../contract/types';
 import { coverageWarnings, resolveCoverage, segmentsBetween, type CoverageWarning } from './resolver';
 import * as db from './db';
@@ -347,6 +348,40 @@ export async function markRide(opts: {
     segmentIds,
     addedSegmentIds: persisted.map((e) => e.segmentId),
   };
+}
+
+export interface MarkRouteResult {
+  /** Legs freshly added to the log. */
+  added: number;
+  /** Already-ridden legs re-grouped into this trip (re-stamped in place, not duplicated). */
+  restamped: number;
+  tripId: string;
+  /** Route distance, from the chosen candidate. */
+  totalKm: number;
+  /** Every leg of the route. */
+  segmentIds: string[];
+}
+
+/**
+ * Mark a whole cross-line route (the route-picker's chosen candidate) as ONE trip. Lights every leg;
+ * already-ridden legs are re-grouped into the new trip rather than duplicated (db.markRouteSegments).
+ */
+export async function markRoute(
+  route: RouteCandidate,
+  opts?: { date?: string; trainModel?: string; source?: RideSource },
+): Promise<MarkRouteResult> {
+  const tripId = db.newId();
+  const createdAt = new Date().toISOString();
+  const res = await db.markRouteSegments(route.segmentIds, {
+    railGeoVersion: route.railGeoVersion,
+    date: opts?.date,
+    trainModel: opts?.trainModel,
+    source: opts?.source ?? 'manual',
+    tripId,
+    createdAt,
+  });
+  await refresh();
+  return { ...res, tripId, totalKm: route.totalKm, segmentIds: route.segmentIds };
 }
 
 /** Persist already-built events (importer commit, corridor seed). Merge semantics. */

@@ -9,7 +9,7 @@
 // we do NOT duplicate the OLD_TO_NEW kanji table. `wanakana` is LAZY-loaded (only when a query
 // needs kana↔romaji folding) so it never costs the map's first paint.
 
-import type { RailGeoPackage, RailLine, RailStation } from '../contract/types';
+import type { RailGeoPackage, RailLine, RailStation, RouteCandidate } from '../contract/types';
 import type { GeoIndex, StationGroupMember } from './store';
 import { groupKeyOf } from './store';
 import { normStation, diceSimilarity } from './import/crosswalk';
@@ -229,6 +229,24 @@ export function inferLine(
 /** The cross-line group key for a resolved hit — the inference unit. */
 export function groupKeyForHit(hit: StationHit): string {
   return groupKeyOf(hit.station);
+}
+
+/**
+ * Order route candidates so a single-line route on a line the user EXPLICITLY picked in search comes
+ * first. findRoutes ranks 0-change routes purely by km, which can float a parallel Shinkansen (one
+ * short hop between two stations that also share a local line) ABOVE the local line the user obviously
+ * rode — one tap from a phantom HSR mark that inflates the HSR %. findRoutes works on group keys and
+ * can't know which instance was picked; the UI can. Stable: preserves findRoutes' order within each
+ * partition, so the route-finder's (lineChanges, km) ranking still governs everything else.
+ */
+export function preferPickedLine(routes: RouteCandidate[], pickedLineIds: Set<string>): RouteCandidate[] {
+  const onPicked: RouteCandidate[] = [];
+  const rest: RouteCandidate[] = [];
+  for (const r of routes) {
+    if (r.lines.length === 1 && pickedLineIds.has(r.lines[0])) onPicked.push(r);
+    else rest.push(r);
+  }
+  return [...onPicked, ...rest];
 }
 
 /** Bilingual display label: `新宿 (Shinjuku)` when a reading exists, else just 新宿. */

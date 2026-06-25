@@ -8,7 +8,7 @@
 // The durable backup-of-record lives outside IndexedDB: the exported CSV (T10).
 
 import Dexie, { type Table } from 'dexie';
-import type { RideEvent } from '../contract/types';
+import type { RideEvent, RideSource } from '../contract/types';
 
 export interface MetaRow {
   key: string;
@@ -69,6 +69,75 @@ export async function addRideSegments(candidates: RideEvent[]): Promise<RideEven
     const fresh = candidates.filter((e) => (seen.has(e.segmentId) ? false : (seen.add(e.segmentId), true)));
     if (fresh.length) await db.rideEvents.bulkAdd(fresh);
     return fresh;
+  });
+}
+
+/**
+ * Persist a whole route (multiple legs) as ONE trip. Existing legs are RE-STAMPED IN PLACE — their
+ * tripId is updated (and date/trainModel filled only if absent), keeping the same row id, so the
+ * durable log stays one-event-per-segment. This is NOT the v0.2.0.0 bug: that was a duplicate INSERT
+ * of an already-ridden segment; this is an UPDATE by primary key (bulkPut on the existing id). Missing
+ * legs are inserted. The most-recent marking re-groups overlapping legs into the new trip (D6-B).
+ * Returns how many legs were freshly added vs re-stamped. Atomic + concurrency-safe (one rw txn).
+ */
+export async function markRouteSegments(
+  segmentIds: string[],
+  fields: {
+    railGeoVersion: string;
+    date?: string;
+    trainModel?: string;
+    source: RideSource;
+    tripId: string;
+    createdAt: string;
+  },
+): Promise<{ added: number; restamped: number }> {
+  if (segmentIds.length === 0) return { added: 0, restamped: 0 };
+  return db.transaction('rw', db.rideEvents, async () => {
+    const present = await db.rideEvents.where('segmentId').anyOf(segmentIds).toArray();
+    // segmentId is a NON-unique index — the log can hold >1 row per segment (e.g. two import batches).
+    // Group ALL rows per segment so the re-stamp re-groups every one of them; collapsing to a single
+    // row (a Map) would strand the duplicates under their old trip.
+    const presentBySeg = new Map<string, RideEvent[]>();
+    for (const e of present) {
+      const list = presentBySeg.get(e.segmentId);
+      if (list) list.push(e);
+      else presentBySeg.set(e.segmentId, [e]);
+    }
+    const restamp: RideEvent[] = [];
+    const inserts: RideEvent[] = [];
+    const seen = new Set<string>();
+    for (const segmentId of segmentIds) {
+      if (seen.has(segmentId)) continue; // in-call dedup
+      seen.add(segmentId);
+      const existing = presentBySeg.get(segmentId);
+      if (existing && existing.length) {
+        // re-stamp the grouping in place on EVERY existing row; keep id + createdAt, and don't clobber
+        // an existing leg's own ride date/train (only fill when it had none) — the trip groups them,
+        // it doesn't rewrite when each leg was ridden.
+        for (const e of existing) {
+          restamp.push({
+            ...e,
+            tripId: fields.tripId,
+            date: e.date ?? fields.date,
+            trainModel: e.trainModel ?? fields.trainModel,
+          });
+        }
+      } else {
+        inserts.push({
+          id: newId(),
+          segmentId,
+          railGeoVersion: fields.railGeoVersion,
+          date: fields.date,
+          trainModel: fields.trainModel,
+          source: fields.source,
+          tripId: fields.tripId,
+          createdAt: fields.createdAt,
+        });
+      }
+    }
+    if (restamp.length) await db.rideEvents.bulkPut(restamp); // bulkPut by id == update in place
+    if (inserts.length) await db.rideEvents.bulkAdd(inserts);
+    return { added: inserts.length, restamped: restamp.length };
   });
 }
 

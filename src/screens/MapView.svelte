@@ -13,10 +13,11 @@
 
   import { onMount, tick } from 'svelte';
   import { get } from 'svelte/store';
-  import { packages, litSegmentIds, geo, markRide } from '../lib/store';
+  import { packages, litSegmentIds, geo, markRide, markRoute } from '../lib/store';
+  import { findRoutes } from '../lib/route';
   import { markMode, toast } from '../lib/ui';
   import { tokens } from '../design/tokens';
-  import type { RailLine } from '../contract/types';
+  import type { RailLine, RouteCandidate } from '../contract/types';
   import {
     buildBaseStyle,
     networkBounds,
@@ -50,11 +51,10 @@
   import {
     buildSearchIndex,
     resolveQuery,
-    inferLine,
     groupKeyForHit,
+    preferPickedLine,
     bilingualLabel,
     type StationHit,
-    type LineCandidate,
   } from '../lib/search';
   import { buildPopupModel, popupHtml } from '../lib/map/popup';
   import { companyFor } from '../lib/company';
@@ -86,7 +86,9 @@
   let hitsB = $state<StationHit[]>([]);
   let pickedA = $state<StationHit | null>(null);
   let pickedB = $state<StationHit | null>(null);
-  let lineChoices = $state<LineCandidate[]>([]); // multi-share line picker after inference
+  let routeChoices = $state<RouteCandidate[]>([]); // cross-line route picker (search-mode)
+  let noRoute = $state(false); // the two stations have no rail path between them
+  let searching = $state(false); // route-finding in flight (paints "探索中" before the sync call)
   let searchSeq = 0; // guards out-of-order async resolves (latest query wins)
 
   // The bilingual search index — rebuilt only when the geo index changes (i.e. packages swap).
@@ -117,7 +119,9 @@
     hitsB = [];
     pickedA = null;
     pickedB = null;
-    lineChoices = [];
+    routeChoices = [];
+    noRoute = false;
+    searching = false;
   }
 
   // Lines available to pick, grouped by country (geo.linesByCountry).
@@ -527,12 +531,14 @@
     if (seq !== searchSeq) return; // a newer keystroke superseded this resolve
     if (which === 'A') {
       pickedA = null;
-      lineChoices = [];
+      routeChoices = [];
+      noRoute = false;
       hitsA = hits;
       if (hits.length === 1) pickHit('A', hits[0]);
     } else {
       pickedB = null;
-      lineChoices = [];
+      routeChoices = [];
+      noRoute = false;
       hitsB = hits;
       if (hits.length === 1) pickHit('B', hits[0]);
     }
@@ -557,40 +563,84 @@
       pickedB = hit;
       hitsB = [];
     }
-    tryInfer();
+    void tryInfer();
   }
 
-  // Once both endpoints are pinned, infer the shared line.
-  function tryInfer(): void {
-    lineChoices = [];
-    selectedLine = null;
+  // Once both endpoints are pinned, find the cross-line route(s) and let the user pick. A single-line
+  // A→B is just the degenerate 0-change route — same picker, no special case (the search-mode unify).
+  // findRoutes is synchronous and bounded (caps), but a long national pair can take ~250ms, so we paint
+  // a "探索中" state first (yield a frame) rather than freeze silently.
+  async function tryInfer(): Promise<void> {
+    routeChoices = [];
+    noRoute = false;
     if (!pickedA || !pickedB) return;
-    if (pickedA.station.stationId === pickedB.station.stationId) {
+    const a = pickedA;
+    const b = pickedB;
+    if (a.station.stationId === b.station.stationId) {
       toast('出発駅と到着駅が同じです', 'info');
       return;
     }
-    const inf = inferLine(groupKeyForHit(pickedA), groupKeyForHit(pickedB), get(geo), get(packages));
-    if (inf.status === 'none') {
-      toast('同じ路線にありません。各区間を分けて記録してください', 'error');
+    const pkg = get(packages).find((p) => p.lines.some((l) => l.lineId === a.line.lineId));
+    if (!pkg) {
+      toast('地図の読み込みに失敗', 'error');
       return;
     }
-    if (inf.status === 'one') {
-      void commitInferred(inf.candidate);
+    searching = true;
+    await new Promise((r) => requestAnimationFrame(() => r(null))); // let the 探索中 state paint
+    if (pickedA !== a || pickedB !== b) {
+      searching = false;
+      return; // a newer pick superseded this one
+    }
+    let routes: RouteCandidate[];
+    try {
+      routes = findRoutes(pkg, groupKeyForHit(a), groupKeyForHit(b));
+    } finally {
+      searching = false;
+    }
+    // Surface a route on the line the user actually picked first — never float a parallel Shinkansen
+    // above the local line they rode (which would tempt a one-tap phantom HSR mark).
+    routes = preferPickedLine(routes, new Set([a.line.lineId, b.line.lineId]));
+    if (routes.length === 0) {
+      noRoute = true; // warm no-route state with a leg-by-leg fallback
       return;
     }
-    // multi-share: light up nothing yet, show the picker.
-    lineChoices = inf.candidates;
+    if (routes.length === 1) {
+      void commitRoute(routes[0]);
+      return;
+    }
+    routeChoices = routes; // ≥2 candidates — show the route-picker
   }
 
-  async function pickInferredLine(c: LineCandidate): Promise<void> {
-    lineChoices = [];
-    await commitInferred(c);
+  function pickRoute(r: RouteCandidate): void {
+    void commitRoute(r);
   }
 
-  async function commitInferred(c: LineCandidate): Promise<void> {
-    selectedLine = c.line; // fires C1 red highlight on the inferred line
-    await doMark(c.fromStationId, c.toStationId);
-    // doMark exits markMode on success (which resets search); on a no-op/guard we keep state.
+  async function commitRoute(r: RouteCandidate): Promise<void> {
+    routeChoices = [];
+    noRoute = false;
+    if (busy) return;
+    busy = true;
+    try {
+      const res = await markRoute(r);
+      if (res.added === 0) {
+        toast('この経路は記録済み', 'info'); // every leg was already ridden — kept open to try another
+      } else {
+        toast(`経路を記録しました（+${res.added}区間 / +${res.totalKm.toFixed(1)} km）`, 'success');
+        pulse(r.segmentIds);
+        markMode.set(false); // exit mark mode (resets search) on success
+      }
+    } catch (err) {
+      console.error('[MapView] markRoute failed', err);
+      toast('経路を記録できませんでした', 'error');
+    } finally {
+      busy = false;
+    }
+  }
+
+  // No-route fallback: drop to tap-mode so the user records each leg on its own line.
+  function fallbackToLegByLeg(): void {
+    noRoute = false;
+    switchEntry('tap');
   }
 
   // Motion beat #2: a brief pulse on the freshly-marked segment(s). The non-pulsed
@@ -654,6 +704,34 @@
      badge (not inside it), de-duped when the line name already leads with the brand. -->
 {#snippet companyTag(line: RailLine)}
   {#if companyFor(line.operator, line.name)}<span class="line-co">{companyFor(line.operator, line.name)}</span>{/if}
+{/snippet}
+
+<!-- A route candidate as a chip. 1 line = today's plain chip (degenerate 0-change route); ≥2 lines =
+     a two-line route chip: logo sequence joined by › on top, "km · 区間 · N路線" below. "おすすめ" on
+     rank-1 (a nudge, not a claim). aria-label reads the route so SRs don't hear "image image image". -->
+{#snippet routeChip(r: RouteCandidate, rank: number)}
+  {@const lns = r.lines.map((id) => $geo.lineById.get(id)).filter((l): l is RailLine => !!l)}
+  {#if lns.length <= 1}
+    <button class="line-chip" onclick={() => pickRoute(r)}>
+      {#if lns[0]}{@render companyTag(lns[0])}{@render lineMark(lns[0])}<span class="line-name" title={bilingualLabel(lns[0].name, lns[0].nameRoma)}>{bilingualLabel(lns[0].name, lns[0].nameRoma)}</span>{#if lns[0].isHSR}<span class="hsr">新幹線</span>{/if}{/if}
+    </button>
+  {:else}
+    <button
+      class="route-chip"
+      onclick={() => pickRoute(r)}
+      aria-label={`${lns.map((l) => l.name).join('、')}経由 ${r.totalKm.toFixed(1)}キロ ${r.lines.length}路線`}
+    >
+      <span class="route-lines">
+        {#each lns as l, i (l.lineId + ':' + i)}
+          {#if i > 0}<span class="route-sep" aria-hidden="true">›</span>{/if}
+          {@render lineMark(l)}
+          <span class="route-line-name">{l.name}</span>
+        {/each}
+        {#if rank === 0 && routeChoices.length > 1}<span class="route-rec">おすすめ</span>{/if}
+      </span>
+      <span class="route-meta">{r.totalKm.toFixed(1)} km · {r.segmentIds.length}区間 · {r.lines.length}路線</span>
+    </button>
+  {/if}
 {/snippet}
 
 <div class="map-root">
@@ -800,23 +878,24 @@
           {/if}
         </div>
 
-        {#if lineChoices.length > 0}
-          <!-- multi-share: both stations sit on several shared lines — let the user pick. -->
-          <p class="mark-title">路線を選択</p>
+        {#if searching}
+          <p class="mark-hint" aria-live="polite">経路を探索中…</p>
+        {:else if routeChoices.length > 0}
+          <!-- Cross-line route picker: pick the way you actually rode (a single-line A→B is just
+               the degenerate 0-change route, rendered as a plain chip). -->
+          <p class="mark-title">経路を選択</p>
           <div class="line-list">
-            {#each lineChoices as c (c.line.lineId)}
-              <button class="line-chip" onclick={() => pickInferredLine(c)}>
-                {@render companyTag(c.line)}
-                {@render lineMark(c.line)}
-                <span class="line-name" title={bilingualLabel(c.line.name, c.line.nameRoma)}>{bilingualLabel(c.line.name, c.line.nameRoma)}</span>
-                {#if c.line.isHSR}<span class="hsr">新幹線</span>{/if}
-              </button>
+            {#each routeChoices as r, i (r.segmentIds.join())}
+              {@render routeChip(r, i)}
             {/each}
           </div>
-        {:else if selectedLine}
-          <p class="mark-hint" aria-live="polite">
-            <strong>{bilingualLabel(selectedLine.name, selectedLine.nameRoma)}</strong> で記録します…
-          </p>
+        {:else if noRoute}
+          <!-- Empty state is a feature: warm message + a way forward, never a dead end. -->
+          <div class="no-route" role="status">
+            <p class="no-route-title">経路が見つかりませんでした</p>
+            <p class="no-route-sub">この2駅をつなぐ線路がありません。</p>
+            <button class="no-route-action" onclick={fallbackToLegByLeg}>各区間を分けて記録</button>
+          </div>
         {/if}
       {/if}
     </div>
@@ -969,6 +1048,80 @@
     border-radius: var(--radius-pill);
     padding: 2px 8px;
     margin-left: 6px;
+  }
+  /* Cross-line route chip: two lines, taller than .line-chip; sequence may wrap on long routes. */
+  .route-chip {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+    min-height: 56px;
+    padding: var(--space-sm) var(--space-md);
+    border: 1px solid var(--rail-dim);
+    border-radius: var(--radius-button);
+    background: var(--white);
+    color: var(--ink);
+    font-size: var(--size-body);
+    text-align: left;
+    width: 100%;
+  }
+  .route-chip:active {
+    transform: scale(0.99);
+  }
+  .route-lines {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+    width: 100%;
+  }
+  .route-line-name {
+    font-size: 0.9em;
+  }
+  .route-sep {
+    color: var(--ink-muted);
+    padding: 0 1px;
+  }
+  /* C8 discipline: rank-1 nudge stays muted grey, not emerald — a hint, not a claim. */
+  .route-rec {
+    margin-left: auto;
+    font-size: var(--size-label);
+    font-weight: var(--weight-label);
+    color: var(--ink-muted);
+    background: var(--rail-dim);
+    border-radius: var(--radius-pill);
+    padding: 1px 8px;
+  }
+  .route-meta {
+    font-size: 0.82em;
+    color: var(--ink-muted);
+  }
+  .no-route {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    padding: var(--space-md) var(--space-sm);
+    text-align: center;
+  }
+  .no-route-title {
+    font-weight: var(--weight-label);
+    color: var(--ink);
+  }
+  .no-route-sub {
+    font-size: 0.85em;
+    color: var(--ink-muted);
+  }
+  .no-route-action {
+    align-self: center;
+    margin-top: var(--space-xs);
+    min-height: 44px;
+    padding: 0 var(--space-lg);
+    border: none;
+    border-radius: var(--radius-button);
+    background: var(--rail-text);
+    color: var(--white);
+    font-size: var(--size-body);
+    font-weight: var(--weight-label);
   }
   .mark-step {
     display: flex;

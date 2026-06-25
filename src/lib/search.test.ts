@@ -9,10 +9,42 @@ import {
   resolveQuery,
   inferLine,
   groupKeyForHit,
+  preferPickedLine,
   normRoma,
   bilingualLabel,
   type StationHit,
 } from './search';
+import type { RouteCandidate } from '../contract/types';
+
+const rc = (lines: string[], totalKm: number): RouteCandidate => ({
+  segmentIds: lines.map((l, i) => `${l}:${i}-${i + 1}`),
+  lines,
+  totalKm,
+  lineChanges: lines.length - 1,
+  railGeoVersion: 'v',
+});
+
+describe('preferPickedLine', () => {
+  it('floats a single-line route on a picked line above a shorter parallel line', () => {
+    const hsr = rc(['tokaido-shinkansen'], 6.4); // findRoutes would rank this first (fewer km)
+    const local = rc(['yamanote'], 6.5);
+    const out = preferPickedLine([hsr, local], new Set(['yamanote']));
+    expect(out[0]).toBe(local); // the picked local line is now first, not the parallel Shinkansen
+    expect(out[1]).toBe(hsr);
+  });
+
+  it('is a no-op when no route is on a picked line', () => {
+    const a = rc(['x'], 1);
+    const b = rc(['y'], 2);
+    expect(preferPickedLine([a, b], new Set(['z']))).toEqual([a, b]);
+  });
+
+  it('does not promote a MULTI-line route even if it uses a picked line', () => {
+    const multi = rc(['yamanote', 'chuo'], 5);
+    const other = rc(['z'], 3);
+    expect(preferPickedLine([multi, other], new Set(['yamanote']))).toEqual([multi, other]);
+  });
+});
 
 const geo = buildGeoIndex(STUB_PACKAGES);
 const index = buildSearchIndex(geo);
