@@ -83,9 +83,13 @@ export function buildWrappedData(inputs: WrappedInputs): WrappedData {
   // The % is the JAPAN figure, never the JP+China blend — the share card must not report a
   // misleading "全国 %". km/prefectures stay cross-country sums (legit totals, not percentages).
   const jp = headline.byCountry.JP;
+  const cn = headline.byCountry.CN;
+  // The hero % belongs to the country you've actually ridden: JP when it has rides, else the CN
+  // corridor for a China-only rider — never a misleading JP 0% and never the JP+CN blend.
+  const primary = jp && jp.riddenKm > 0 ? jp : cn && cn.riddenKm > 0 ? cn : jp;
   const stats: WrappedStat[] = [
-    { value: fmtPct(jp?.pctNational ?? headline.pctNational), unit: '%', caption: '全国の鉄道' },
-    { value: fmtPct(jp?.pctHSR ?? headline.pctHSR), unit: '%', caption: '新幹線・高速鉄道' },
+    { value: fmtPct(primary?.pctNational ?? headline.pctNational), unit: '%', caption: '全国の鉄道' },
+    { value: fmtPct(primary?.pctHSR ?? headline.pctHSR), unit: '%', caption: '新幹線・高速鉄道' },
     { value: fmtInt(headline.prefectures), unit: '', caption: '都道府県・地域' },
   ];
 

@@ -1,8 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
+import { get } from 'svelte/store';
 import type { RailGeoPackage } from '../contract/types';
 import { JP_PACKAGE } from '../fixtures/stubPackage';
-import { buildGeoIndex } from './store';
+import { buildGeoIndex, loadPackages, events as eventsStore, usingFallback, dataDegraded } from './store';
 import { resolveCoverage } from './resolver';
 import { buildWrappedData } from './wrapped/card';
 import type { Headline } from './store';
@@ -52,6 +53,17 @@ describe('multi-country indexing + coverage isolation', () => {
     // the same CN ride against the JP package resolves to nothing (disjoint ids)
     expect(resolveCoverage(oneCnLeg, JP_PACKAGE).riddenKm).toBe(0);
   });
+
+  it('dataDegraded fires when a saved ride is in NO loaded package (CN corridor failed to load)', () => {
+    loadPackages([JP_PACKAGE]); // JP loaded, CN corridor "missing"
+    usingFallback.set(false);
+    eventsStore.set([
+      { id: 'e1', segmentId: CN.segments[0].segmentId, railGeoVersion: CN.version, source: 'manual', createdAt: 't' },
+    ]);
+    expect(get(dataDegraded)).toBe(true); // the China ride would silently read 0 — surface it
+    eventsStore.set([]);
+    expect(get(dataDegraded)).toBe(false);
+  });
 });
 
 describe('Wrapped uses the JAPAN %, never the JP+CN blend (T5)', () => {
@@ -66,5 +78,18 @@ describe('Wrapped uses the JAPAN %, never the JP+CN blend (T5)', () => {
     } as unknown as Headline;
     const data = buildWrappedData({ headline, coverages: [], geo: buildGeoIndex([]) });
     expect(data.stats[0].value).toBe('38'); // JP's 38%, not the blended 10%
+  });
+
+  it('a China-only rider gets the CN %, not a misleading JP 0%', () => {
+    const headline = {
+      riddenKm: 100, totalKm: 1240, pctNational: 8, hsrRiddenKm: 100, hsrTotalKm: 1240, pctHSR: 8,
+      prefectures: 2, hasRides: true,
+      byCountry: {
+        JP: { pctNational: 0, pctHSR: 0, riddenKm: 0, totalKm: 9000, hsrRiddenKm: 0, hsrTotalKm: 3000, litSegmentIds: [], prefectures: 0 },
+        CN: { pctNational: 8, pctHSR: 8, riddenKm: 100, totalKm: 1240, hsrRiddenKm: 100, hsrTotalKm: 1240, litSegmentIds: [], prefectures: 2 },
+      },
+    } as unknown as Headline;
+    const data = buildWrappedData({ headline, coverages: [], geo: buildGeoIndex([]) });
+    expect(data.stats[0].value).toBe('8'); // the CN rider's 8%, not JP's 0%
   });
 });

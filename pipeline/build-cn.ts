@@ -61,8 +61,15 @@ console.log(
 console.log(
   `京沪高速铁路 km=${km.toFixed(1)} (published ~${extract.publishedKm}km; the curated 13-station polyline runs shorter than the 24-stop real line)`,
 );
-for (const issue of validationReport.lines.flatMap((l) => l.issues)) {
+const issues = validationReport.lines.flatMap((l) => l.issues);
+for (const issue of issues) {
   console.log('  validation:', issue.severity, issue.code, issue.message);
+}
+// Never publish a broken corridor: a validation ERROR (or an empty package) fails the build so
+// CI can't ship an artifact the app would then silently drop.
+if (issues.some((i) => i.severity === 'error') || railGeoPackage.segments.length === 0) {
+  console.error('build-cn: validation errors or empty package — refusing to write.');
+  process.exit(1);
 }
 
 const outIdx = process.argv.indexOf('--out');
