@@ -13,8 +13,9 @@
 
   import { onMount, tick } from 'svelte';
   import { get } from 'svelte/store';
-  import { packages, litSegmentIds, geo, markRide, markRoute } from '../lib/store';
+  import { packages, litSegmentIds, geo, events, markRide, markRoute } from '../lib/store';
   import { findRoutes } from '../lib/route';
+  import Pill from '../components/Pill.svelte';
   import { markMode, toast } from '../lib/ui';
   import { tokens } from '../design/tokens';
   import type { RailLine, RouteCandidate } from '../contract/types';
@@ -76,6 +77,9 @@
   let stationA = $state<string | null>(null);
   let stationAName = $state<string | null>(null);
   let busy = $state(false);
+  // T2 — the optional train model for the next mark (e.g. N700S, CR400AF). Read by both
+  // mark paths; never blocks a mark. Cleared after a successful record.
+  let markTrainModel = $state('');
 
   // ── station-first search state (C4): an alternative entry to tapping ─────────
   // entryMode: 'tap' (pick a line then tap A,B) or 'search' (type A, type B, infer the line).
@@ -108,8 +112,32 @@
     selectedLine = null;
     stationA = null;
     stationAName = null;
+    markTrainModel = '';
     resetSearch();
   }
+
+  // Recent-then-common train models for the optional capture chips: the user's own recently
+  // tagged models first (by recency), padded with a few common ones. Cheap to recompute.
+  const COMMON_MODELS = ['N700S', 'E5系', 'E7系', '285系', 'CR400AF', 'CR400BF'];
+  const modelSuggestions = $derived.by(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const e of [...$events].sort((a, b) => b.createdAt.localeCompare(a.createdAt))) {
+      if (e.trainModel && !seen.has(e.trainModel)) {
+        seen.add(e.trainModel);
+        out.push(e.trainModel);
+        if (out.length >= 6) break;
+      }
+    }
+    for (const m of COMMON_MODELS) {
+      if (out.length >= 8) break;
+      if (!seen.has(m)) {
+        seen.add(m);
+        out.push(m);
+      }
+    }
+    return out;
+  });
 
   function resetSearch(): void {
     entryMode = 'tap';
@@ -483,21 +511,30 @@
     }
     busy = true;
     try {
+      const before = new Set(get(litSegmentIds));
       const res = await markRide({
         lineId: selectedLine.lineId,
         fromStationId: from,
         toStationId: to,
         pkg,
+        trainModel: markTrainModel.trim() || undefined,
       });
-      if (res.added === 0) {
-        toast('この区間は記録済み', 'info');
-      } else {
-        // Count km over the NEWLY-lit segments only, so the number agrees with "+N区間".
-        const km = kmForSegments(res.addedSegmentIds, pkg);
-        toast(`区間を記録しました（+${res.added}区間 / +${km.toFixed(1)} km）`, 'success');
-        pulse(res.addedSegmentIds);
-        markMode.set(false); // exit mark mode after a successful mark
+      if (res.sliceLength === 0) {
+        toast('同じ駅が選ばれています', 'info');
+        return;
       }
+      // E1: every mark appends a new trip. "Newly lit" = the slice's segments not already
+      // covered, so the coverage toast still reads as % gained; a full repeat says so plainly.
+      const newlyLit = res.segmentIds.filter((id) => !before.has(id));
+      if (newlyLit.length === 0) {
+        toast(`もう一度記録しました（${res.sliceLength}区間）`, 'success');
+      } else {
+        const km = kmForSegments(newlyLit, pkg);
+        toast(`区間を記録しました（+${newlyLit.length}区間 / +${km.toFixed(1)} km）`, 'success');
+      }
+      pulse(res.segmentIds);
+      markTrainModel = '';
+      markMode.set(false); // exit mark mode after a successful mark
     } catch (err) {
       // segmentsBetween throws for cross-line / no-path; surface gently.
       console.error('[MapView] markRide failed', err);
@@ -622,14 +659,21 @@
     if (busy) return;
     busy = true;
     try {
-      const res = await markRoute(r);
-      if (res.added === 0) {
-        toast('この経路は記録済み', 'info'); // every leg was already ridden — kept open to try another
+      const before = new Set(get(litSegmentIds));
+      const res = await markRoute(r, { trainModel: markTrainModel.trim() || undefined });
+      // E1: the route is always recorded as a new trip. Report newly-lit coverage; a full
+      // repeat (every leg already ridden) says so instead of dead-ending.
+      const newlyLit = r.segmentIds.filter((id) => !before.has(id));
+      if (newlyLit.length === 0) {
+        toast(`もう一度記録しました（${r.segmentIds.length}区間 / ${res.totalKm.toFixed(1)} km）`, 'success');
       } else {
-        toast(`経路を記録しました（+${res.added}区間 / +${res.totalKm.toFixed(1)} km）`, 'success');
-        pulse(r.segmentIds);
-        markMode.set(false); // exit mark mode (resets search) on success
+        const segById = get(geo).segmentById;
+        const km = newlyLit.reduce((s, id) => s + (segById.get(id)?.km ?? 0), 0);
+        toast(`経路を記録しました（+${newlyLit.length}区間 / +${km.toFixed(1)} km）`, 'success');
       }
+      pulse(r.segmentIds);
+      markTrainModel = '';
+      markMode.set(false); // exit mark mode (resets search) on success
     } catch (err) {
       console.error('[MapView] markRoute failed', err);
       toast('経路を記録できませんでした', 'error');
@@ -898,6 +942,31 @@
             <button class="no-route-action" onclick={fallbackToLegByLeg}>各区間を分けて記録</button>
           </div>
         {/if}
+      {/if}
+
+      {#if (entryMode === 'tap' && selectedLine) || entryMode === 'search'}
+        <!-- T2: optional train-model capture — never blocks a mark; read by both mark paths. -->
+        <div class="train-field">
+          <label class="search-label" for="rp-train">車両 <span class="opt u-muted">(任意)</span></label>
+          <input
+            id="rp-train"
+            class="search-input"
+            type="text"
+            placeholder="例: N700S / E5系 / CR400AF"
+            bind:value={markTrainModel}
+            autocomplete="off"
+          />
+          {#if modelSuggestions.length > 0}
+            <div class="train-chips" role="group" aria-label="車両の候補">
+              {#each modelSuggestions as m (m)}
+                <Pill
+                  active={markTrainModel.trim() === m}
+                  onclick={() => (markTrainModel = markTrainModel.trim() === m ? '' : m)}
+                >{m}</Pill>
+              {/each}
+            </div>
+          {/if}
+        </div>
       {/if}
     </div>
   {/if}
@@ -1205,6 +1274,21 @@
   .search-input:focus {
     outline: 2px solid var(--rail-text);
     outline-offset: 1px;
+  }
+  /* T2 optional train-model capture — a quiet section below the mark step, never blocking. */
+  .train-field {
+    margin-top: var(--space-md);
+    padding-top: var(--space-md);
+    border-top: 1px solid var(--rail-dim);
+  }
+  .opt {
+    font-weight: 400;
+  }
+  .train-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+    margin-top: var(--space-sm);
   }
   .hit-list {
     list-style: none;
