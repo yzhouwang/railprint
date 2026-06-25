@@ -65,6 +65,19 @@ const health: Health[] = pkg.lines.map((line) => {
 
 // ── Romaji coverage and irregular readings. ──
 let failures = 0;
+
+console.log('━━━ operator coverage ━━━');
+const linesWithOperator = pkg.lines.filter((l) => typeof l.operator === 'string' && l.operator.trim().length > 0);
+const operatorCoverageOk = linesWithOperator.length === pkg.lines.length;
+if (!operatorCoverageOk) failures += 1;
+console.log(`  ${operatorCoverageOk ? '✓' : '✗'} operator coverage: ${linesWithOperator.length}/${pkg.lines.length}`);
+if (!operatorCoverageOk) {
+  const missing = pkg.lines
+    .filter((l) => !(typeof l.operator === 'string' && l.operator.trim().length > 0))
+    .slice(0, 8);
+  for (const l of missing) console.log(`    missing operator: ${l.lineId}`);
+}
+
 console.log('━━━ romaji readings ━━━');
 const withRomaji = pkg.stations.filter((s) => typeof s.nameRoma === 'string' && s.nameRoma.trim().length > 0);
 const romajiCoverage = pkg.stations.length ? withRomaji.length / pkg.stations.length : 1;
