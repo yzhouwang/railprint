@@ -97,6 +97,23 @@ describe('findRoutes', () => {
     expect(zeroChange.map((route) => route.lines[0]).sort()).toEqual(['parallel-a', 'parallel-b']);
   });
 
+  it('prunes absurd multi-line detours while keeping long single-line alternatives', () => {
+    const pkg = packageFromLines([
+      { lineId: 'short-direct', groups: ['A', 'B'], kms: [10] },
+      { lineId: 'long-parallel', groups: ['A', 'P1', 'P2', 'B'], kms: [10, 10, 10] },
+      { lineId: 'detour-left', groups: ['A', 'D'], kms: [12] },
+      { lineId: 'detour-right', groups: ['D', 'E', 'B'], kms: [12, 12] },
+    ]);
+
+    const routes = findRoutes(pkg, 'A', 'B', 4);
+
+    expect(routes.some((route) =>
+      sameArray(route.lines, ['long-parallel']) && route.lineChanges === 0 && route.totalKm === 30,
+    )).toBe(true);
+    expect(routes.some((route) => sameArray(route.lines, ['detour-left', 'detour-right']))).toBe(false);
+    expect(routes.every((route) => route.lineChanges === 0 || route.totalKm <= 15)).toBe(true);
+  });
+
   it('surfaces both loop arcs and ranks the shorter first', () => {
     const shinjuku = stationByName(JP_PACKAGE, 'jr-yamanote', '新宿');
     const tokyo = stationByName(JP_PACKAGE, 'jr-yamanote', '東京');
@@ -164,6 +181,20 @@ describe('findRoutes', () => {
     expect(findRoutes(JP_PACKAGE, groupKey(from), groupKey(to), 3)).toEqual(
       findRoutes(JP_PACKAGE, groupKey(from), groupKey(to), 3),
     );
+  });
+
+  it('orders near-equal km exactly before falling back to segment ids', () => {
+    const pkg = packageFromLines([
+      { lineId: 'z-low', groups: ['A', 'B'], kms: [1] },
+      { lineId: 'm-mid', groups: ['A', 'B'], kms: [1 + 6e-10] },
+      { lineId: 'a-high', groups: ['A', 'B'], kms: [1 + 12e-10] },
+    ]);
+
+    const routes = findRoutes(pkg, 'A', 'B', 3);
+
+    expect(routes).toEqual(findRoutes(pkg, 'A', 'B', 3));
+    expect(routes.map((route) => route.lines[0])).toEqual(['z-low', 'm-mid', 'a-high']);
+    expect(routes.map((route) => route.totalKm)).toEqual([1, 1 + 6e-10, 1 + 12e-10]);
   });
 
   it('returns [] for same, unknown, and disconnected group pairs', () => {

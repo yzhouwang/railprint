@@ -10,7 +10,7 @@ import type {
 export const MAX_ROUTE_STATIONS = 80;
 export const MAX_SPURS = 50;
 
-const EPS = 1e-9;
+const DETOUR_FACTOR = 1.5;
 const NUL = '\0';
 const SOURCE_NODE = `${NUL}route-source`;
 const SINK_NODE = `${NUL}route-sink`;
@@ -115,7 +115,8 @@ export const findRoutes: FindRoutes = (pkg, fromGroupKey, toGroupKey, k = 3) => 
     if (out.length >= limit) break;
   }
 
-  return out.sort(compareCandidates).slice(0, limit);
+  const ranked = out.sort(compareCandidates);
+  return pruneAbsurdDetours(ranked).slice(0, limit);
 };
 
 export const __routeTest = {
@@ -530,6 +531,20 @@ function compareCandidates(a: RouteCandidate, b: RouteCandidate): number {
   );
 }
 
+function pruneAbsurdDetours(candidates: RouteCandidate[]): RouteCandidate[] {
+  if (candidates.length === 0) return [];
+
+  let cheapest = candidates[0];
+  for (const candidate of candidates.slice(1)) {
+    if (compareNumber(candidate.totalKm, cheapest.totalKm) < 0) cheapest = candidate;
+  }
+
+  const maxDetourKm = cheapest.totalKm * DETOUR_FACTOR;
+  return candidates.filter((candidate) =>
+    candidate === cheapest || candidate.lineChanges === 0 || candidate.totalKm <= maxDetourKm,
+  );
+}
+
 function comparePaths(a: RoutePath, b: RoutePath): number {
   return (
     compareCost(a.cost, b.cost) ||
@@ -547,9 +562,9 @@ function compareCost(a: Cost, b: Cost): number {
 }
 
 function compareNumber(a: number, b: number): number {
-  const diff = a - b;
-  if (Math.abs(diff) <= EPS) return 0;
-  return diff < 0 ? -1 : 1;
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
 }
 
 function isBetter(cost: Cost, key: string, current: { cost: Cost; key: string }): boolean {
