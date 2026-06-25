@@ -2,6 +2,18 @@
 
 All notable changes to RailPrint are documented here.
 
+## [0.6.0.0] - 2026-06-25
+
+### Added
+- **The map reveals lines by zoom.** Zoomed out to all of Japan you see the Shinkansen spine and major trunk lines; zoom toward a city and the urban lines (山手線, subways, major private) appear; zoom in close and every local line, tram, and cable car fills in. Each line carries a tier (`RailLine.rank` 0–4, computed from its type), so the national view is legible instead of a 594-line hairball. Your **ridden** lines and any **selected** line stay visible at every zoom — your network never vanishes when you zoom out.
+
+### Changed
+- Line + station visibility is one MapLibre filter (`zoom ≥ tier OR ridden OR selected`) on the existing layers — no extra layers, no double-draw.
+- Contract: `RailLine.rank`.
+
+### Performance
+- The per-repaint station-adjacency rebuild (a 9,442-entry map rebuilt up to 48× during an import flood) is now memoized by package identity — closing the deferred P1 render-perf landmine. Zoom LOD also cuts the rendered-feature count at low zoom.
+
 ## [0.5.0.0] - 2026-06-25
 
 ### Added
