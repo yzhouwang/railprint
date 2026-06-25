@@ -6,7 +6,7 @@ Log which railway line **segments** you've personally ridden, see them lit on a 
 real track geometry, and watch your total km + % of the national network + % HSR climb.
 One tap gives you a Spotify-Wrapped-style share card. Japan first; China later.
 
-> Working name. Status: **v0.6.0.0** — the real MLIT N02 national network (594 lines, ~10,000 stations,
+> Working name. Status: **v0.6.1.0** — the real MLIT N02 national network (594 lines, ~10,000 stations,
 > ~26,800 km), in full official color, with line logos, operating-company labels, bilingual
 > (日本語 + romaji) names, and a zoom-tiered map.
 
