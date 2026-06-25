@@ -4,6 +4,7 @@ import {
   loadPackages,
   clearAllRides,
   markRide,
+  markRoute,
   addEvents,
   removeImportBatch,
   replaceEvents,
@@ -12,7 +13,15 @@ import {
   litSegmentIds,
 } from './store';
 import { JP_PACKAGE, STUB_PACKAGES, stationByName } from '../fixtures/stubPackage';
-import type { RideEvent } from '../contract/types';
+import type { RideEvent, RouteCandidate } from '../contract/types';
+
+const route = (segmentIds: string[]): RouteCandidate => ({
+  segmentIds,
+  lines: [...new Set(segmentIds.map((s) => s.split(':')[0]))],
+  totalKm: 10,
+  lineChanges: 0,
+  railGeoVersion: JP_PACKAGE.version,
+});
 
 const sid = (lineId: string, name: string): string => stationByName(JP_PACKAGE, lineId, name).stationId;
 
@@ -136,5 +145,44 @@ describe('event log operations', () => {
     await addEvents([imported(JP_PACKAGE.segments[0].segmentId, 'b1')]);
     await replaceEvents([imported(JP_PACKAGE.segments[5].segmentId, 'b2')]);
     expect(get(litSegmentIds)).toEqual([JP_PACKAGE.segments[5].segmentId]);
+  });
+});
+
+describe('markRoute (cross-line, one trip)', () => {
+  const SEGS = ['jr-kururi:0-1', 'jr-kururi:1-2', 'jr-kururi:2-3'];
+
+  it('marks every leg of a route under one tripId', async () => {
+    const res = await markRoute(route(SEGS), { date: '2025-06-01' });
+    expect(res.added).toBe(3);
+    expect(res.restamped).toBe(0);
+    const evs = get(events).filter((e) => SEGS.includes(e.segmentId));
+    expect(evs).toHaveLength(3);
+    expect(new Set(evs.map((e) => e.tripId)).size).toBe(1);
+    expect(evs[0].tripId).toBe(res.tripId);
+  });
+
+  it('re-stamps an overlapping leg into the new trip WITHOUT duplicating it', async () => {
+    await markRoute(route(['jr-kururi:0-1']), { date: '2025-01-01' });
+    const before = get(events).length;
+    const firstTrip = get(events).find((e) => e.segmentId === 'jr-kururi:0-1')!.tripId;
+
+    const res = await markRoute(route(['jr-kururi:0-1', 'jr-kururi:1-2']), { date: '2025-06-01' });
+    expect(res.added).toBe(1); // only :1-2 is new
+    expect(res.restamped).toBe(1); // :0-1 was re-stamped, not re-inserted
+    expect(get(events).length).toBe(before + 1); // NO bloat — one new event, never a duplicate
+
+    const leg = get(events).find((e) => e.segmentId === 'jr-kururi:0-1')!;
+    expect(leg.tripId).toBe(res.tripId); // re-grouped into the new trip
+    expect(leg.tripId).not.toBe(firstTrip);
+    expect(leg.date).toBe('2025-01-01'); // original ride date preserved, not clobbered
+  });
+
+  it('keeps one event per segment after a full re-mark of the same route', async () => {
+    const segs = ['jr-kururi:0-1', 'jr-kururi:1-2'];
+    await markRoute(route(segs));
+    await markRoute(route(segs));
+    const ids = get(events).map((e) => e.segmentId).filter((s) => segs.includes(s));
+    expect(ids.length).toBe(2);
+    expect(ids.length).toBe(new Set(ids).size);
   });
 });
