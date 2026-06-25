@@ -2,6 +2,15 @@
 
 All notable changes to RailPrint are documented here.
 
+## [0.6.1.0] - 2026-06-25
+
+### Fixed
+- **A fast double-tap could log the same ride twice.** When the same segment was marked from two near-simultaneous taps, both reads of the ride log happened before either save, so the segment landed in the durable log twice under two trip ids — bloating per-event stats (most-ridden line, ride history) and the CSV backup. Your coverage % was always correct (it's set-based); only the underlying log was affected. The mark now writes through one atomic IndexedDB transaction, so a concurrent or repeat mark of an already-ridden segment is a clean no-op — and the km toast counts only what was actually newly recorded.
+
+### Internal
+- **The zoom-tiered map is now tested headlessly.** A Playwright + Chromium/SwiftShader end-to-end harness drives the real WebGL map and asserts the zoom level-of-detail: at the national view only the Shinkansen spine and your ridden lines show; urban lines reveal as you zoom into a city; and your ridden lines stay visible at every zoom. The map exposes a `window.__map` handle only under a `?e2e` URL flag (inert for real users, verified by a test). This closes a QA gap where map behaviour could previously only be checked by hand.
+- Added a JR-Central 東海道新幹線 logo-family golden to the build gate; widened ride-log test coverage (atomic dedup, partial overlap, concurrent marks).
+
 ## [0.6.0.0] - 2026-06-25
 
 ### Added

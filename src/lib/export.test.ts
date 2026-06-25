@@ -3,7 +3,7 @@ import type { RideEvent, ImportResolution } from '../contract/types';
 import { EXPORT_CSV_COLUMNS } from '../contract/types';
 import { buildGeoIndex } from './store';
 import { JP_PACKAGE, STUB_PACKAGES } from '../fixtures/stubPackage';
-import { exportEventsToCsv } from './export';
+import { exportEventsToCsv, lineNameLookup } from './export';
 import { parseImport } from './import/parse';
 import { buildImportEvents } from './import/commit';
 import { parseCsv } from './import/csv';
@@ -61,6 +61,15 @@ describe('exportEventsToCsv', () => {
   it('also accepts a GeoIndex as the lookup source', () => {
     const csv = exportEventsToCsv(EVENTS, geo);
     expect(parseCsv(csv)[0].join(',')).toBe(EXPORT_CSV_COLUMNS);
+  });
+});
+
+describe('lineNameLookup', () => {
+  it('falls back gracefully for malformed and unknown segmentIds', () => {
+    const lookup = lineNameLookup(STUB_PACKAGES);
+    expect(() => lookup.lineNameFor('totally-unknown-no-colon')).not.toThrow();
+    expect(typeof lookup.lineNameFor('totally-unknown-no-colon')).toBe('string');
+    expect(lookup.lineNameFor('a:0-1')).toBe('a');
   });
 });
 

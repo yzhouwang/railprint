@@ -17,3 +17,9 @@ data/n02/
 /AGENTS.md
 /DESIGN.md
 /TODOS.md
+
+# Playwright e2e artifacts (generated)
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/

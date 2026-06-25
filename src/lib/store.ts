@@ -328,7 +328,7 @@ export async function markRide(opts: {
   const createdAt = new Date().toISOString();
   // Persist ONLY the newly-lit segments — never re-stamp already-ridden ones on a
   // partial-overlap re-mark (that bloated the durable log + corrupted per-event stats).
-  const newEvents: RideEvent[] = added.map((segmentId) => ({
+  const candidates: RideEvent[] = added.map((segmentId) => ({
     id: db.newId(),
     segmentId,
     railGeoVersion: opts.pkg.version,
@@ -338,9 +338,15 @@ export async function markRide(opts: {
     tripId,
     createdAt,
   }));
-  await db.putEvents(newEvents);
+  const persisted = await db.addRideSegments(candidates);
   await refresh();
-  return { added: added.length, sliceLength: segmentIds.length, tripId, segmentIds, addedSegmentIds: added };
+  return {
+    added: persisted.length,
+    sliceLength: segmentIds.length,
+    tripId,
+    segmentIds,
+    addedSegmentIds: persisted.map((e) => e.segmentId),
+  };
 }
 
 /** Persist already-built events (importer commit, corridor seed). Merge semantics. */

@@ -64,6 +64,22 @@ describe('markRide', () => {
     expect(get(events).length).toBe(countAfterFirst); // nothing new persisted
   });
 
+  it('a concurrent double-mark of the same slice persists each segment once', async () => {
+    const args = {
+      lineId: 'jr-kururi',
+      fromStationId: sid('jr-kururi', '木更津'),
+      toStationId: sid('jr-kururi', '横田'),
+      pkg: JP_PACKAGE,
+    };
+    const [a, b] = await Promise.all([markRide(args), markRide(args)]);
+    // The slice is 4 segments; across both calls exactly 4 are newly added, not 8.
+    expect(a.added + b.added).toBe(4);
+    // The durable log holds each segment exactly once.
+    const ids = get(events).map((e) => e.segmentId);
+    expect(ids.length).toBe(new Set(ids).size);
+    expect(ids.length).toBe(4);
+  });
+
   it('persists only the NEW segments on a partial-overlap re-mark (no duplicate events)', async () => {
     await markRide({
       lineId: 'jr-kururi',

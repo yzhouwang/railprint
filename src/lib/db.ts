@@ -49,6 +49,29 @@ export async function putEvents(events: RideEvent[]): Promise<void> {
   await db.rideEvents.bulkPut(events);
 }
 
+/**
+ * Atomically persist ride events for segments not already present in the log. The dedup read
+ * and the insert run in ONE rw transaction, so two concurrent marks of the same segment can't
+ * both write it: the second serializes behind the first's commit and sees it already present.
+ * Returns ONLY the events actually inserted — callers size the km toast off this, not the
+ * pre-transaction snapshot, so a race can never over-count.
+ */
+export async function addRideSegments(candidates: RideEvent[]): Promise<RideEvent[]> {
+  if (candidates.length === 0) return [];
+  return db.transaction('rw', db.rideEvents, async () => {
+    const ids = candidates.map((e) => e.segmentId);
+    // Seed with the already-persisted segments, then add each fresh segmentId as it passes —
+    // so the filter dedups against BOTH the log AND repeats within this candidate set (a caller
+    // that passes the same segmentId twice can't self-duplicate, independent of segmentsBetween).
+    const seen = new Set(
+      (await db.rideEvents.where('segmentId').anyOf(ids).toArray()).map((e) => e.segmentId),
+    );
+    const fresh = candidates.filter((e) => (seen.has(e.segmentId) ? false : (seen.add(e.segmentId), true)));
+    if (fresh.length) await db.rideEvents.bulkAdd(fresh);
+    return fresh;
+  });
+}
+
 export async function deleteEvents(ids: string[]): Promise<void> {
   if (ids.length === 0) return;
   await db.rideEvents.bulkDelete(ids);
