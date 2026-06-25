@@ -32,12 +32,20 @@ const TOP_SPEED_KMH: Record<string, number> = {
   '800': 260,
 };
 
+export function canonicalizeTrainModel(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  return trimmed
+    .replace(/\bseries\b/giu, '')
+    .replace(/[系形型]\s*$/u, '')
+    .replace(/[\s\u3000\-_]+/gu, '')
+    .toUpperCase();
+}
+
+export const KNOWN_TRAIN_MODELS: string[] = Object.keys(TOP_SPEED_KMH).map(canonicalizeTrainModel);
+
 function normalizeModel(model: string): string {
-  return model
-    .toLowerCase()
-    .replace(/[\s\-_系型]/g, '')
-    .replace(/series/g, '')
-    .trim();
+  return canonicalizeTrainModel(model).toLowerCase();
 }
 
 /** Top speed for a logged model, or undefined if unknown. */
