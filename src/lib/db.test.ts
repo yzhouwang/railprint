@@ -93,4 +93,18 @@ describe('markRouteSegments (re-stamp upsert)', () => {
     expect(res.added).toBe(2);
     expect(await segIds()).toEqual(['L:0-1', 'L:1-2']);
   });
+
+  it('re-stamps ALL duplicate rows of a segment (none left stranded under the old trip)', async () => {
+    // Two rows for the same segment (e.g. from two import batches) under different trips — segmentId
+    // is a non-unique index, so this is reachable in the field.
+    await putEvents([
+      { ...ev('L:0-1'), tripId: 'old-a' },
+      { ...ev('L:0-1'), tripId: 'old-b' },
+    ]);
+    const res = await markRouteSegments(['L:0-1'], fields('trip-NEW'));
+    expect(res.restamped).toBe(2); // both rows re-stamped, not just one
+    const rows = (await getAllEvents()).filter((e) => e.segmentId === 'L:0-1');
+    expect(rows).toHaveLength(2); // still 2 rows — no spurious insert
+    expect(rows.every((e) => e.tripId === 'trip-NEW')).toBe(true); // none left stranded
+  });
 });

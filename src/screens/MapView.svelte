@@ -52,6 +52,7 @@
     buildSearchIndex,
     resolveQuery,
     groupKeyForHit,
+    preferPickedLine,
     bilingualLabel,
     type StationHit,
   } from '../lib/search';
@@ -596,6 +597,9 @@
     } finally {
       searching = false;
     }
+    // Surface a route on the line the user actually picked first — never float a parallel Shinkansen
+    // above the local line they rode (which would tempt a one-tap phantom HSR mark).
+    routes = preferPickedLine(routes, new Set([a.line.lineId, b.line.lineId]));
     if (routes.length === 0) {
       noRoute = true; // warm no-route state with a leg-by-leg fallback
       return;

@@ -94,24 +94,34 @@ export async function markRouteSegments(
   if (segmentIds.length === 0) return { added: 0, restamped: 0 };
   return db.transaction('rw', db.rideEvents, async () => {
     const present = await db.rideEvents.where('segmentId').anyOf(segmentIds).toArray();
-    const bySeg = new Map(present.map((e) => [e.segmentId, e]));
+    // segmentId is a NON-unique index — the log can hold >1 row per segment (e.g. two import batches).
+    // Group ALL rows per segment so the re-stamp re-groups every one of them; collapsing to a single
+    // row (a Map) would strand the duplicates under their old trip.
+    const presentBySeg = new Map<string, RideEvent[]>();
+    for (const e of present) {
+      const list = presentBySeg.get(e.segmentId);
+      if (list) list.push(e);
+      else presentBySeg.set(e.segmentId, [e]);
+    }
     const restamp: RideEvent[] = [];
     const inserts: RideEvent[] = [];
     const seen = new Set<string>();
     for (const segmentId of segmentIds) {
       if (seen.has(segmentId)) continue; // in-call dedup
       seen.add(segmentId);
-      const prev = bySeg.get(segmentId);
-      if (prev) {
-        // re-stamp the grouping in place; keep id + createdAt, and don't clobber an existing leg's
-        // own ride date/train (only fill when it had none) — the trip groups them, it doesn't rewrite
-        // when each leg was ridden.
-        restamp.push({
-          ...prev,
-          tripId: fields.tripId,
-          date: prev.date ?? fields.date,
-          trainModel: prev.trainModel ?? fields.trainModel,
-        });
+      const existing = presentBySeg.get(segmentId);
+      if (existing && existing.length) {
+        // re-stamp the grouping in place on EVERY existing row; keep id + createdAt, and don't clobber
+        // an existing leg's own ride date/train (only fill when it had none) — the trip groups them,
+        // it doesn't rewrite when each leg was ridden.
+        for (const e of existing) {
+          restamp.push({
+            ...e,
+            tripId: fields.tripId,
+            date: e.date ?? fields.date,
+            trainModel: e.trainModel ?? fields.trainModel,
+          });
+        }
       } else {
         inserts.push({
           id: newId(),
