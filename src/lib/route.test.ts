@@ -3,7 +3,7 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import type { RailGeoPackage, RailLine, RailSegment, RailStation } from '../contract/types';
 import { JP_PACKAGE, STUB_PACKAGES, stationByName } from '../fixtures/stubPackage';
 import { segmentsBetween } from './resolver';
-import { __routeTest, findRoutes } from './route';
+import { __routeTest, findRoutes, MAX_ROUTE_STATIONS, MAX_SPURS } from './route';
 
 const soloKey = (stationId: string): string => `solo:${stationId}`;
 const groupKey = (station: RailStation): string => station.stationGroupId ?? soloKey(station.stationId);
@@ -120,6 +120,41 @@ describe('findRoutes', () => {
 
     expect(routes[0]).toMatchObject({ lineChanges: 0, lines: ['long-direct'], totalKm: 200 });
     expect(routes[1]).toMatchObject({ lineChanges: 1, lines: ['short-left', 'short-right'], totalKm: 2 });
+  });
+
+  it('keeps the direct route when Yen stops on MAX_ROUTE_STATIONS', () => {
+    const groups = Array.from({ length: MAX_ROUTE_STATIONS + 20 }, (_, i) => `S${i}`);
+    const pkg = packageFromLines([
+      { lineId: 'long-cap-line', groups, kms: Array.from({ length: groups.length - 1 }, () => 1) },
+    ]);
+
+    const routes = findRoutes(pkg, groups[0], groups[groups.length - 1], 3);
+
+    expect(routes).toHaveLength(1);
+    expect(routes[0]).toMatchObject({ lineChanges: 0, lines: ['long-cap-line'], totalKm: groups.length - 1 });
+    expect(routes[0].segmentIds).toHaveLength(groups.length - 1);
+  });
+
+  it('bounds Yen expansion on MAX_SPURS with many equal alternatives', () => {
+    const stages = 6;
+    const choices = 2;
+    const requested = MAX_SPURS + 10;
+    const pkg = packageFromLines(
+      Array.from({ length: stages }, (_, stage) =>
+        Array.from({ length: choices }, (_, choice): LineDef => ({
+          lineId: `stage-${stage}-choice-${choice}`,
+          groups: [`G${stage}`, `G${stage + 1}`],
+          kms: [1],
+        })),
+      ).flat(),
+    );
+
+    const routes = findRoutes(pkg, 'G0', `G${stages}`, requested);
+
+    expect(routes.length).toBeGreaterThan(1);
+    expect(routes.length).toBeLessThan(requested);
+    expect(routes.length).toBeLessThanOrEqual(MAX_SPURS);
+    expect(routes.every((route) => route.segmentIds.length === stages)).toBe(true);
   });
 
   it('returns deterministic ordering for identical inputs', () => {

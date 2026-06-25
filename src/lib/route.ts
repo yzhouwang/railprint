@@ -36,7 +36,6 @@ interface RouteEdge {
 interface RouteGraph {
   lineById: Map<string, RailLine>;
   stationById: Map<string, RailStation>;
-  segmentById: Map<string, RailSegment>;
   stationsByGroup: Map<string, string[]>;
   segmentByLinePair: Map<string, RailSegment>;
   edges: Map<string, RouteEdge[]>;
@@ -146,7 +145,6 @@ function buildRouteGraph(pkg: RailGeoPackage): RouteGraph {
 
   const lineById = new Map(pkg.lines.map((line) => [line.lineId, line]));
   const stationById = new Map<string, RailStation>();
-  const segmentById = new Map<string, RailSegment>();
   const stationsByGroup = new Map<string, string[]>();
   const segmentByLinePair = new Map<string, RailSegment>();
   const edges = new Map<string, RouteEdge[]>();
@@ -160,7 +158,6 @@ function buildRouteGraph(pkg: RailGeoPackage): RouteGraph {
 
   for (const segment of pkg.segments) {
     if (!stationById.has(segment.fromStationId) || !stationById.has(segment.toStationId)) continue;
-    segmentById.set(segment.segmentId, segment);
     segmentByLinePair.set(linePairKey(segment.lineId, segment.fromStationId, segment.toStationId), segment);
     addDirectedEdge(edges, segment.fromStationId, segment.toStationId, {
       kind: 'segment',
@@ -193,7 +190,7 @@ function buildRouteGraph(pkg: RailGeoPackage): RouteGraph {
   }
 
   for (const list of edges.values()) list.sort(compareEdges);
-  return { lineById, stationById, segmentById, stationsByGroup, segmentByLinePair, edges };
+  return { lineById, stationById, stationsByGroup, segmentByLinePair, edges };
 }
 
 function addDirectedEdge(
