@@ -7,7 +7,7 @@
 // the DISTINCT ridden segments' build-time km (zero turf, zero geometry re-derivation
 // — we only look up RailSegment.km via the package). A segment counted once per trip.
 
-import type { RailGeoPackage, RailSegment, RideEvent } from '../contract/types';
+import type { RailGeoPackage, RailSegment, RailStation, RideEvent } from '../contract/types';
 
 export interface TripLeg {
   segmentId: string;
@@ -43,27 +43,44 @@ export interface TripSummary {
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
+/** A station's transfer-group key, or a synthetic solo key — matches store.groupKeyOf. */
+const groupKeyOfStation = (s: RailStation): string => s.stationGroupId ?? `solo:${s.stationId}`;
+
 /**
- * The two endpoint stations of a trip's segments, against an ALREADY-BUILT segment index — so a
- * diary that summarizes many trips builds the index ONCE, not per trip (O(N + segments), not
- * O(N × segments)). Endpoints are the stations touching exactly one leg (a simple path);
- * loops/branches fall back to the longest leg. Pure name-free geometry lookup.
+ * The two endpoint stations of a trip's segments, against ALREADY-BUILT indexes — so a diary that
+ * summarizes many trips builds them ONCE, not per trip (O(N + segments), not O(N × segments)).
+ *
+ * Degree-counts station GROUPS, not raw station ids: a cross-line trip (e.g. 津 → 大阪難波 over
+ * 名古屋線→大阪線→難波線) changes lines at a junction whose station has a DIFFERENT stationId on
+ * each line (伊勢中川 on 名古屋線 ≠ on 大阪線) but ONE shared stationGroupId — so by raw id the
+ * junction looks like two dead-ends and the real endpoints get lost. Collapsing by group makes
+ * the junction an internal (degree-2) node and surfaces the true origin/destination. Endpoints are
+ * the two groups touching exactly one leg; loops/branches fall back to the longest leg.
  */
 function endpointsOf(
   segmentIds: string[],
   segById: Map<string, RailSegment>,
+  groupOf: Map<string, string>,
 ): { fromStationId: string; toStationId: string } | undefined {
   if (segmentIds.length === 0) return undefined;
-  const touch = new Map<string, number>();
+  const gk = (stationId: string): string => groupOf.get(stationId) ?? `solo:${stationId}`;
+  // group key → { degree, a representative stationId } (the name resolves off the id later).
+  const touch = new Map<string, { count: number; stationId: string }>();
+  const bump = (stationId: string): void => {
+    const g = gk(stationId);
+    const e = touch.get(g);
+    if (e) e.count++;
+    else touch.set(g, { count: 1, stationId });
+  };
   for (const id of segmentIds) {
     const s = segById.get(id);
     if (!s) continue;
-    touch.set(s.fromStationId, (touch.get(s.fromStationId) ?? 0) + 1);
-    touch.set(s.toStationId, (touch.get(s.toStationId) ?? 0) + 1);
+    bump(s.fromStationId);
+    bump(s.toStationId);
   }
-  const ends = [...touch.entries()].filter(([, c]) => c === 1).map(([id]) => id);
+  const ends = [...touch.values()].filter((e) => e.count === 1);
   if (ends.length === 2) {
-    const [from, to] = [...ends].sort();
+    const [from, to] = ends.map((e) => e.stationId).sort();
     return { fromStationId: from, toStationId: to };
   }
   // Loop / branch / singleton: longest leg's endpoints.
@@ -86,6 +103,8 @@ export function summarizeTrips(events: RideEvent[], pkg: RailGeoPackage): TripSu
   // Package order index — gives segmentIds a stable, geometry-faithful sort.
   const segOrder = new Map<string, number>();
   pkg.segments.forEach((s, i) => segOrder.set(s.segmentId, i));
+  // Station → transfer-group, built ONCE, so endpoint detection collapses cross-line junctions.
+  const groupOf = new Map<string, string>(pkg.stations.map((s) => [s.stationId, groupKeyOfStation(s)]));
 
   interface Bucket {
     tripId: string;
@@ -143,7 +162,7 @@ export function summarizeTrips(events: RideEvent[], pkg: RailGeoPackage): TripSu
       km,
       lineIds,
       trainModels: [...b.trainModels].sort(),
-      ...endpointsOf(segmentIds, segById),
+      ...endpointsOf(segmentIds, segById, groupOf),
       date,
       createdAt,
       eventCount: b.eventCount,
@@ -202,5 +221,6 @@ export function tripEndpoints(
   pkg: RailGeoPackage,
 ): { fromStationId: string; toStationId: string } | undefined {
   const segById = new Map<string, RailSegment>(pkg.segments.map((s) => [s.segmentId, s]));
-  return endpointsOf(trip.segmentIds, segById);
+  const groupOf = new Map<string, string>(pkg.stations.map((s) => [s.stationId, groupKeyOfStation(s)]));
+  return endpointsOf(trip.segmentIds, segById, groupOf);
 }

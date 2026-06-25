@@ -507,6 +507,7 @@
   }
 
   async function doMark(from: string, to: string): Promise<void> {
+    if (busy) return; // re-entry guard: a double-tap can't append two trips for one slice
     if (!selectedLine) return;
     const pkg = get(packages).find((p) => p.lines.some((l) => l.lineId === selectedLine!.lineId));
     if (!pkg) {

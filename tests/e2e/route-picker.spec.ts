@@ -120,4 +120,10 @@ test('captures the train model on a recorded route and surfaces it in the diary'
   // The captured model rides through to the diary row on 統計.
   await page.getByRole('button', { name: /統計/ }).first().click();
   await expect(page.getByText('N700S').first()).toBeVisible({ timeout: 15_000 });
+
+  // The diary endpoints must be the TRUE cross-line origin/destination (group-aware), not a
+  // mid-route leg — if endpoint detection fell back to the longest leg, 大阪難波 would not show.
+  const route = page.locator('.trip-route').first();
+  await expect(route).toContainText('大阪難波');
+  await expect(route).toContainText('津');
 });

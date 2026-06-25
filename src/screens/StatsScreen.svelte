@@ -30,6 +30,8 @@
   // newest-first. Endpoints + line/model names are resolved against the geo index here so the
   // pure trips lib stays geometry-faithful and name-free.
   interface DiaryRow {
+    /** unique across packages (a tripId can repeat across JP/CN once China lands). */
+    key: string;
     tripId: string;
     date?: string;
     from: string;
@@ -52,6 +54,7 @@
           if (n) lineNames.push(n);
         }
         rows.push({
+          key: `${pkg.country}:${t.tripId}`,
           tripId: t.tripId,
           date: t.date,
           from: t.fromStationId ? stationName(t.fromStationId) : '?',
@@ -147,7 +150,7 @@
     <FolderTabCard label="旅の記録">
       {#if diaryRows.length > 0}
         <ul class="trips">
-          {#each diaryRows as t (t.tripId)}
+          {#each diaryRows as t (t.key)}
             <li class="trip">
               <div class="trip-head">
                 <span class="trip-date">{dateLabel(t.date)}</span>
