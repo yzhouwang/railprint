@@ -2,6 +2,15 @@
 
 All notable changes to RailPrint are documented here.
 
+## [0.9.0.0] - 2026-06-25
+
+### Added
+- **The first China corridor: 京沪高速铁路 (Beijing–Shanghai HSR).** RailPrint now loads one real China line alongside Japan — proving the network model is country-agnostic, not Japan-shaped. It draws in CR red, is markable, and counts toward a separate 中国 coverage figure. Built from a curated, checked-in WGS-84 station extract (no GCJ-02, no Amap/Baidu); the geometry is a station-sequence polyline today, to be refined with OpenStreetMap track ways (ODbL) later.
+
+### Changed
+- **Stats are per-country now, never blended.** Loading China alongside Japan no longer turns "全国 %" into a misleading "% of Japan + China" — the headline %, the desktop side panel, and the Wrapped card all show Japan's figure on its own, and a separate 中国 card appears once you've ridden in China. Distance and prefecture totals stay cross-country sums.
+- **Boot loads both networks independently.** Japan is required (its failure still falls back to the offline sample); the China corridor is additive, so if it can't load you get Japan on its own rather than a broken map.
+
 ## [0.8.0.0] - 2026-06-25
 
 ### Added
