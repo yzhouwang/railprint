@@ -15,7 +15,8 @@
     "test:geometry": "node --test tests/geometry/*.test.ts",
     "test:app": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "build:rail-geo:cn": "node pipeline/build-cn.ts --out public/rail/cn-jinghu-2025.json"
   },
   "dependencies": {
     "dexie": "^4.0.11",
