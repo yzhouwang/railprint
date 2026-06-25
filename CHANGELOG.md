@@ -6,6 +6,7 @@ All notable changes to RailPrint are documented here.
 
 ### Added
 - **The map reveals lines by zoom.** Zoomed out to all of Japan you see the Shinkansen spine and major trunk lines; zoom toward a city and the urban lines (山手線, subways, major private) appear; zoom in close and every local line, tram, and cable car fills in. Each line carries a tier (`RailLine.rank` 0–4, computed from its type), so the national view is legible instead of a 594-line hairball. Your **ridden** lines and any **selected** line stay visible at every zoom — your network never vanishes when you zoom out.
+- **Station dots reveal by spacing, not just by line.** A dense line (山手線, subways ~1 km apart) draws as a clean stroke and only sprouts its ~30 dots once you're zoomed in enough that they're not cramped, while sparse Shinkansen/rural stations show with their line. Each line's reveal zoom is derived from its average inter-station distance; a non-loop line's two termini anchor with the line so you always see where it starts and ends.
 
 ### Changed
 - Line + station visibility is one MapLibre filter (`zoom ≥ tier OR ridden OR selected`) on the existing layers — no extra layers, no double-draw.

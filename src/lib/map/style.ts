@@ -65,9 +65,30 @@ export interface StationFeatureProps {
 // zoom and stamp it per segment/station as `minz`. The line + station layers then filter
 // ['any', zoom>=minz, isRidden] — show by tier OR if you've ridden it (visible at every zoom).
 // Lines with no rank (stub / non-JP boundary packages) default to minz 0 = always visible.
-export const RANK_MINZOOM = [4, 7, 9, 11, 12] as const;
+// Reveal zooms per rank. LINES load early and generously — stations are gated SEPARATELY by
+// spacing (C9b), so a line showing early is just a clean stroke, not a cluttered dot-mess, which
+// lets us be aggressive here: z3 Shinkansen, z4 trunk (both at the national view), urban/local/
+// minor at z5/6/7 → the whole network is up by region/metro zoom. Was [4,6,7,8,9] (still too high).
+export const RANK_MINZOOM = [3, 4, 5, 6, 7] as const;
 export function minzForRank(rank: number | undefined): number {
   return rank == null ? 0 : (RANK_MINZOOM[rank] ?? 0);
+}
+
+// C9b — STATION dot LOD by AVERAGE SPACING. A line is readable well before its dots are: a dense
+// line (山手線, subways ~1 km apart) crams ~30 dots into a tiny on-screen loop. So a dot reveals
+// only once adjacent dots would clear ~STATION_DOT_GAP_PX on screen — derived from the line's mean
+// inter-station distance. Web-mercator at ~lat 35°: km/px at zoom z = 40075·cosφ/(256·2^z), so a
+// gap of G px needs 2^z ≥ G·40075/(256·cosφ·avgKm); STATION_LOD_K folds those constants.
+const STATION_DOT_GAP_PX = 22;
+const STATION_LOD_K = (STATION_DOT_GAP_PX * 40075.017) / (256 * Math.cos((35 * Math.PI) / 180));
+const STATION_MINZ_CAP = 14; // never hold a dot past street zoom, however dense
+
+/** Reveal zoom for a line's STATION dots from its mean spacing; never earlier than the line itself. */
+export function stationMinzForLine(lineMinz: number, totalKm: number, stationCount: number): number {
+  if (stationCount < 2 || totalKm <= 0) return lineMinz; // no spacing to reason about
+  const avgSpacingKm = totalKm / (stationCount - 1);
+  const byDensity = Math.round(Math.log2(STATION_LOD_K / avgSpacingKm));
+  return Math.min(STATION_MINZ_CAP, Math.max(lineMinz, byDensity));
 }
 
 /** A maplibre membership test: feature's `prop` ∈ `ids` (empty ⇒ matches nothing). */
@@ -150,9 +171,25 @@ export function buildSegmentCollection(packages: RailGeoPackage[]): SegmentColle
 export function buildStationCollection(packages: RailGeoPackage[]): StationCollection {
   const features: GeoJSON.Feature<GeoJSON.Point, StationFeatureProps>[] = [];
   for (const pkg of packages) {
-    const minzByLine = new Map<string, number>();
-    for (const l of pkg.lines) minzByLine.set(l.lineId, minzForRank(l.rank));
+    // Per line: total track km (from segment km), the line's own reveal zoom, the spacing-derived
+    // DOT reveal zoom, and the two TERMINI (ends of a non-loop line) which anchor at the line's zoom.
+    const kmByLine = new Map<string, number>();
+    for (const s of pkg.segments) kmByLine.set(s.lineId, (kmByLine.get(s.lineId) ?? 0) + s.km);
+    const lineMinzByLine = new Map<string, number>();
+    const dotMinzByLine = new Map<string, number>();
+    const terminiByLine = new Map<string, Set<string>>();
+    for (const l of pkg.lines) {
+      const lineMinz = minzForRank(l.rank);
+      const n = l.stationOrder.length;
+      lineMinzByLine.set(l.lineId, lineMinz);
+      dotMinzByLine.set(l.lineId, stationMinzForLine(lineMinz, kmByLine.get(l.lineId) ?? 0, n));
+      if (!l.isLoop && n >= 2) terminiByLine.set(l.lineId, new Set([l.stationOrder[0], l.stationOrder[n - 1]]));
+    }
     for (const st of pkg.stations) {
+      const isTerminus = terminiByLine.get(st.lineId)?.has(st.stationId) ?? false;
+      const minz = isTerminus
+        ? (lineMinzByLine.get(st.lineId) ?? 0)
+        : (dotMinzByLine.get(st.lineId) ?? 0);
       features.push({
         type: 'Feature',
         id: st.stationId,
@@ -164,7 +201,7 @@ export function buildStationCollection(packages: RailGeoPackage[]): StationColle
           ...(st.nameRoma ? { nameRoma: st.nameRoma } : {}),
           ...(st.stationGroupId ? { stationGroupId: st.stationGroupId } : {}),
           seq: st.seq,
-          minz: minzByLine.get(st.lineId) ?? 0,
+          minz,
         },
       });
     }

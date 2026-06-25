@@ -21,6 +21,7 @@ import {
   ROMAJI_ATTRIBUTION,
   minzForRank,
   RANK_MINZOOM,
+  stationMinzForLine,
   lodFilter,
   litStationIds,
 } from './style';
@@ -232,10 +233,10 @@ describe('C5 station features carry stationGroupId (for the hover popup)', () =>
 
 describe('C9 zoom-tiered LOD (minz + lodFilter + adjacency memoize)', () => {
   it('minzForRank maps tier → reveal zoom; undefined ⇒ 0 (always visible)', () => {
-    expect(RANK_MINZOOM).toEqual([4, 7, 9, 11, 12]);
-    expect(minzForRank(0)).toBe(4); // Shinkansen — national
-    expect(minzForRank(2)).toBe(9); // urban — city zoom
-    expect(minzForRank(4)).toBe(12); // minor — close zoom
+    expect(RANK_MINZOOM).toEqual([3, 4, 5, 6, 7]);
+    expect(minzForRank(0)).toBe(3); // Shinkansen — national
+    expect(minzForRank(2)).toBe(5); // urban — region zoom
+    expect(minzForRank(4)).toBe(7); // minor — city zoom
     expect(minzForRank(undefined)).toBe(0); // unranked (stub/CN) ⇒ never culled
   });
 
@@ -244,7 +245,7 @@ describe('C9 zoom-tiered LOD (minz + lodFilter + adjacency memoize)', () => {
     pkg.lines.forEach((l) => { l.rank = l.lineId === 'jr-yamanote' ? 2 : 0; });
     const fc = buildSegmentCollection([pkg]);
     const yamanoteSeg = fc.features.find((f) => f.properties.lineId === 'jr-yamanote')!;
-    expect(yamanoteSeg.properties.minz).toBe(9); // rank 2 → 9
+    expect(yamanoteSeg.properties.minz).toBe(5); // rank 2 (urban) → 5
   });
 
   it('lodFilter = show by tier OR any always-visible set (ridden, selected)', () => {
@@ -266,5 +267,40 @@ describe('C9 zoom-tiered LOD (minz + lodFilter + adjacency memoize)', () => {
     expect(litStationIds([seg.segmentId], pkgs)).toEqual(a);
     // a fresh array (post-fallback-retry swap) still resolves correctly
     expect(litStationIds([seg.segmentId], [...pkgs])).toEqual(a);
+  });
+});
+
+describe('C9b station-dot LOD by average spacing', () => {
+  it('dense lines hold their dots until zoomed in; sparse lines show them near the line', () => {
+    // dense: ~1 km spacing, line shows at z7 → dots much later
+    expect(stationMinzForLine(7, 30, 31)).toBeGreaterThan(7);
+    // sparse: ~50 km spacing (Shinkansen), line at z4 → dots only a little later
+    const shink = stationMinzForLine(4, 500, 11); // 50 km avg
+    expect(shink).toBeGreaterThanOrEqual(4);
+    expect(shink).toBeLessThan(8);
+    // closer spacing reveals strictly later than wider spacing
+    expect(stationMinzForLine(0, 10, 11)).toBeGreaterThan(stationMinzForLine(0, 100, 11)); // 1km vs 10km
+  });
+
+  it('never reveals dots before the line, never past the z14 cap, falls back for <2 stations', () => {
+    expect(stationMinzForLine(9, 1000, 2)).toBeGreaterThanOrEqual(9); // floor at line minz
+    expect(stationMinzForLine(0, 0.5, 100)).toBeLessThanOrEqual(14); // ultra-dense capped
+    expect(stationMinzForLine(5, 0, 1)).toBe(5); // single station → line minz
+    expect(stationMinzForLine(3, 0, 0)).toBe(3); // no stations → line minz
+  });
+
+  it('buildStationCollection: termini anchor at the line zoom, intermediates reveal later', () => {
+    const pkg = structuredClone(JP_PACKAGE);
+    const toyoko = pkg.lines.find((l) => l.lineId === 'tokyu-toyoko')!;
+    toyoko.rank = 2; // line minz 5
+    toyoko.isLoop = false;
+    pkg.segments.forEach((s) => { if (s.lineId === 'tokyu-toyoko') s.km = 0.5; }); // very dense → dots late
+    const fc = buildStationCollection([pkg]);
+    const dots = fc.features.filter((f) => f.properties.lineId === 'tokyu-toyoko');
+    const ends = new Set([toyoko.stationOrder[0], toyoko.stationOrder[toyoko.stationOrder.length - 1]]);
+    for (const d of dots) {
+      if (ends.has(d.properties.stationId)) expect(d.properties.minz).toBe(5); // terminus = line zoom
+      else expect(d.properties.minz).toBeGreaterThan(5); // intermediate = later (density)
+    }
   });
 });
