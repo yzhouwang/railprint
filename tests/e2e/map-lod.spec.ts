@@ -18,6 +18,9 @@ const RIDDEN_YAMANOTE = [
 
 type RenderedSeg = { segmentId: string; minz: number };
 
+// The DB name 'railprint', the store 'rideEvents', and the record shape below mirror
+// src/lib/db.ts (the source of truth). Dexie/db.ts can't run inside page.evaluate, so a
+// schema rename there must be mirrored here by hand — there's no compile-time link.
 /** Write ride events straight into the app's IndexedDB ('railprint' → 'rideEvents' store). */
 async function seedRides(page: Page): Promise<void> {
   await page.evaluate(

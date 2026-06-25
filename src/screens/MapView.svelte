@@ -204,12 +204,16 @@
   // Headless `$B` browse has no WebGL and CDP can't drive zoom, so the zoom-tiered
   // LOD has been un-QA-able. When the page is opened with ?e2e=1 we expose the live
   // maplibre map + a ready flag on window so a Playwright/SwiftShader run can call
-  // setZoom + queryRenderedFeatures and assert which line tiers are visible. Gated on
-  // the flag so NO global map handle ships to real users. See tests/e2e/map-lod.spec.ts.
+  // setZoom + queryRenderedFeatures and assert which line tiers are visible. The hook
+  // code ships in the bundle but stays inert without ?e2e, so a normal user never
+  // receives the handle. See tests/e2e/map-lod.spec.ts.
   interface E2EWindow {
     __map?: unknown;
     __mapReady?: boolean;
   }
+  const E2E_READY_POLL_MS = 100;
+  const E2E_READY_MAX_TICKS = 100; // ≤10s — bounded so the poll can't spin forever
+  let e2eReadyTimer: ReturnType<typeof setTimeout> | null = null;
   function e2eEnabled(): boolean {
     return (
       typeof window !== 'undefined' &&
@@ -224,19 +228,34 @@
     // Readiness polls map.loaded() rather than the 'load'/'idle' events: under a flaky or
     // offline basemap (e.g. CI with no internet) the raster source retries forever so those
     // events never fire, but loaded() still flips true once the local rail layers are
-    // rendered and queryable — which is all the LOD assertions need.
+    // rendered and queryable — which is all the LOD assertions need. Bounded + cancellable:
+    // if loaded() never settles within the cap, we stop and leave __mapReady false so the
+    // test's readiness wait fails loudly instead of the poll spinning against a dead map.
     const m = map;
+    let ticks = 0;
     const markReady = (): void => {
-      if (m.loaded()) w.__mapReady = true;
-      else setTimeout(markReady, 100);
+      if (m.loaded()) {
+        w.__mapReady = true;
+        e2eReadyTimer = null;
+        return;
+      }
+      if (++ticks >= E2E_READY_MAX_TICKS) {
+        e2eReadyTimer = null;
+        return;
+      }
+      e2eReadyTimer = setTimeout(markReady, E2E_READY_POLL_MS);
     };
     markReady();
   }
   function clearE2EHandle(): void {
     if (typeof window === 'undefined') return;
+    if (e2eReadyTimer !== null) {
+      clearTimeout(e2eReadyTimer);
+      e2eReadyTimer = null;
+    }
     const w = window as unknown as E2EWindow;
     delete w.__map;
-    w.__mapReady = false;
+    delete w.__mapReady;
   }
 
   function fitToNetwork(): void {
