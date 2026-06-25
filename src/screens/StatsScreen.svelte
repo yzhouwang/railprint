@@ -119,14 +119,18 @@
   <h1 class="title">統計</h1>
 
   {#if $headline.hasRides}
-    <StatCard pct={$headline.pctNational} riddenKm={$headline.riddenKm} caption="全国" />
-    {#if $headline.hsrTotalKm > 0}
-      <StatCard
-        label="新幹線"
-        pct={$headline.pctHSR}
-        riddenKm={$headline.hsrRiddenKm}
-        caption="高速鉄道"
-      />
+    <!-- Per-country, never blended: a single "全国 %" mixing JP + China would misreport the
+         number people screenshot. Each country is its own card; the JP figure is JP's alone. -->
+    {@const jp = $headline.byCountry.JP}
+    {@const cn = $headline.byCountry.CN}
+    {#if jp}
+      <StatCard pct={jp.pctNational} riddenKm={jp.riddenKm} caption="日本 全国" />
+      {#if jp.hsrTotalKm > 0}
+        <StatCard label="新幹線" pct={jp.pctHSR} riddenKm={jp.hsrRiddenKm} caption="高速鉄道" />
+      {/if}
+    {/if}
+    {#if cn && cn.riddenKm > 0}
+      <StatCard label="中国" pct={cn.pctNational} riddenKm={cn.riddenKm} caption="高速鉄道" />
     {/if}
 
     <FolderTabCard label="記録">
