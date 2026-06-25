@@ -534,14 +534,15 @@
       routeChoices = [];
       noRoute = false;
       hitsA = hits;
-      if (hits.length === 1) pickHit('A', hits[0]);
     } else {
       pickedB = null;
       routeChoices = [];
       noRoute = false;
       hitsB = hits;
-      if (hits.length === 1) pickHit('B', hits[0]);
     }
+    // No auto-pick: a partial query can match one station that's a prefix of the one you want
+    // (e.g. "nago" matches 名郷 but you're typing 名古屋), so picking mid-type would grab the wrong
+    // station. Always show the matches as tappable suggestions; the user chooses when ready.
   }
 
   function onQueryA(e: Event): void {
@@ -831,7 +832,7 @@
               oninput={onQueryA}
               autocomplete="off"
             />
-            {#if hitsA.length > 1}
+            {#if hitsA.length >= 1}
               <ul class="hit-list" aria-label="出発駅の候補">
                 {#each hitsA as h (h.station.stationId)}
                   <li>
@@ -863,7 +864,7 @@
               oninput={onQueryB}
               autocomplete="off"
             />
-            {#if hitsB.length > 1}
+            {#if hitsB.length >= 1}
               <ul class="hit-list" aria-label="到着駅の候補">
                 {#each hitsB as h (h.station.stationId)}
                   <li>
