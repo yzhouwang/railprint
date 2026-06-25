@@ -1,6 +1,6 @@
 {
   "name": "railprint",
-  "version": "0.7.0.1",
+  "version": "0.8.0.0",
   "private": true,
   "type": "module",
   "scripts": {
