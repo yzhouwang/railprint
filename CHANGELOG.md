@@ -2,6 +2,11 @@
 
 All notable changes to RailPrint are documented here.
 
+## [0.7.0.1] - 2026-06-25
+
+### Fixed
+- **Typing a station name no longer auto-selects mid-type.** When a partial query resolved to a single station, the search locked onto it immediately — so typing toward "Nagoya" got grabbed at "nago" (and a short name can be a complete match for one station yet a prefix of the one you want, e.g. 名郷 vs 名古屋). Search now always shows the match(es) as tappable suggestions and selects only when you tap.
+
 ## [0.7.0.0] - 2026-06-25
 
 ### Added
