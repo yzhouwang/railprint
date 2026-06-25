@@ -28,6 +28,8 @@ Stack target: Vite + Svelte · Vitest (unit) · Playwright (E2E)
 - iOS Safari: share must be synchronous in the tap gesture (eager blob), or NotAllowedError.
 
 ## Critical Paths (must work end-to-end)
+`[E2E]` marks the target tier. The Playwright harness currently covers the zoom-tiered map LOD
+(`tests/e2e/map-lod.spec.ts`); these four record/import/share/durability flows are still planned E2E.
 - First-run: empty map → pick line → mark first ride → % ticks up. [E2E]
 - Cold-start trust: import incumbent CSV → non-empty correct map. [E2E]
 - The flex: mark rides → generate + share Wrapped card. [E2E]
@@ -56,8 +58,8 @@ E2E (Playwright) — a headless WebGL harness now exists (`@playwright/test`, `p
 `tests/e2e/`). Chromium's bundled SwiftShader provides the WebGL2 context MapLibre needs, and E2E runs
 against the production build via `vite preview` (`npm run test:e2e`). The first spec
 (`tests/e2e/map-lod.spec.ts`) drives the real map and asserts the zoom-tiered LOD: at the national view
-only the Shinkansen spine and ridden lines show, urban lines reveal on zoom-in, and ridden lines stay
-visible at every zoom. The 3 record-add flows (pick line → red → tap A,B; type Shibuya→infer→Shinjuku→record;
+only the top tiers (Shinkansen + trunk lines) and ridden lines show, urban lines reveal on zoom-in, and
+ridden lines stay visible at every zoom. The 3 record-add flows (pick line → red → tap A,B; type Shibuya→infer→Shinjuku→record;
 type 新宿 7-line disambiguation) are still covered at the logic layer by the unit suites above; porting them
 onto the new harness is the next E2E step.
 
