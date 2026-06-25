@@ -35,13 +35,9 @@ async function seedRide(page: Page): Promise<void> {
   });
 }
 
-test.beforeEach(async ({ page }) => {
-  await page.route(/tile\.openstreetmap\.org/, (route) =>
-    route.fulfill({ contentType: 'image/png', body: BLANK_PNG }),
-  );
-});
-
-test('search 津 → 大阪難波 surfaces a multi-line route and records it', async ({ page }) => {
+// Boot the app with a ride (so the map mounts), fire 'load' (the offline CI basemap never does), then
+// open mark mode and the station-search tab — the shared entry for both tests.
+async function enterSearchMode(page: Page): Promise<void> {
   await page.goto('/?e2e=1');
   await page.waitForFunction(
     async () => (await indexedDB.databases()).some((d) => d.name === 'railprint'),
@@ -52,16 +48,22 @@ test('search 津 → 大阪難波 surfaces a multi-line route and records it', a
   await page.reload();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await page.waitForFunction(() => (window as any).__mapReady === true, null, { timeout: 30_000 });
-  // The offline CI basemap never lets MapLibre fire 'load', so the app's status stays < 'ready' and the
-  // mark panel (gated on status==='ready') won't mount. Fire 'load' via the e2e map handle to run the
-  // ready-setup the basemap suppressed — this is purely a harness affordance; the UI flow under test is real.
+  // Status (and the mark panel) won't reach 'ready' until MapLibre fires 'load', which the offline
+  // basemap suppresses — fire it via the e2e handle (harness affordance; the UI flow under test is real).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await page.evaluate(() => (window as any).__map?.fire('load'));
-  await expect(page.locator('.mark-panel')).toBeHidden(); // not in mark mode yet
-
-  // Enter mark mode → switch to typed search.
   await page.getByRole('button', { name: '区間をマーク' }).first().click();
   await page.getByRole('tab', { name: '駅名で検索' }).click();
+}
+
+test.beforeEach(async ({ page }) => {
+  await page.route(/tile\.openstreetmap\.org/, (route) =>
+    route.fulfill({ contentType: 'image/png', body: BLANK_PNG }),
+  );
+});
+
+test('search 津 → 大阪難波 surfaces a multi-line route and records it', async ({ page }) => {
+  await enterSearchMode(page);
 
   // 津 has three instances (伊勢鉄道 / 近鉄名古屋線 / JR紀勢) — they share one transfer group, so any hit
   // resolves to the same group. Type, then pick the first candidate.
@@ -82,4 +84,21 @@ test('search 津 → 大阪難波 surfaces a multi-line route and records it', a
   // Record it; the success toast confirms the cross-line ride landed.
   await routeChip.click();
   await expect(page.getByText(/経路を記録しました/)).toBeVisible({ timeout: 10_000 });
+});
+
+test('does NOT auto-pick while typing — a single match is a tappable suggestion', async ({ page }) => {
+  await enterSearchMode(page);
+
+  // 首里 (沖縄都市モノレール) is a single-instance station. Typing its exact name used to auto-SELECT it
+  // immediately — the bug where a partial like "nago" locks onto one station before you finish 名古屋.
+  await page.locator('#rp-q-a').fill('首里');
+
+  // It must be OFFERED as a tappable suggestion, never silently chosen.
+  await expect(page.locator('.hit')).toHaveCount(1);
+  await expect(page.locator('.picked-station')).toHaveCount(0); // not auto-picked
+  await expect(page.locator('#rp-q-a')).toHaveValue('首里'); // the input keeps what you typed
+
+  // Tapping the suggestion is what selects it.
+  await page.locator('.hit').first().click();
+  await expect(page.locator('.picked-station')).toHaveCount(1);
 });
