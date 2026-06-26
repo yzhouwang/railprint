@@ -1,6 +1,6 @@
 {
   "name": "railprint",
-  "version": "0.9.1.0",
+  "version": "0.9.2.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,7 +9,7 @@
     "preview": "vite preview --host 0.0.0.0",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "build:rail-geo:fixture": "node pipeline/cli.ts --input rail-geo/fixtures/jp-toy-input.json --out rail-geo/generated",
-    "build:rail-geo:jp": "node pipeline/build-jp.ts --out public/rail/jp-2025.json",
+    "build:rail-geo:jp": "node pipeline/build-jp.ts --out public/rail/jp-2025.json && node pipeline/build-manifest.ts",
     "build:manifest": "node pipeline/build-manifest.ts",
     "verify:rail-geo:jp": "node pipeline/verify-jp.ts",
     "test": "node --test tests/geometry/*.test.ts && node pipeline/verify-jp.ts && vitest run",

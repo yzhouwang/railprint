@@ -2,6 +2,22 @@
 
 All notable changes to RailPrint are documented here.
 
+## [0.9.2.0] - 2026-06-27
+
+Rail-geo durability, Phases 1-3: the rail data is now integrity-verified, works fully offline, and a returning user's coverage survives multi-version data refreshes.
+
+### Added
+- **Package integrity (SHA-256).** The build emits a `manifest.json` (schema v2) carrying a per-file SHA-256 for every rail package and migration map, deterministic across rebuilds. The app now loads packages manifest-driven and verifies the fetched bytes against that digest — a truncated or poisoned package is rejected rather than silently shifting your coverage denominator. A configurable China-reachable secondary origin (`VITE_RAIL_CDN_SECONDARY`) is tried after the primary.
+- **Offline support (service worker).** A Workbox service worker precaches the app shell plus all rail data (packages + migration maps, 15 entries / ~11 MB) at one content-revision, so you can open the app and mark a ride with no signal. Manifest and package are cached together, so the integrity check never sees a fresh-manifest / stale-package skew; a within-year data refresh still busts the cache because the cache key is the file's content hash. RailPrint is now an installable PWA (manifest + icon).
+- **Chained migration.** The N→N+1 engine is proven to chain N→N+2 (e.g. 2025.1.0 → 2025.2.0 → 2025.3.0): a pinned event walks every step to the current id, `originalSegmentId` preserved as the first-ever id. A missing mid-chain map is all-or-nothing — the event stays at its known-good id and retries, never half-migrated.
+
+### Fixed
+- **Boot could hang on a stalled package body.** The cold-start timeout now stays armed through the response body read (`arrayBuffer`/`json`), so a 200 response with a half-delivered 8.8 MB package aborts and degrades instead of freezing the loading screen. (Caught by a Codex↔Claude cross-review.)
+- SHA-256 comparison is now case-normalized and format-validated; a malformed manifest digest logs and skips rather than mis-comparing.
+
+### How it was built
+Two-lane Codex + Claude (engine + app), a Codex↔Claude cross-review that caught the P1 boot-hang and a weak offline test, then /qa and /ship. 278 vitest (incl. SHA-mismatch + chained-migration + a new **offline-record e2e** that marks a ride with the network cut) + 41 geometry + 14 e2e + deterministic manifest. This PR also re-lands Phase 0 (v0.9.1.0) onto master, which had merged only into an intermediate branch. Remaining: the package CDN extraction + full quarantine UX + the open ridelog spec, tracked in `docs/designs/rail-geo-durable-package.md`.
+
 ## [0.9.1.0] - 2026-06-27
 
 Rail-geo durability, Phase 0: rail IDs are now content-addressed and deterministic, and a returning user's saved rides survive a routine data refresh.
