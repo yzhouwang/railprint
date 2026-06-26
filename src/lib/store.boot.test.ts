@@ -104,4 +104,27 @@ describe('init() package fetch + fallback', () => {
     expect(get(store.usingFallback)).toBe(true);
     expect(get(store.packages).some((p) => p.country === 'CN')).toBe(false); // no fake CN ids to record against
   });
+
+  it('a HUNG fetch times out and degrades — never hangs the loading screen forever', async () => {
+    vi.useFakeTimers();
+    // fetch that never resolves on its own; only an abort (the timeout) rejects it.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (_url: string, opts?: { signal?: AbortSignal }) =>
+          new Promise((_resolve, reject) => {
+            opts?.signal?.addEventListener('abort', () =>
+              reject(new DOMException('aborted', 'AbortError')),
+            );
+          }),
+      ),
+    );
+    const store = await import('./store');
+    const initP = store.init();
+    await vi.advanceTimersByTimeAsync(16_000); // past FETCH_TIMEOUT_MS (15s)
+    await initP;
+    expect(get(store.ready)).toBe(true); // booted, not stuck on the splash
+    expect(get(store.usingFallback)).toBe(true); // timed out → JP-only fallback
+    vi.useRealTimers();
+  });
 });

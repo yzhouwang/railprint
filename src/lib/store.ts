@@ -188,10 +188,17 @@ let initialized = false;
 const JP_PACKAGE_URL = `${import.meta.env.BASE_URL}rail/jp-2025.json`;
 const CN_PACKAGE_URL = `${import.meta.env.BASE_URL}rail/cn-jinghu-2025.json`;
 
-/** Fetch one package, REJECTING a wrong-country payload; null on any failure so callers degrade. */
+// Cold-start guard: a stalled/flaky network must never hang the loading screen forever. After this
+// long we abort the fetch, degrade (JP fallback / CN-miss retry), and let `bindFallbackRetry` recover.
+const FETCH_TIMEOUT_MS = 15_000;
+
+/** Fetch one package, REJECTING a wrong-country payload; null on any failure (incl. timeout) so callers degrade. */
 async function fetchOne(url: string, expectedCountry: Country): Promise<RailGeoPackage | null> {
+  const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer =
+    ctl && typeof window !== 'undefined' ? window.setTimeout(() => ctl.abort(), FETCH_TIMEOUT_MS) : null;
   try {
-    const res = await fetch(url);
+    const res = await fetch(url, ctl ? { signal: ctl.signal } : undefined);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const pkg = (await res.json()) as RailGeoPackage;
     if (!pkg?.lines?.length || !pkg?.segments?.length) throw new Error('empty package');
@@ -201,8 +208,11 @@ async function fetchOne(url: string, expectedCountry: Country): Promise<RailGeoP
     if (pkg.crs !== 'WGS84') throw new Error(`non-WGS84 crs ${pkg.crs}`); // never accept GCJ-02
     return pkg;
   } catch (err) {
-    console.warn(`[store] ${expectedCountry} package ${url} unavailable (${String(err)})`);
+    const reason = ctl?.signal.aborted ? `timed out after ${FETCH_TIMEOUT_MS}ms` : String(err);
+    console.warn(`[store] ${expectedCountry} package ${url} unavailable (${reason})`);
     return null;
+  } finally {
+    if (timer !== null) window.clearTimeout(timer);
   }
 }
 
