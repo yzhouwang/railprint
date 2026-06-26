@@ -100,6 +100,13 @@
   </div>
 {/if}
 
+<!-- The map has its own OfflineOverlay; the stats/import screens had no offline signal at all,
+     so importing while offline silently failed. Surface a strip there (skip when degraded already
+     shows the stronger message, and skip the map tab which has the overlay). -->
+{#if $ready && $offline && !$dataDegraded && $activeTab !== 'map'}
+  <div class="offline-strip" role="status">オフライン — データの取得は接続が戻ると再開します。</div>
+{/if}
+
 <Toasts />
 
 <style>
@@ -128,6 +135,18 @@
     text-align: center;
     font-size: var(--size-label);
     background: var(--rail-text);
+    color: var(--white);
+  }
+  .offline-strip {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 60;
+    padding: 8px var(--space-md);
+    text-align: center;
+    font-size: var(--size-label);
+    background: var(--ink);
     color: var(--white);
   }
 

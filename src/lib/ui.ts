@@ -13,19 +13,26 @@ export const markMode = writable<boolean>(false);
 
 export type ToastKind = 'success' | 'info' | 'error';
 
+/** An inline action on a toast — e.g. an "元に戻す" (undo) button on a mark/import success. */
+export interface ToastAction {
+  label: string;
+  fn: () => void;
+}
+
 export interface Toast {
   id: number;
   kind: ToastKind;
   message: string;
+  action?: ToastAction;
 }
 
 export const toasts = writable<Toast[]>([]);
 
 let nextToastId = 1;
 
-export function toast(message: string, kind: ToastKind = 'info', ttlMs = 3200): number {
+export function toast(message: string, kind: ToastKind = 'info', ttlMs = 3200, action?: ToastAction): number {
   const id = nextToastId++;
-  toasts.update((list) => [...list, { id, kind, message }]);
+  toasts.update((list) => [...list, { id, kind, message, action }]);
   if (ttlMs > 0 && typeof window !== 'undefined') {
     window.setTimeout(() => dismissToast(id), ttlMs);
   }

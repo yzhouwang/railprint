@@ -17,5 +17,7 @@
   {/if}
 {/if}
 {#if cn && cn.riddenKm > 0}
-  <StatCard label="中国" pct={cn.pctNational} riddenKm={cn.riddenKm} caption="高速鉄道" />
+  <!-- China is one curated corridor (京沪) for now, not the full network — the caption says so,
+       so the % reads as "of the preview corridor", not "of all China rail". -->
+  <StatCard label="中国" pct={cn.pctNational} riddenKm={cn.riddenKm} caption="京沪プレビュー" />
 {/if}

@@ -13,7 +13,7 @@
 
   import { onMount, tick } from 'svelte';
   import { get } from 'svelte/store';
-  import { packages, litSegmentIds, geo, events, markRide, markRoute } from '../lib/store';
+  import { packages, litSegmentIds, geo, events, markRide, markRoute, removeTrip } from '../lib/store';
   import { findRoutes } from '../lib/route';
   import Pill from '../components/Pill.svelte';
   import { KNOWN_TRAIN_MODELS } from '../lib/train-models';
@@ -540,11 +540,14 @@
       // E1: every mark appends a new trip. "Newly lit" = the slice's segments not already
       // covered, so the coverage toast still reads as % gained; a full repeat says so plainly.
       const newlyLit = res.segmentIds.filter((id) => !before.has(id));
+      // Undo rolls back exactly the trip just appended (markRide returns its tripId; removeTrip
+      // deletes every event of that trip). Longer ttl so the undo is actually reachable.
+      const undo = { label: '元に戻す', fn: () => void removeTrip(res.tripId) };
       if (newlyLit.length === 0) {
-        toast(`もう一度記録しました（${res.sliceLength}区間）`, 'success');
+        toast(`もう一度記録しました（${res.sliceLength}区間）`, 'success', 6000, undo);
       } else {
         const km = kmOf(newlyLit);
-        toast(`区間を記録しました（+${newlyLit.length}区間 / +${km.toFixed(1)} km）`, 'success');
+        toast(`区間を記録しました（+${newlyLit.length}区間 / +${km.toFixed(1)} km）`, 'success', 6000, undo);
       }
       pulse(res.segmentIds);
       markTrainModel = '';
@@ -607,6 +610,36 @@
     queryB = (e.target as HTMLInputElement).value;
     selectedLine = null;
     void resolveInto('B', queryB);
+  }
+
+  // Enter selects the FIRST hit (same as clicking the top `.hit`); Escape clears this field's
+  // query — or, if it's already empty, exits search/mark mode cleanly. Keeps the oninput-driven
+  // search intact; we only intercept these two keys.
+  function onSearchKey(which: 'A' | 'B', e: KeyboardEvent): void {
+    if (e.key === 'Enter') {
+      const hits = which === 'A' ? hitsA : hitsB;
+      if (hits.length > 0) {
+        e.preventDefault();
+        pickHit(which, hits[0]);
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      const query = which === 'A' ? queryA : queryB;
+      if (query) {
+        // clear just this field's query + its hit list; nothing else changes.
+        if (which === 'A') {
+          queryA = '';
+          hitsA = [];
+        } else {
+          queryB = '';
+          hitsB = [];
+        }
+        selectedLine = null;
+      } else {
+        // already empty — exit mark mode (resetMarking() runs off the markMode subscription).
+        markMode.set(false);
+      }
+    }
   }
 
   function pickHit(which: 'A' | 'B', hit: StationHit): void {
@@ -680,11 +713,13 @@
       // E1: the route is always recorded as a new trip. Report newly-lit coverage; a full
       // repeat (every leg already ridden) says so instead of dead-ending.
       const newlyLit = r.segmentIds.filter((id) => !before.has(id));
+      // Undo rolls back exactly the trip just appended (markRoute returns its tripId). Longer ttl.
+      const undo = { label: '元に戻す', fn: () => void removeTrip(res.tripId) };
       if (newlyLit.length === 0) {
-        toast(`もう一度記録しました（${r.segmentIds.length}区間 / ${res.totalKm.toFixed(1)} km）`, 'success');
+        toast(`もう一度記録しました（${r.segmentIds.length}区間 / ${res.totalKm.toFixed(1)} km）`, 'success', 6000, undo);
       } else {
         const km = kmOf(newlyLit);
-        toast(`経路を記録しました（+${newlyLit.length}区間 / +${km.toFixed(1)} km）`, 'success');
+        toast(`経路を記録しました（+${newlyLit.length}区間 / +${km.toFixed(1)} km）`, 'success', 6000, undo);
       }
       pulse(r.segmentIds);
       markTrainModel = '';
@@ -900,6 +935,7 @@
               placeholder="例: 新宿 / Shinjuku / しんじゅく"
               value={queryA}
               oninput={onQueryA}
+              onkeydown={(e) => onSearchKey('A', e)}
               autocomplete="off"
             />
             {#if hitsA.length >= 1}
@@ -913,6 +949,9 @@
                   </li>
                 {/each}
               </ul>
+            {:else if queryA.trim()}
+              <!-- typed but zero matches — distinct from the neutral not-yet-typed empty state. -->
+              <p class="no-hit" role="status">該当する駅が見つかりません</p>
             {/if}
           {/if}
         </div>
@@ -932,6 +971,7 @@
               placeholder="例: 渋谷 / Shibuya"
               value={queryB}
               oninput={onQueryB}
+              onkeydown={(e) => onSearchKey('B', e)}
               autocomplete="off"
             />
             {#if hitsB.length >= 1}
@@ -945,6 +985,9 @@
                   </li>
                 {/each}
               </ul>
+            {:else if queryB.trim()}
+              <!-- typed but zero matches — distinct from the neutral not-yet-typed empty state. -->
+              <p class="no-hit" role="status">該当する駅が見つかりません</p>
             {/if}
           {/if}
         </div>
@@ -1347,6 +1390,12 @@
     overflow-y: auto;
     border: 1px solid var(--rail-dim);
     border-radius: var(--radius-button);
+  }
+  /* Typed-but-no-match notice — muted, distinct from the neutral not-yet-typed empty state. */
+  .no-hit {
+    margin: var(--space-xs) 0 0;
+    font-size: var(--size-label);
+    color: var(--ink-muted);
   }
   .hit {
     display: flex;
