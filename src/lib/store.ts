@@ -16,7 +16,7 @@ import type {
 } from '../contract/types';
 import { coverageWarnings, resolveCoverage, segmentsBetween, type CoverageWarning } from './resolver';
 import * as db from './db';
-import { STUB_PACKAGES } from '../fixtures/stubPackage';
+import { JP_PACKAGE } from '../fixtures/stubPackage';
 import { canonicalizeTrainModel } from './train-models';
 
 // ───────────────────────────────── state ────────────────────────────────────
@@ -188,18 +188,20 @@ let initialized = false;
 const JP_PACKAGE_URL = `${import.meta.env.BASE_URL}rail/jp-2025.json`;
 const CN_PACKAGE_URL = `${import.meta.env.BASE_URL}rail/cn-jinghu-2025.json`;
 
-/** Fetch one package; null on any failure (offline, 404, malformed) so callers can degrade. */
-async function fetchOne(url: string): Promise<RailGeoPackage | null> {
+/** Fetch one package, REJECTING a wrong-country payload; null on any failure so callers degrade. */
+async function fetchOne(url: string, expectedCountry: Country): Promise<RailGeoPackage | null> {
   try {
     const res = await fetch(url);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const pkg = (await res.json()) as RailGeoPackage;
     if (!pkg?.lines?.length || !pkg?.segments?.length) throw new Error('empty package');
-    if (pkg.country !== 'JP' && pkg.country !== 'CN') throw new Error(`bad country ${pkg.country}`);
+    // A swapped/poisoned artifact (the CN url serving a JP package, or vice-versa) must never load
+    // under the wrong namespace — that would strand or mis-count rides.
+    if (pkg.country !== expectedCountry) throw new Error(`expected ${expectedCountry}, got ${pkg.country}`);
     if (pkg.crs !== 'WGS84') throw new Error(`non-WGS84 crs ${pkg.crs}`); // never accept GCJ-02
     return pkg;
   } catch (err) {
-    console.warn(`[store] package ${url} unavailable (${String(err)})`);
+    console.warn(`[store] ${expectedCountry} package ${url} unavailable (${String(err)})`);
     return null;
   }
 }
@@ -210,10 +212,13 @@ async function fetchOne(url: string): Promise<RailGeoPackage | null> {
  * malformed we boot JP-only rather than failing the whole map. `ok` reflects only the required JP load.
  */
 async function fetchPackages(): Promise<{ ok: boolean; complete: boolean; pkgs: RailGeoPackage[] }> {
-  const [jp, cn] = await Promise.all([fetchOne(JP_PACKAGE_URL), fetchOne(CN_PACKAGE_URL)]);
+  const [jp, cn] = await Promise.all([fetchOne(JP_PACKAGE_URL, 'JP'), fetchOne(CN_PACKAGE_URL, 'CN')]);
   if (!jp) {
-    console.warn('[store] real JP package unavailable; using stub');
-    return { ok: false, complete: false, pkgs: STUB_PACKAGES };
+    // JP-ONLY fallback — never seed a fake CN stub. The stub's CN ids don't match the real CN
+    // package, so a CN fallback would let a user "record" a China ride against mismatched ids that
+    // then strand on the real data. If CN itself fails, the same rule holds: JP-only + degraded.
+    console.warn('[store] real JP package unavailable; using JP-only stub (no CN fallback)');
+    return { ok: false, complete: false, pkgs: [JP_PACKAGE] };
   }
   if (!cn) console.warn('[store] CN corridor unavailable; booting JP-only (will retry on reconnect)');
   // complete only when EVERY package loaded — a CN miss keeps the retry bound so a returning user's

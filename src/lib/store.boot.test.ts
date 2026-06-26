@@ -12,6 +12,13 @@ const realPkg: RailGeoPackage = {
   stations: [],
 };
 
+const cnPkg: RailGeoPackage = {
+  version: '2025.1.0', generatedAt: 't', crs: 'WGS84', country: 'CN',
+  lines: [{ lineId: 'cn-x', name: '京沪', country: 'CN', isHSR: true, isLoop: false, stationOrder: ['cn-x:a'], geometry: { type: 'LineString', coordinates: [[116, 39], [121, 31]] } }],
+  segments: [{ segmentId: 'cn-x:0-1', lineId: 'cn-x', fromStationId: 'cn-x:a', toStationId: 'cn-x:b', fromSeq: 0, toSeq: 1, km: 1300, isHSR: true, geometry: { type: 'LineString', coordinates: [[116, 39], [121, 31]] } }],
+  stations: [],
+};
+
 describe('init() package fetch + fallback', () => {
   beforeEach(() => { vi.resetModules(); });
   afterEach(() => { vi.unstubAllGlobals(); });
@@ -72,5 +79,29 @@ describe('init() package fetch + fallback', () => {
     await store.addEvents([{ id: 'e1', segmentId: 's', railGeoVersion: 'v', source: 'manual', createdAt: 't' }]);
     expect(get(store.dataDegraded)).toBe(true); // rides exist but won't resolve against stub
     await store.clearAllRides();
+  });
+
+  it('loads JP + the CN corridor when both fetch cleanly', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => ({ ok: true, json: async () => (url.includes('cn') ? cnPkg : realPkg) })));
+    const store = await import('./store');
+    await store.init();
+    expect(get(store.packages).map((p) => p.country).sort()).toEqual(['CN', 'JP']);
+  });
+
+  it('REJECTS a wrong-country payload — a CN url serving a JP package never loads as CN', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => realPkg }))); // JP for BOTH urls
+    const store = await import('./store');
+    await store.init();
+    const pkgs = get(store.packages);
+    expect(pkgs.every((p) => p.country === 'JP')).toBe(true); // the CN-url JP payload was rejected
+    expect(pkgs).toHaveLength(1); // JP only — no second, mis-namespaced package
+  });
+
+  it('NO fake-CN fallback: a JP failure boots JP-only, never a stub CN package', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('down'); }));
+    const store = await import('./store');
+    await store.init();
+    expect(get(store.usingFallback)).toBe(true);
+    expect(get(store.packages).some((p) => p.country === 'CN')).toBe(false); // no fake CN ids to record against
   });
 });
