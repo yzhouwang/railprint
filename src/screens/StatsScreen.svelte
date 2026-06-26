@@ -7,7 +7,7 @@
   // share image then hands it to share.ts. Works in both the 380px desktop side panel and
   // full-screen mobile. Empty/zero state degrades gracefully (no NaN).
   import { get } from 'svelte/store';
-  import StatCard from '../components/StatCard.svelte';
+  import CountryStatCards from '../components/CountryStatCards.svelte';
   import FolderTabCard from '../components/FolderTabCard.svelte';
   import Button from '../components/Button.svelte';
   import Pill from '../components/Pill.svelte';
@@ -119,15 +119,7 @@
   <h1 class="title">統計</h1>
 
   {#if $headline.hasRides}
-    <StatCard pct={$headline.pctNational} riddenKm={$headline.riddenKm} caption="全国" />
-    {#if $headline.hsrTotalKm > 0}
-      <StatCard
-        label="新幹線"
-        pct={$headline.pctHSR}
-        riddenKm={$headline.hsrRiddenKm}
-        caption="高速鉄道"
-      />
-    {/if}
+    <CountryStatCards />
 
     <FolderTabCard label="記録">
       <div class="rows">

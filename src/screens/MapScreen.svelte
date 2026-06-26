@@ -8,8 +8,7 @@
   // the marking panel / blocks station taps near the bottom of the network.
 
   import MapView from './MapView.svelte';
-  import StatCard from '../components/StatCard.svelte';
-  import { headline } from '../lib/store';
+  import CountryStatCards from '../components/CountryStatCards.svelte';
   import { markMode } from '../lib/ui';
 </script>
 
@@ -18,10 +17,7 @@
 
   {#if !$markMode}
     <div class="float-card">
-      <StatCard pct={$headline.pctNational} riddenKm={$headline.riddenKm} caption="全国" />
-      {#if $headline.hsrTotalKm > 0}
-        <StatCard label="新幹線" pct={$headline.pctHSR} riddenKm={$headline.hsrRiddenKm} caption="高速鉄道" />
-      {/if}
+      <CountryStatCards />
     </div>
   {/if}
 </div>

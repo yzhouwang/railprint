@@ -21,9 +21,36 @@
 import type { RideEvent, RideSource, ImportResolution, RailGeoPackage } from '../../contract/types';
 import type { ResolvedRow } from './parse';
 import * as store from '../store';
+import * as db from '../db';
 import { hashString } from './hash';
 
 export type ImportMode = 'merge' | 'replace';
+
+/**
+ * The "logical ride" key for cross-existing dedup: a calendar day + a segmentId. Two events
+ * with the SAME (ride date, segmentId) describe the same logical ride, even if they came from
+ * different export files (different createdAt/tripId/event id). The ride date is, in priority:
+ *   1. the event's explicit `date` (the day the ride happened), else
+ *   2. the calendar day of `createdAt` (best-effort fallback for undated events).
+ * Manual repeat-rides of a segment on the same day SHARE this key — which is exactly why the
+ * dedup below is gated to IMPORT-source events only, never touching manual/corridor marks.
+ */
+export function logicalRideKey(ev: { segmentId: string; date?: string; createdAt: string }): string {
+  const raw = (ev.date && ev.date.trim()) || ev.createdAt;
+  return `${canonicalDay(raw)}|${ev.segmentId}`;
+}
+
+/**
+ * The YYYY-MM-DD calendar day, format-agnostic. Pulls the y/m/d out of the STRING (2025/6/1,
+ * 2025-06-01, an ISO datetime) so two writings of the same day collide for dedup — and does it by
+ * regex, NOT `new Date().toISOString()`, which would shift a local-midnight date back a day in a
+ * UTC-behind timezone (an off-by-one). Falls back to the first 10 chars if nothing matches.
+ */
+function canonicalDay(s: string): string {
+  const m = s.match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/);
+  if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+  return s.slice(0, 10);
+}
 
 /** Incumbent-row id — stable because importBatchId is a content hash of the CSV (parse.ts). */
 export function eventId(importBatchId: string, rawIndex: number, segmentId: string): string {
@@ -156,11 +183,40 @@ export async function commitImport(
   pkg: RailGeoPackage | RailGeoPackage[],
   mode: ImportMode,
 ): Promise<RideEvent[]> {
-  const events = buildImportEvents(resolved, resolution, pkg);
+  const built = buildImportEvents(resolved, resolution, pkg);
   if (mode === 'replace') {
-    await store.replaceEvents(events);
-  } else {
-    await store.addEvents(events);
+    // Replace wipes the whole log first, so there is no existing event to dedup against.
+    await store.replaceEvents(built);
+    return built;
   }
+  // Merge: a re-imported overlapping EXPORT (same ride date + segmentId, fresh createdAt/tripId/
+  // event id) must not duplicate a ride a PRIOR import already wrote. We dedup import-vs-import
+  // only — a manual/corridor mark of the same segment+day is a distinct, append-only record and
+  // must never shadow (silently drop) an incoming import ride.
+  const events = await dropEventsAlreadyInLog(built);
+  await store.addEvents(events);
   return events;
+}
+
+/**
+ * Drop the import-source events whose logical ride (date, segmentId) was already written by a
+ * PRIOR import. Reads the existing events through the db kernel, mutates nothing. The dedup key
+ * set is scoped to existing IMPORT events only — a manual/corridor mark of the same segment+day
+ * is a distinct append-only record and must never shadow an incoming import ride (that would be a
+ * silent data drop). Incoming manual/corridor rows are likewise never deduped.
+ */
+async function dropEventsAlreadyInLog(built: RideEvent[]): Promise<RideEvent[]> {
+  // Only import-source events are eligible for cross-existing dedup; if there are none we
+  // skip the db read entirely.
+  if (!built.some((e) => e.source === 'import')) return built;
+
+  const existing = await db.getAllEvents();
+  const existingKeys = new Set(
+    existing.filter((e) => e.source === 'import').map(logicalRideKey),
+  );
+
+  return built.filter((e) => {
+    if (e.source !== 'import') return true; // append-only: manual/corridor are never deduped
+    return !existingKeys.has(logicalRideKey(e));
+  });
 }

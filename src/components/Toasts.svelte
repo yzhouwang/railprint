@@ -20,6 +20,14 @@
     >
       <Icon name={icons[t.kind]} size={18} />
       <span class="msg">{t.message}</span>
+      {#if t.action}
+        <button
+          class="action"
+          onclick={() => {
+            t.action!.fn();
+            dismissToast(t.id);
+          }}>{t.action.label}</button>
+      {/if}
       <button class="x" aria-label="閉じる" onclick={() => dismissToast(t.id)}>
         <Icon name="close" size={16} />
       </button>
@@ -62,6 +70,16 @@
   }
   .msg {
     flex: 1;
+  }
+  .action {
+    background: none;
+    border: none;
+    color: inherit;
+    font: inherit;
+    font-weight: var(--weight-bold, 700);
+    text-decoration: underline;
+    padding: 0 var(--space-xs);
+    white-space: nowrap;
   }
   .x {
     display: inline-flex;

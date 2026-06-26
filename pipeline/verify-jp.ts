@@ -20,6 +20,13 @@ import {
 import type { LogoIndex, WikiStyleCache } from './line-style.ts';
 import { rankHistogram } from './line-rank.ts';
 import type { RailLineRank } from './line-rank.ts';
+import {
+  CURATED_ANCHORS,
+  checkCuratedAnchor,
+  checkTier0HsrDenominator,
+  isRailLineRank,
+} from './verify-jp-gates.ts';
+import type { RankedLine } from './verify-jp-gates.ts';
 
 const pkg = JSON.parse(readFileSync('public/rail/jp-2025.json', 'utf8')) as RailGeoPackage;
 const stationReadings = JSON.parse(readFileSync('data/readings/station-readings.json', 'utf8')) as Record<string, { romaji?: string }>;
@@ -69,11 +76,7 @@ const health: Health[] = pkg.lines.map((line) => {
 let failures = 0;
 
 console.log('━━━ rank LOD tiers ━━━');
-type RankedLine = RailLine & { rank?: RailLineRank };
 const rankedPkgLines = pkg.lines as RankedLine[];
-function isRailLineRank(rank: unknown): rank is RailLineRank {
-  return rank === 0 || rank === 1 || rank === 2 || rank === 3 || rank === 4;
-}
 const rankedLines = rankedPkgLines.filter((line) => isRailLineRank(line.rank));
 const rankCoverageOk = rankedLines.length === rankedPkgLines.length;
 if (!rankCoverageOk) failures += 1;
@@ -86,10 +89,10 @@ if (!rankCoverageOk) {
 }
 
 const ranks = rankHistogram(rankedPkgLines);
-const hsrLineCount = rankedPkgLines.filter((line) => line.isHSR).length;
-const tier0Ok = ranks[0] === hsrLineCount;
+const tier0Gate = checkTier0HsrDenominator(pkg);
+const tier0Ok = tier0Gate.ok;
 if (!tier0Ok) failures += 1;
-console.log(`  ${tier0Ok ? '✓' : '✗'} tier-0 count equals HSR line count: ${ranks[0]}/${hsrLineCount}`);
+console.log(`  ${tier0Ok ? '✓' : '✗'} tier-0 count equals HSR line count: ${tier0Gate.tier0Count}/${tier0Gate.hsrLineCount}`);
 const emptyTiers = ([0, 1, 2, 3, 4] as RailLineRank[]).filter((rank) => ranks[rank] === 0);
 if (emptyTiers.length) failures += 1;
 console.log(`  ${emptyTiers.length === 0 ? '✓' : '✗'} no empty tiers`);
@@ -271,30 +274,14 @@ const chuoDifferent = !!jrEastChuo?.color && !!osakaMetroChuo?.color && jrEastCh
 if (!chuoDifferent) failures += 1;
 console.log(`  ${chuoDifferent ? '✓' : '✗'} 中央線 colors differ: JR East=${jrEastChuo?.color ?? 'missing'} Osaka Metro=${osakaMetroChuo?.color ?? 'missing'}`);
 
-// ── curated anchors (営業キロ). Shinkansen names are unique, so name match is safe. ──
-const ANCHORS: { name: string; opMatch?: RegExp; km: number; loop?: boolean }[] = [
-  { name: '東海道新幹線', km: 515.4 },
-  { name: '山陽新幹線', km: 553.7 },
-  { name: '東北新幹線', opMatch: /東日本/, km: 674.9 },
-  { name: '上越新幹線', opMatch: /東日本/, km: 269.5 },
-  { name: '九州新幹線', km: 256.8 },
-  { name: '北海道新幹線', km: 148.8 },
-  { name: '山手線', opMatch: /東日本/, km: 20.6 },
-  { name: '大阪環状線', km: 21.7, loop: true },
-  { name: '横須賀線', opMatch: /東日本/, km: 23.9 },
-];
-
 console.log('\n━━━ curated anchors (営業キロ) ━━━');
-for (const a of ANCHORS) {
-  const cands = pkg.lines.filter((l) => l.name === a.name && (!a.opMatch || a.opMatch.test(l.lineId)));
-  if (cands.length === 0) { console.log(`  ✗ ${a.name}: NOT FOUND`); failures += 1; continue; }
-  const line = cands[0];
-  const km = lineKm(line.lineId);
-  const dev = Math.abs(km - a.km) / a.km;
-  const loopOk = a.loop === undefined || a.loop === line.isLoop;
-  const ok = dev <= 0.12 && loopOk;
-  if (!ok) failures += 1;
-  console.log(`  ${ok ? '✓' : '✗'} ${a.name}: ${km.toFixed(1)}km vs ${a.km} (${(dev * 100).toFixed(0)}%)${a.loop !== undefined ? ` loop=${line.isLoop}/${a.loop}` : ''}`);
+for (const a of CURATED_ANCHORS) {
+  const check = checkCuratedAnchor(pkg, a);
+  if (!check.line) { console.log(`  ✗ ${a.name}: NOT FOUND`); failures += 1; continue; }
+  if (!check.ok) failures += 1;
+  const loopDetail = a.loop !== undefined ? ` loop=${check.line.isLoop}/${a.loop}` : '';
+  const stationDetail = a.stations !== undefined ? ` stations=${check.stationCount}/${a.stations}` : '';
+  console.log(`  ${check.ok ? '✓' : '✗'} ${a.name}: ${check.km.toFixed(1)}km vs ${a.km} (${(check.deviation * 100).toFixed(0)}%)${loopDetail}${stationDetail}`);
 }
 
 console.log('\n━━━ internal-consistency flags (worst 25 by detour) ━━━');

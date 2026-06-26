@@ -13,7 +13,7 @@ Stack target: Vite + Svelte · Vitest (unit) · Playwright (E2E)
 - Pick a line → tap station A → tap station B → segment lights, km/% update (line-first model).
 - Attempt to tap two stations on DIFFERENT lines → app rejects/guides (no cross-line slice).
 - Mark a loop line (山手線 / 大阪環状線) → correct arc direction stored, km correct.
-- Import a real 乗りつぶしオンライン CSV → map fills, dedupe on (date+line+from+to), merge-vs-replace prompt.
+- Import a real 乗りつぶしオンライン CSV → map fills. Imported rows dedupe against **prior imports** on (ride date + segmentId), format-agnostic (`2025/6/1` = `2025-06-01`) — a re-imported overlapping export adds nothing — while a manual mark and an import of the same ride stay independent append-only records (neither silently shadows the other). Merge-vs-replace, and **replace is gated by an explicit confirm** (it wipes the whole ridelog).
 - Export CSV → clear browser data → re-import → identical state (round-trip).
 - Generate Wrapped card → font loaded before draw (no tofu) → share on iOS Safari without NotAllowedError.
 
@@ -28,12 +28,16 @@ Stack target: Vite + Svelte · Vitest (unit) · Playwright (E2E)
 - iOS Safari: share must be synchronous in the tap gesture (eager blob), or NotAllowedError.
 
 ## Critical Paths (must work end-to-end)
-`[E2E]` marks the target tier. The Playwright harness currently covers the zoom-tiered map LOD
-(`tests/e2e/map-lod.spec.ts`); these four record/import/share/durability flows are still planned E2E.
+`[E2E]` marks the target tier. The Playwright harness now covers the zoom-tiered map LOD
+(`tests/e2e/map-lod.spec.ts`), the search → route-picker → record flow incl. train-model capture
+(`route-picker.spec.ts`), the trip diary (`diary.spec.ts`), the China corridor
+(`china-corridor.spec.ts`), and the **import flow** (`import.spec.ts`: cold-start paste→stats coverage,
+and replace-mode routed through an explicit confirm). The share/durability E2E remain planned (share
+is unit-covered — see below).
 - First-run: empty map → pick line → mark first ride → % ticks up. [E2E]
-- Cold-start trust: import incumbent CSV → non-empty correct map. [E2E]
-- The flex: mark rides → generate + share Wrapped card. [E2E]
-- Durability: export → simulate clear-data → re-import recovers everything. [E2E]
+- Cold-start trust: import CSV → non-empty correct map. [E2E `import.spec.ts`]
+- The flex: mark rides → generate + share Wrapped card. (share path unit-covered: `wrapped/share.test.ts`)
+- Durability: export → simulate clear-data → re-import recovers everything. (round-trip unit-covered: `import/commit.test.ts`)
 
 ## Geometry Correctness (golden-file suite — the #1 risk)
 - Assert computed km ≈ published official length (within tolerance) for: 山手線 (loop), 東海道新幹線 (HSR), a single-operator branch line, a multi-segment private line.
@@ -59,10 +63,18 @@ E2E (Playwright) — a headless WebGL harness now exists (`@playwright/test`, `p
 against the production build via `vite preview` (`npm run test:e2e`). The first spec
 (`tests/e2e/map-lod.spec.ts`) drives the real map and asserts the zoom-tiered LOD: at the national view
 only the top tiers (Shinkansen + trunk lines) and ridden lines show, urban lines reveal on zoom-in, and
-ridden lines stay visible at every zoom. The 3 record-add flows (pick line → red → tap A,B; type Shibuya→infer→Shinjuku→record;
-type 新宿 7-line disambiguation) are still covered at the logic layer by the unit suites above; porting them
-onto the new harness is the next E2E step.
+ridden lines stay visible at every zoom. The station-search → route-picker → record flow is now an E2E
+(`route-picker.spec.ts` — incl. the cross-line 津→大阪難波 route, the "does NOT auto-pick while typing"
+regression, and train-model capture); the tap-A→B map-marking flow stays covered at the logic layer by
+the unit suites above.
+
+## Journey log + diary + train-model + China corridor (v0.8–0.9)
+Covered by Vitest unit suites + the Playwright harness:
+- **Append-only journey log** — `src/lib/db.test.ts` / `store.test.ts`: marking a ride you've already ridden appends a NEW dated trip (coverage % unchanged, deduped by segment); re-riding a route never rewrites the old trip; deterministic-id double-submit idempotency.
+- **Trip diary** — `src/lib/trips.test.ts`: trip grouping, summed distinct km, precomputed endpoints (a cross-line junction is collapsed by `stationGroupId` so a 津→大阪難波 trip reads its true origin/destination, not the longest leg). `[E2E]` `tests/e2e/diary.spec.ts`: a repeat journey shows as two dated rows + the captured train model.
+- **Train-model capture** — `src/lib/train-models.test.ts`: `canonicalizeTrainModel` folds N700S/N700s/N700S系 → one model; `KNOWN_TRAIN_MODELS`; `topSpeedKmh`. `[E2E]` `tests/e2e/route-picker.spec.ts`: tag a model on a recorded route → it surfaces on the diary with the true cross-line endpoints.
+- **China 京沪 corridor** — `src/lib/china-corridor.test.ts`: golden-file (WGS-84, 13 stations, km≈1241 vs published ~1318, never GCJ-02, CR-red/operator/pinyin metadata); multi-country indexing; CN coverage isolated from JP; per-country Wrapped %; degraded-banner when a saved ride's package didn't load. Package integrity (`store.boot.test.ts`): a wrong-country payload is rejected (a CN url serving a JP package never loads as CN), and a JP failure boots JP-only with no fake-CN fallback. `[E2E]` `tests/e2e/china-corridor.spec.ts` (4 flows): the **real-user record** (mark mode → search 北京南 → 上海虹桥 → record with a train model → 中国 stats + the model in the diary), a mobile per-country-cards check, the 中国 line-picker filter, and a seed-render smoke test.
 
 ## Not Yet Tested (deferred with their features)
 - Offline / service-worker caching (deferred to v1 with PWA tier).
-- Auto-import (QR/OCR/email-parse), gamification/badges, GPS check-in, community heatmap, China namespace — all deferred per design doc.
+- Auto-import (QR/OCR/email-parse), the full collection loop (badges, GPS check-in), community heatmap, broad China beyond the 京沪 corridor — deferred per design doc.

@@ -16,7 +16,7 @@ import type {
 } from '../contract/types';
 import { coverageWarnings, resolveCoverage, segmentsBetween, type CoverageWarning } from './resolver';
 import * as db from './db';
-import { STUB_PACKAGES } from '../fixtures/stubPackage';
+import { JP_PACKAGE } from '../fixtures/stubPackage';
 import { canonicalizeTrainModel } from './train-models';
 
 // ───────────────────────────────── state ────────────────────────────────────
@@ -172,32 +172,68 @@ export const litSegmentIds: Readable<string[]> = derived(coverages, ($coverages)
  * shows a 'network data unavailable, retrying' banner instead of presenting that as truth.
  */
 export const dataDegraded: Readable<boolean> = derived(
-  [usingFallback, events],
-  ([$usingFallback, $events]) => $usingFallback && $events.length > 0,
+  [usingFallback, events, geo],
+  ([$usingFallback, $events, $geo]) =>
+    ($usingFallback && $events.length > 0) ||
+    // a saved ride whose segment is in NO loaded package = a package (e.g. the CN corridor) failed
+    // to load, so that ride would silently read as 0 coverage. Surface it instead of hiding it.
+    $events.some((e) => !$geo.segmentById.has(e.segmentId)),
 );
 
 // ───────────────────────────────── actions ──────────────────────────────────
 
 let initialized = false;
 
-/** The built N02 RailGeoPackage, served as a static asset (built by pipeline/build-jp.ts). */
+/** Built RailGeoPackages, served as static assets (pipeline/build-jp.ts, build-cn.ts). */
 const JP_PACKAGE_URL = `${import.meta.env.BASE_URL}rail/jp-2025.json`;
+const CN_PACKAGE_URL = `${import.meta.env.BASE_URL}rail/cn-jinghu-2025.json`;
 
-/**
- * Fetch the real JP network package. Returns `{ ok:false, pkgs: STUB }` on any failure
- * (offline, 404, malformed) so the app always boots with SOMETHING rather than a blank map.
- */
-async function fetchJpPackages(): Promise<{ ok: boolean; pkgs: RailGeoPackage[] }> {
+// Cold-start guard: a stalled/flaky network must never hang the loading screen forever. After this
+// long we abort the fetch, degrade (JP fallback / CN-miss retry), and let `bindFallbackRetry` recover.
+const FETCH_TIMEOUT_MS = 15_000;
+
+/** Fetch one package, REJECTING a wrong-country payload; null on any failure (incl. timeout) so callers degrade. */
+async function fetchOne(url: string, expectedCountry: Country): Promise<RailGeoPackage | null> {
+  const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer =
+    ctl && typeof window !== 'undefined' ? window.setTimeout(() => ctl.abort(), FETCH_TIMEOUT_MS) : null;
   try {
-    const res = await fetch(JP_PACKAGE_URL);
+    const res = await fetch(url, ctl ? { signal: ctl.signal } : undefined);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const pkg = (await res.json()) as RailGeoPackage;
     if (!pkg?.lines?.length || !pkg?.segments?.length) throw new Error('empty package');
-    return { ok: true, pkgs: [pkg] };
+    // A swapped/poisoned artifact (the CN url serving a JP package, or vice-versa) must never load
+    // under the wrong namespace — that would strand or mis-count rides.
+    if (pkg.country !== expectedCountry) throw new Error(`expected ${expectedCountry}, got ${pkg.country}`);
+    if (pkg.crs !== 'WGS84') throw new Error(`non-WGS84 crs ${pkg.crs}`); // never accept GCJ-02
+    return pkg;
   } catch (err) {
-    console.warn(`[store] real JP package unavailable (${String(err)}); using stub`);
-    return { ok: false, pkgs: STUB_PACKAGES };
+    const reason = ctl?.signal.aborted ? `timed out after ${FETCH_TIMEOUT_MS}ms` : String(err);
+    console.warn(`[store] ${expectedCountry} package ${url} unavailable (${reason})`);
+    return null;
+  } finally {
+    if (timer !== null) window.clearTimeout(timer);
   }
+}
+
+/**
+ * Load the real network packages with PER-PACKAGE handling. JP is REQUIRED — its failure falls back
+ * to the stub so the app always boots with SOMETHING. The CN corridor is ADDITIVE: if it 404s or is
+ * malformed we boot JP-only rather than failing the whole map. `ok` reflects only the required JP load.
+ */
+async function fetchPackages(): Promise<{ ok: boolean; complete: boolean; pkgs: RailGeoPackage[] }> {
+  const [jp, cn] = await Promise.all([fetchOne(JP_PACKAGE_URL, 'JP'), fetchOne(CN_PACKAGE_URL, 'CN')]);
+  if (!jp) {
+    // JP-ONLY fallback — never seed a fake CN stub. The stub's CN ids don't match the real CN
+    // package, so a CN fallback would let a user "record" a China ride against mismatched ids that
+    // then strand on the real data. If CN itself fails, the same rule holds: JP-only + degraded.
+    console.warn('[store] real JP package unavailable; using JP-only stub (no CN fallback)');
+    return { ok: false, complete: false, pkgs: [JP_PACKAGE] };
+  }
+  if (!cn) console.warn('[store] CN corridor unavailable; booting JP-only (will retry on reconnect)');
+  // complete only when EVERY package loaded — a CN miss keeps the retry bound so a returning user's
+  // saved China rides aren't silently stranded as 0-coverage.
+  return { ok: true, complete: !!cn, pkgs: cn ? [jp, cn] : [jp] };
 }
 
 let retryBound = false;
@@ -219,12 +255,13 @@ function bindFallbackRetry(): void {
     if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
     retryInFlight = true;
     try {
-      const { ok, pkgs } = await fetchJpPackages();
+      const { ok, complete, pkgs } = await fetchPackages();
       if (ok) {
-        packages.set(pkgs);
+        packages.set(pkgs); // swap in whatever loaded (JP, or JP+CN); usingFallback clears off the stub
         usingFallback.set(false);
-        for (const ev of events) window.removeEventListener(ev, handler);
       }
+      // Only stop retrying once EVERY package is present — a JP-ok/CN-fail round keeps listening.
+      if (complete) for (const ev of events) window.removeEventListener(ev, handler);
     } finally {
       retryInFlight = false;
     }
@@ -237,10 +274,10 @@ function bindFallbackRetry(): void {
 export async function init(): Promise<void> {
   if (initialized) return;
   initialized = true;
-  const { ok, pkgs } = await fetchJpPackages();
+  const { ok, complete, pkgs } = await fetchPackages();
   packages.set(pkgs);
   usingFallback.set(!ok);
-  if (!ok) bindFallbackRetry();
+  if (!complete) bindFallbackRetry(); // retry until EVERY package is in (JP stub OR a missed CN corridor)
   await refresh();
   if (typeof window !== 'undefined') {
     const sync = (): void => offline.set(!navigator.onLine);
@@ -403,6 +440,17 @@ export async function replaceEvents(newEvents: RideEvent[]): Promise<void> {
 
 export async function removeImportBatch(importBatchId: string): Promise<void> {
   await db.deleteImportBatch(importBatchId);
+  await refresh();
+}
+
+/**
+ * Delete exactly these event ids — the precise undo for an import. Deleting by id (not by the
+ * content-derived importBatchId) means undo only ever removes the rows THIS commit wrote, never an
+ * older import that happened to hash to the same batch id.
+ */
+export async function removeEvents(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  await db.deleteEvents(ids);
   await refresh();
 }
 

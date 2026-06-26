@@ -2,6 +2,49 @@
 
 All notable changes to RailPrint are documented here.
 
+## [0.9.0.2] - 2026-06-26
+
+Hardening pass from a full-codebase audit: close real data-loss and trust holes in shipped code, backfill tests, and polish the rough UX edges.
+
+### Fixed (data-safety & correctness)
+- **Import "replace" could wipe the whole ridelog with no confirmation.** Replace mode now routes through an explicit, clearly-destructive confirm step (it names how many records will be deleted) before touching the log. Merge commits straight through.
+- **Overlapping imports silently duplicated diary entries.** Imported rows now dedupe against prior imports on (ride date + segmentId), format-agnostic (`2025/6/1` = `2025-06-01`), so re-importing an overlapping export adds nothing — while a manual mark and an import of the same ride stay independent records (append-only; neither silently shadows the other). Undo on an import deletes exactly the rows it wrote (by id), and a replace confirms but offers no undo (it can't restore a wiped log).
+- **Cold-start could hang forever on a stalled network.** Package fetches now time out (15s) and degrade to the JP-only fallback + retry instead of freezing the loading screen.
+- **Only 43% of lines had English names** despite the reading data being on disk — the build pipeline didn't carry line readings through. Now wired: line romaji coverage 43% → **87%** (515/594).
+- **iOS share contract was comment-only.** `shareCard` now guards that it received an eagerly-built non-empty Blob (a spent gesture throws NotAllowedError on iOS Safari otherwise), backed by tests.
+
+### Added (UX)
+- Undo on a success toast for both marking a ride and importing ("元に戻す").
+- Station search: a "該当する駅が見つかりません" message on no results, and Enter (pick first hit) / Escape (clear/exit) keyboard handling.
+- Import: a progress spinner during commit; the export button is disabled (not just toast-on-click) when there are no rides.
+- An offline strip on the stats/import screens (previously the offline signal was map-only, so importing offline failed silently).
+- A "京沪プレビュー" caption on the China stat card so its % reads as "of the preview corridor", not all-China.
+
+### Tests
+- New: `import/parse.test.ts` (fuzzy resolution, +13), `wrapped/share.test.ts` (iOS gesture safety, +9), `pipeline/verify-jp.test.ts` (golden-gate), `e2e/import.spec.ts` (cold-start + replace-confirm), a fetch-timeout boot test, and dedup regression tests in `import/commit.test.ts`. 238 → 269 unit tests; 10 → 12 E2E.
+
+## [0.9.0.1] - 2026-06-26
+
+Release-hardening: make the 0.9.0 claims true everywhere.
+
+### Fixed
+- **Mobile showed a blended "全国" card.** The phone map screen still summed Japan + China into one misleading "% national". All three stat surfaces (desktop side panel, mobile map, 統計) now share one `CountryStatCards` component, so they can't drift apart again — Japan's % is Japan's alone.
+- **The China corridor was buried under 594 JP lines.** The line picker gains a 日本 / 中国 country filter (Japan-first default) so 京沪高速铁路 is one tap away.
+- **Package integrity:** the loader rejects a wrong-country payload (a CN url serving a JP package never loads as CN), and there is no fake-CN fallback — if the corridor fails to load, the app runs Japan-only and flags saved China rides as degraded rather than stranding them silently.
+- Version files reconciled (VERSION + package.json + package-lock.json all at 0.9.0.1; the lock had lagged at 0.6.1.0).
+
+### Internal
+- A real-user China E2E (mark mode → search 北京南 → 上海虹桥 → record with a train model → 中国 stats + the model in the diary), plus mobile per-country and line-picker-filter E2Es; the direct-seed test stays as a render smoke test. Boot tests cover the wrong-country rejection and the no-fake-CN fallback.
+
+## [0.9.0.0] - 2026-06-25
+
+### Added
+- **The first China corridor: 京沪高速铁路 (Beijing–Shanghai HSR).** RailPrint now loads one real China line alongside Japan — proving the network model is country-agnostic, not Japan-shaped. It draws in CR red, is markable, and counts toward a separate 中国 coverage figure. Built from a curated, checked-in WGS-84 station extract (no GCJ-02, no Amap/Baidu); the geometry is a station-sequence polyline today, to be refined with OpenStreetMap track ways (ODbL) later.
+
+### Changed
+- **Stats are per-country now, never blended.** Loading China alongside Japan no longer turns "全国 %" into a misleading "% of Japan + China" — the headline %, the desktop side panel, and the Wrapped card all show Japan's figure on its own, and a separate 中国 card appears once you've ridden in China. Distance and prefecture totals stay cross-country sums.
+- **Boot loads both networks independently.** Japan is required (its failure still falls back to the offline sample); the China corridor is additive, so if it can't load you get Japan on its own rather than a broken map.
+
 ## [0.8.0.0] - 2026-06-25
 
 ### Added

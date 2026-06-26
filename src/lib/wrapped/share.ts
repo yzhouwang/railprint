@@ -28,6 +28,14 @@ export async function shareCard(
   filename: string,
   opts: ShareOpts = {},
 ): Promise<ShareOutcome> {
+  // Cheap, synchronous defensive guard. A caller that forgot to build the PNG
+  // eagerly inside the tap gesture (the iOS contract above) should fail loudly
+  // here instead of silently sharing/downloading an empty image. This is a sync
+  // check — it adds NO await before navigator.share, so the gesture stays alive.
+  if (!(blob instanceof Blob) || blob.size === 0) {
+    throw new Error('shareCard: expected a non-empty Blob built eagerly inside the tap gesture');
+  }
+
   const file = new File([blob], filename, { type: blob.type || 'image/png' });
 
   // Web Share with files — the preferred path on mobile. canShare({files}) gates it.

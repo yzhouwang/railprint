@@ -13,7 +13,7 @@
 
   import { onMount, tick } from 'svelte';
   import { get } from 'svelte/store';
-  import { packages, litSegmentIds, geo, events, markRide, markRoute } from '../lib/store';
+  import { packages, litSegmentIds, geo, events, markRide, markRoute, removeTrip } from '../lib/store';
   import { findRoutes } from '../lib/route';
   import Pill from '../components/Pill.svelte';
   import { KNOWN_TRAIN_MODELS } from '../lib/train-models';
@@ -114,6 +114,7 @@
     stationA = null;
     stationAName = null;
     markTrainModel = '';
+    pickerCountry = null;
     resetSearch();
   }
 
@@ -165,6 +166,14 @@
     }
     return groups;
   });
+
+  // The picker is Japan-first, but China must be reachable in one tap — not buried under 594 JP
+  // lines. A segmented country filter (shown only when >1 country is loaded) defaults to the first
+  // country (JP) and scopes the list to the selected one.
+  let pickerCountry = $state<string | null>(null);
+  const activeCountry = $derived(pickerCountry ?? lineGroups[0]?.country ?? 'JP');
+  const activeLines = $derived(lineGroups.find((g) => g.country === activeCountry)?.lines ?? []);
+  const countryLabel = (c: string): string => (c === 'JP' ? '日本' : c === 'CN' ? '中国' : c);
 
   // segment midpoints for the flood sweep — recomputed only when packages change.
   let midpoints = new Map<string, SegPoint>();
@@ -531,11 +540,14 @@
       // E1: every mark appends a new trip. "Newly lit" = the slice's segments not already
       // covered, so the coverage toast still reads as % gained; a full repeat says so plainly.
       const newlyLit = res.segmentIds.filter((id) => !before.has(id));
+      // Undo rolls back exactly the trip just appended (markRide returns its tripId; removeTrip
+      // deletes every event of that trip). Longer ttl so the undo is actually reachable.
+      const undo = { label: '元に戻す', fn: () => void removeTrip(res.tripId) };
       if (newlyLit.length === 0) {
-        toast(`もう一度記録しました（${res.sliceLength}区間）`, 'success');
+        toast(`もう一度記録しました（${res.sliceLength}区間）`, 'success', 6000, undo);
       } else {
         const km = kmOf(newlyLit);
-        toast(`区間を記録しました（+${newlyLit.length}区間 / +${km.toFixed(1)} km）`, 'success');
+        toast(`区間を記録しました（+${newlyLit.length}区間 / +${km.toFixed(1)} km）`, 'success', 6000, undo);
       }
       pulse(res.segmentIds);
       markTrainModel = '';
@@ -598,6 +610,36 @@
     queryB = (e.target as HTMLInputElement).value;
     selectedLine = null;
     void resolveInto('B', queryB);
+  }
+
+  // Enter selects the FIRST hit (same as clicking the top `.hit`); Escape clears this field's
+  // query — or, if it's already empty, exits search/mark mode cleanly. Keeps the oninput-driven
+  // search intact; we only intercept these two keys.
+  function onSearchKey(which: 'A' | 'B', e: KeyboardEvent): void {
+    if (e.key === 'Enter') {
+      const hits = which === 'A' ? hitsA : hitsB;
+      if (hits.length > 0) {
+        e.preventDefault();
+        pickHit(which, hits[0]);
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      const query = which === 'A' ? queryA : queryB;
+      if (query) {
+        // clear just this field's query + its hit list; nothing else changes.
+        if (which === 'A') {
+          queryA = '';
+          hitsA = [];
+        } else {
+          queryB = '';
+          hitsB = [];
+        }
+        selectedLine = null;
+      } else {
+        // already empty — exit mark mode (resetMarking() runs off the markMode subscription).
+        markMode.set(false);
+      }
+    }
   }
 
   function pickHit(which: 'A' | 'B', hit: StationHit): void {
@@ -671,11 +713,13 @@
       // E1: the route is always recorded as a new trip. Report newly-lit coverage; a full
       // repeat (every leg already ridden) says so instead of dead-ending.
       const newlyLit = r.segmentIds.filter((id) => !before.has(id));
+      // Undo rolls back exactly the trip just appended (markRoute returns its tripId). Longer ttl.
+      const undo = { label: '元に戻す', fn: () => void removeTrip(res.tripId) };
       if (newlyLit.length === 0) {
-        toast(`もう一度記録しました（${r.segmentIds.length}区間 / ${res.totalKm.toFixed(1)} km）`, 'success');
+        toast(`もう一度記録しました（${r.segmentIds.length}区間 / ${res.totalKm.toFixed(1)} km）`, 'success', 6000, undo);
       } else {
         const km = kmOf(newlyLit);
-        toast(`経路を記録しました（+${newlyLit.length}区間 / +${km.toFixed(1)} km）`, 'success');
+        toast(`経路を記録しました（+${newlyLit.length}区間 / +${km.toFixed(1)} km）`, 'success', 6000, undo);
       }
       pulse(r.segmentIds);
       markTrainModel = '';
@@ -838,16 +882,27 @@
       {#if entryMode === 'tap'}
         {#if !selectedLine}
           <p class="mark-title">路線を選択</p>
-          <div class="line-list">
-            {#each lineGroups as group (group.country)}
-              {#each group.lines as line (line.lineId)}
-                <button class="line-chip" onclick={() => pickLine(line)}>
-                  {@render companyTag(line)}
-                  {@render lineMark(line)}
-                  <span class="line-name" title={bilingualLabel(line.name, line.nameRoma)}>{bilingualLabel(line.name, line.nameRoma)}</span>
-                  {#if line.isHSR}<span class="hsr">新幹線</span>{/if}
-                </button>
+          {#if lineGroups.length > 1}
+            <div class="country-tabs" role="tablist" aria-label="国で絞り込み">
+              {#each lineGroups as group (group.country)}
+                <button
+                  class="country-tab"
+                  class:active={activeCountry === group.country}
+                  role="tab"
+                  aria-selected={activeCountry === group.country}
+                  onclick={() => (pickerCountry = group.country)}
+                >{countryLabel(group.country)}</button>
               {/each}
+            </div>
+          {/if}
+          <div class="line-list">
+            {#each activeLines as line (line.lineId)}
+              <button class="line-chip" onclick={() => pickLine(line)}>
+                {@render companyTag(line)}
+                {@render lineMark(line)}
+                <span class="line-name" title={bilingualLabel(line.name, line.nameRoma)}>{bilingualLabel(line.name, line.nameRoma)}</span>
+                {#if line.isHSR}<span class="hsr">新幹線</span>{/if}
+              </button>
             {/each}
           </div>
         {:else}
@@ -880,6 +935,7 @@
               placeholder="例: 新宿 / Shinjuku / しんじゅく"
               value={queryA}
               oninput={onQueryA}
+              onkeydown={(e) => onSearchKey('A', e)}
               autocomplete="off"
             />
             {#if hitsA.length >= 1}
@@ -893,6 +949,9 @@
                   </li>
                 {/each}
               </ul>
+            {:else if queryA.trim()}
+              <!-- typed but zero matches — distinct from the neutral not-yet-typed empty state. -->
+              <p class="no-hit" role="status">該当する駅が見つかりません</p>
             {/if}
           {/if}
         </div>
@@ -912,6 +971,7 @@
               placeholder="例: 渋谷 / Shibuya"
               value={queryB}
               oninput={onQueryB}
+              onkeydown={(e) => onSearchKey('B', e)}
               autocomplete="off"
             />
             {#if hitsB.length >= 1}
@@ -925,6 +985,9 @@
                   </li>
                 {/each}
               </ul>
+            {:else if queryB.trim()}
+              <!-- typed but zero matches — distinct from the neutral not-yet-typed empty state. -->
+              <p class="no-hit" role="status">該当する駅が見つかりません</p>
             {/if}
           {/if}
         </div>
@@ -1058,6 +1121,29 @@
     margin-bottom: var(--space-sm);
     text-transform: none;
     letter-spacing: 0.02em;
+  }
+  /* Country filter — one tap to China so the corridor isn't buried under 594 JP lines. */
+  .country-tabs {
+    display: flex;
+    gap: var(--space-xs);
+    margin-bottom: var(--space-sm);
+  }
+  .country-tab {
+    flex: 1;
+    min-height: 40px;
+    padding: 0 var(--space-md);
+    border: 1px solid var(--rail-dim);
+    border-radius: var(--radius-button);
+    background: var(--white);
+    color: var(--ink-muted);
+    font-size: var(--size-label);
+    font-weight: var(--weight-label);
+    cursor: pointer;
+  }
+  .country-tab.active {
+    background: var(--rail-text);
+    color: var(--white);
+    border-color: var(--rail-text);
   }
   .line-list {
     display: flex;
@@ -1304,6 +1390,12 @@
     overflow-y: auto;
     border: 1px solid var(--rail-dim);
     border-radius: var(--radius-button);
+  }
+  /* Typed-but-no-match notice — muted, distinct from the neutral not-yet-typed empty state. */
+  .no-hit {
+    margin: var(--space-xs) 0 0;
+    font-size: var(--size-label);
+    color: var(--ink-muted);
   }
   .hit {
     display: flex;

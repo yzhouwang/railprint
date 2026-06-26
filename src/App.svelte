@@ -8,7 +8,7 @@
   import Toasts from './components/Toasts.svelte';
   import OfflineOverlay from './components/OfflineOverlay.svelte';
   import EmptyState from './components/EmptyState.svelte';
-  import StatCard from './components/StatCard.svelte';
+  import CountryStatCards from './components/CountryStatCards.svelte';
   import Icon, { type IconName } from './components/Icon.svelte';
 
   import MapView from './screens/MapView.svelte';
@@ -59,10 +59,7 @@
         {:else if $activeTab === 'import'}
           <ImportScreen />
         {:else}
-          <StatCard pct={$headline.pctNational} riddenKm={$headline.riddenKm} caption="全国" />
-          {#if $headline.hsrTotalKm > 0}
-            <StatCard label="新幹線" pct={$headline.pctHSR} riddenKm={$headline.hsrRiddenKm} caption="高速鉄道" />
-          {/if}
+          <CountryStatCards />
           <p class="hint u-muted">路線を選び、地図上で駅Aと駅Bをタップして記録します。</p>
         {/if}
       </div>
@@ -103,6 +100,13 @@
   </div>
 {/if}
 
+<!-- The map has its own OfflineOverlay; the stats/import screens had no offline signal at all,
+     so importing while offline silently failed. Surface a strip there (skip when degraded already
+     shows the stronger message, and skip the map tab which has the overlay). -->
+{#if $ready && $offline && !$dataDegraded && $activeTab !== 'map'}
+  <div class="offline-strip" role="status">オフライン — データの取得は接続が戻ると再開します。</div>
+{/if}
+
 <Toasts />
 
 <style>
@@ -131,6 +135,18 @@
     text-align: center;
     font-size: var(--size-label);
     background: var(--rail-text);
+    color: var(--white);
+  }
+  .offline-strip {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 60;
+    padding: 8px var(--space-md);
+    text-align: center;
+    font-size: var(--size-label);
+    background: var(--ink);
     color: var(--white);
   }
 
