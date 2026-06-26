@@ -270,6 +270,115 @@ function bindFallbackRetry(): void {
   for (const ev of events) window.addEventListener(ev, handler);
 }
 
+// ── N→N+1 geometry migration ────────────────────────────────────────────────────────────────
+// When a package version bumps and its segmentIds changed (the Phase-0 scheme change is the first
+// such), a returning user's events still pin the OLD ids. The build ships an old→new map per
+// version step; here we replay the chain to re-point events IN PLACE (id stays stable, coverage
+// keys on segmentId). NON-BLOCKING: runs after `ready`, off the first-paint path; a map that can't
+// load (offline / 404) leaves events untouched (the degraded banner covers it) and retries online.
+const MANIFEST_URL = `${import.meta.env.BASE_URL}rail/manifest.json`;
+
+interface MigrationStep { fromVersion: string; toVersion: string; path: string }
+interface Manifest {
+  packages: Record<string, { version: string; path: string; migrations: MigrationStep[] }>;
+}
+
+/** Ordered migration steps that carry `fromVersion` up to some loaded package's current version. */
+function migrationChain(manifest: Manifest, fromVersion: string): MigrationStep[] | null {
+  for (const pkg of Object.values(manifest.packages)) {
+    if (pkg.version === fromVersion) return []; // already current — nothing to do
+    const byFrom = new Map(pkg.migrations.map((m) => [m.fromVersion, m]));
+    const steps: MigrationStep[] = [];
+    let cur = fromVersion;
+    while (cur !== pkg.version) {
+      const step = byFrom.get(cur);
+      if (!step) break; // chain broke — not this package
+      steps.push(step);
+      cur = step.toVersion;
+    }
+    if (cur === pkg.version && steps.length) return steps;
+  }
+  return null; // no package can migrate this version (truly unknown — leave it; surfaces via warnings)
+}
+
+let migrationRetryBound = false;
+function bindMigrationRetry(pkgs: RailGeoPackage[]): void {
+  if (migrationRetryBound || typeof window === 'undefined') return;
+  migrationRetryBound = true;
+  const handler = (): void => {
+    migrationRetryBound = false;
+    window.removeEventListener('online', handler);
+    void migrateEventsIfNeeded(pkgs);
+  };
+  window.addEventListener('online', handler);
+}
+
+async function migrateEventsIfNeeded(pkgs: RailGeoPackage[]): Promise<void> {
+  if (typeof fetch === 'undefined') return;
+  const evs = get(events);
+  const current = new Set(pkgs.map((p) => p.version));
+  const stale = evs.filter((e) => !current.has(e.railGeoVersion));
+  if (stale.length === 0) return;
+
+  let manifest: Manifest;
+  try {
+    const res = await fetch(MANIFEST_URL);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    manifest = (await res.json()) as Manifest;
+  } catch (err) {
+    console.warn(`[store] migration manifest unavailable (${String(err)}); retrying on reconnect`);
+    bindMigrationRetry(pkgs);
+    return;
+  }
+
+  const mapCache = new Map<string, Record<string, string> | null>();
+  const segmentIdMap = async (path: string): Promise<Record<string, string> | null> => {
+    if (mapCache.has(path)) return mapCache.get(path)!;
+    let map: Record<string, string> | null = null;
+    try {
+      const res = await fetch(`${import.meta.env.BASE_URL}${path}`);
+      if (res.ok) map = ((await res.json()) as { segmentIdMap: Record<string, string> }).segmentIdMap ?? {};
+    } catch {
+      map = null;
+    }
+    mapCache.set(path, map);
+    return map;
+  };
+
+  const migrated: RideEvent[] = [];
+  let deferred = false; // a map didn't load → retry online, don't lose the migration
+  for (const ev of stale) {
+    const chain = migrationChain(manifest, ev.railGeoVersion);
+    if (!chain || chain.length === 0) continue;
+    let segId = ev.segmentId;
+    let version = ev.railGeoVersion;
+    let broke = false;
+    for (const step of chain) {
+      const map = await segmentIdMap(step.path);
+      if (map === null) { deferred = true; broke = true; break; } // transient — keep, retry
+      const next = map[segId];
+      if (next === undefined) { broke = true; break; } // unmapped (abolished segment) → orphan, leave as-is
+      segId = next;
+      version = step.toVersion;
+    }
+    if (broke) continue;
+    if (segId !== ev.segmentId || version !== ev.railGeoVersion) {
+      migrated.push({
+        ...ev,
+        segmentId: segId,
+        originalSegmentId: ev.originalSegmentId ?? ev.segmentId, // set ONCE — first-ever id
+        railGeoVersion: version,
+      });
+    }
+  }
+
+  if (migrated.length > 0) {
+    await db.putEvents(migrated); // bulkPut overwrites in place by the stable id; idempotent re-run is a no-op
+    await refresh(); // coverage self-heals on the new segmentIds
+  }
+  if (deferred) bindMigrationRetry(pkgs);
+}
+
 /** Boot the app: open db, load events + the real (or fallback) packages. Idempotent. */
 export async function init(): Promise<void> {
   if (initialized) return;
@@ -284,7 +393,8 @@ export async function init(): Promise<void> {
     window.addEventListener('online', sync);
     window.addEventListener('offline', sync);
   }
-  ready.set(true);
+  ready.set(true);                  // render immediately (non-blocking)
+  void migrateEventsIfNeeded(pkgs); // re-point any version-stale events off the first-paint path
 }
 
 /** Swap in explicit RailGeoPackage(s) — used by tests and the importer's package override. */

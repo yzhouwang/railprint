@@ -80,9 +80,10 @@ export interface RailStation {
 export type RideSource = 'manual' | 'import' | 'corridor';
 
 export interface RideEvent {
-  id: string;            // uuid
-  segmentId: string;
-  railGeoVersion: string; // pin — resolver warns/migrates on mismatch
+  id: string;            // uuid (kept STABLE across a geo-version migration — coverage keys on segmentId, not id)
+  segmentId: string;     // remapped in place by a railGeoVersion migration; coverage derives from THIS
+  originalSegmentId?: string; // the FIRST-EVER segmentId, set once on the first migration — reversibility audit
+  railGeoVersion: string; // pin — bumped to the package version once an N→N+1 migration remaps this event
   date?: string;         // ISO date; OPTIONAL (undated imports still count to coverage)
   trainModel?: string;
   source: RideSource;

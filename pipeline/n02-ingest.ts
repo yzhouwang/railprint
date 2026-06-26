@@ -66,6 +66,7 @@ interface OperatorResolution {
 }
 
 export interface RawLine {
+  rawOperator: string;
   operator: string;
   operatorId: string;
   name: string;
@@ -81,6 +82,14 @@ const lineKey = (op: string, name: string): string => `${op}\u0000${name}`;
 // sanity checks resolve lines by the SAME scheme (no drift between two slug implementations).
 export function lineId(op: string, name: string): string {
   return `jp-${resolveOperator(op).operatorId}-${name}`.replace(/[\s:]+/g, '');
+}
+
+export function legacyLineId(rawOperator: string, name: string): string {
+  return `jp-${rawOperator}-${name}`.replace(/[\s:]+/g, '');
+}
+
+export function legacyPositionalSegmentId(lineId: string, fromSeq: number, toSeq: number): string {
+  return `${lineId}:${fromSeq}-${toSeq}`;
 }
 
 function parseOperatorFreeze(): Map<string, OperatorResolution> {
@@ -125,7 +134,7 @@ export function groupN02(railSections: N02FC, stations: N02FC): RawLine[] {
     const k = lineKey(resolved.operatorId, name);
     let l = lines.get(k);
     if (!l) {
-      l = { operator: resolved.canonicalName, operatorId: resolved.operatorId, name, n02_002, sections: [], stations: [] };
+      l = { rawOperator: op, operator: resolved.canonicalName, operatorId: resolved.operatorId, name, n02_002, sections: [], stations: [] };
       lines.set(k, l);
     }
     return l;
@@ -418,7 +427,14 @@ interface BuiltLine {
   stations: RailStation[];
   bridgedKm: number;
   identity: { operatorId: string; name: string; minGroupCode: string };
+  legacyLineId: string;
   usedSegmentGroupTiebreaker: boolean;
+}
+
+export interface SegmentIdMigrationDraft {
+  lineIdMap: Record<string, string>;
+  segmentIdMap: Record<string, string>;
+  unmapped: string[];
 }
 
 // Total length of the synthetic (bridge) intervals overlapping [fromKm, toKm].
@@ -649,6 +665,7 @@ function buildLine(raw: RawLine, country: Country, readings?: ReadingOptions): B
     stations,
     bridgedKm: Math.round(bridgedKm * 1000) / 1000,
     identity: { operatorId: raw.operatorId, name: raw.name, minGroupCode },
+    legacyLineId: legacyLineId(raw.rawOperator, raw.name),
     usedSegmentGroupTiebreaker: usedTiebreaker,
   };
 }
@@ -730,8 +747,33 @@ function remapBuiltLineId(built: BuiltLine, newId: string): void {
   assertUniqueSegmentIds(newId, built.segments);
 }
 
+function setMapEntry(map: Record<string, string>, from: string, to: string, label: string): void {
+  const existing = map[from];
+  if (existing && existing !== to) throw new Error(`${label} collision: ${from} maps to both ${existing} and ${to}`);
+  map[from] = to;
+}
+
+function buildSegmentIdMigrationDraft(builtLines: BuiltLine[]): SegmentIdMigrationDraft {
+  const lineIdMap: Record<string, string> = {};
+  const segmentIdMap: Record<string, string> = {};
+  for (const built of builtLines) {
+    if (built.legacyLineId !== built.line.lineId) {
+      setMapEntry(lineIdMap, built.legacyLineId, built.line.lineId, 'legacy lineId');
+    }
+    for (const segment of built.segments) {
+      const oldSegmentId = legacyPositionalSegmentId(built.legacyLineId, segment.fromSeq, segment.toSeq);
+      if (oldSegmentId === segment.segmentId) {
+        throw new Error(`legacy segmentId did not change: ${oldSegmentId}`);
+      }
+      setMapEntry(segmentIdMap, oldSegmentId, segment.segmentId, 'legacy segmentId');
+    }
+  }
+  return { lineIdMap, segmentIdMap, unmapped: [] };
+}
+
 export function buildPackageFromN02(railSections: N02FC, stations: N02FC, opts: IngestOptions): {
   pkg: RailGeoPackage;
+  migrationDraft: SegmentIdMigrationDraft;
   stats: {
     totalLines: number;
     built: number;
@@ -792,8 +834,17 @@ export function buildPackageFromN02(railSections: N02FC, stations: N02FC, opts: 
     version: opts.version, generatedAt: opts.generatedAt, crs: 'WGS84', country: opts.country,
     lines, segments, stations: stas,
   };
+  const migrationDraft = buildSegmentIdMigrationDraft(builtLines);
+  if (Object.keys(migrationDraft.segmentIdMap).length !== segments.length) {
+    throw new Error(`segment migration is not exhaustive: ${Object.keys(migrationDraft.segmentIdMap).length}/${segments.length}`);
+  }
+  const newSegmentIds = new Set(segments.map((segment) => segment.segmentId));
+  for (const newSegmentId of Object.values(migrationDraft.segmentIdMap)) {
+    if (!newSegmentIds.has(newSegmentId)) throw new Error(`segment migration points to missing segmentId: ${newSegmentId}`);
+  }
   return {
     pkg,
+    migrationDraft,
     stats: {
       totalLines: raws.length,
       built,

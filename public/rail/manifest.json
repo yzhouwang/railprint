@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "packages": {
+    "JP": {
+      "version": "2025.2.0",
+      "path": "rail/jp-2025.json",
+      "migrations": [
+        {
+          "fromVersion": "2025.1.0",
+          "toVersion": "2025.2.0",
+          "path": "rail/migrations/jp/2025.1.0-to-2025.2.0.json"
+        }
+      ]
+    },
+    "CN": {
+      "version": "2025.1.0",
+      "path": "rail/cn-jinghu-2025.json",
+      "migrations": []
+    }
+  }
+}

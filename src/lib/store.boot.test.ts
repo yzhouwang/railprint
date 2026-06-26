@@ -128,3 +128,73 @@ describe('init() package fetch + fallback', () => {
     vi.useRealTimers();
   });
 });
+
+describe('N→N+1 geometry migration (GOLDEN: coverage preserved across a version bump)', () => {
+  beforeEach(() => { vi.resetModules(); });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  const OLD_SEG = 'x:0-1';
+  const NEW_SEG = 'x:00100g-00101g';
+  // v2 of the same JP package: the SAME physical segment, new group-pair id, version advanced.
+  const v2Pkg: RailGeoPackage = { ...realPkg, version: '2025.2.0', segments: [{ ...realPkg.segments[0], segmentId: NEW_SEG }] };
+  const manifest = {
+    packages: {
+      JP: {
+        version: '2025.2.0', path: 'rail/jp-2025.json',
+        migrations: [{ fromVersion: '2025.1.0', toVersion: '2025.2.0', path: 'rail/migrations/jp/2025.1.0-to-2025.2.0.json' }],
+      },
+    },
+  };
+  const map = { fromVersion: '2025.1.0', toVersion: '2025.2.0', segmentIdMap: { [OLD_SEG]: NEW_SEG } };
+  const stubFetch = (mapResp: { ok: boolean; status?: number }) =>
+    vi.fn(async (url: string) => {
+      if (String(url).includes('manifest')) return { ok: true, json: async () => manifest };
+      if (String(url).includes('/migrations/')) return { ...mapResp, json: async () => map };
+      return { ok: true, json: async () => v2Pkg }; // jp + cn urls → v2 (cn rejected by the country guard)
+    });
+
+  it('re-points an event pinned to the old version+id; coverage self-heals, original id preserved', async () => {
+    vi.stubGlobal('fetch', stubFetch({ ok: true }));
+    const store = await import('./store');
+    await store.clearAllRides();
+    // a returning user's event: pinned to 2025.1.0 with the OLD positional id.
+    await store.addEvents([{ id: 'e1', segmentId: OLD_SEG, railGeoVersion: '2025.1.0', source: 'manual', tripId: 't1', createdAt: 't' }]);
+    await store.init();
+    await vi.waitFor(() => {
+      expect(get(store.events).find((e) => e.id === 'e1')?.segmentId).toBe(NEW_SEG); // async migration landed
+    });
+    const e = get(store.events).find((x) => x.id === 'e1')!;
+    expect(e.segmentId).toBe(NEW_SEG);           // re-pointed to the new id
+    expect(e.originalSegmentId).toBe(OLD_SEG);   // first-ever id recorded (reversibility)
+    expect(e.railGeoVersion).toBe('2025.2.0');   // version advanced
+    expect(e.id).toBe('e1');                     // primary key UNCHANGED — coverage keys on segmentId
+    expect(get(store.dataDegraded)).toBe(false); // the ride RESOLVES — coverage was NOT silently lost
+    await store.clearAllRides();
+  });
+
+  it('is idempotent — a second boot does not re-migrate (event already at target version)', async () => {
+    vi.stubGlobal('fetch', stubFetch({ ok: true }));
+    const store = await import('./store');
+    await store.clearAllRides();
+    await store.addEvents([{ id: 'e1', segmentId: NEW_SEG, originalSegmentId: OLD_SEG, railGeoVersion: '2025.2.0', source: 'manual', tripId: 't1', createdAt: 't' }]);
+    await store.init();
+    await new Promise((r) => setTimeout(r, 0));
+    const e = get(store.events).find((x) => x.id === 'e1')!;
+    expect(e.originalSegmentId).toBe(OLD_SEG); // untouched — already current, not re-migrated
+    expect(e.segmentId).toBe(NEW_SEG);
+    await store.clearAllRides();
+  });
+
+  it('OFFLINE/404 migration map: events left intact (no silent loss), not mutated', async () => {
+    vi.stubGlobal('fetch', stubFetch({ ok: false, status: 404 }));
+    const store = await import('./store');
+    await store.clearAllRides();
+    await store.addEvents([{ id: 'e1', segmentId: OLD_SEG, railGeoVersion: '2025.1.0', source: 'manual', tripId: 't1', createdAt: 't' }]);
+    await store.init();
+    await new Promise((r) => setTimeout(r, 0));
+    const e = get(store.events).find((x) => x.id === 'e1')!;
+    expect(e.segmentId).toBe(OLD_SEG);          // NOT mutated — the map could not load
+    expect(e.railGeoVersion).toBe('2025.1.0');  // still old (degraded, will retry online — never silently dropped)
+    await store.clearAllRides();
+  });
+});

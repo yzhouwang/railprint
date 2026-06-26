@@ -9,7 +9,7 @@ const BLANK_PNG = Buffer.from(
   'base64',
 );
 
-const SEG = 'jp-東日本旅客鉄道-山手線:0-1'; // a real segment in the shipped JP package
+const SEG = 'jp-東日本旅客鉄道-山手線:004095-004135'; // a real segment in the shipped JP package
 
 async function seedTwoTrips(page: Page): Promise<void> {
   await page.evaluate(async (seg) => {

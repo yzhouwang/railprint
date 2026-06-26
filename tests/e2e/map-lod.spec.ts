@@ -11,9 +11,9 @@ import { test, expect, type Page } from '@playwright/test';
 
 const VERSION = '2025.1.0';
 const RIDDEN_YAMANOTE = [
-  'jp-東日本旅客鉄道-山手線:0-1',
-  'jp-東日本旅客鉄道-山手線:1-2',
-  'jp-東日本旅客鉄道-山手線:2-3',
+  'jp-東日本旅客鉄道-山手線:004095-004135',
+  'jp-東日本旅客鉄道-山手線:004135-004110',
+  'jp-東日本旅客鉄道-山手線:004110-004072',
 ];
 
 type RenderedSeg = { segmentId: string; minz: number };

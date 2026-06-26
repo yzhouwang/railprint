@@ -75,7 +75,7 @@ test('SMOKE: a seeded China ride loads the corridor and shows the per-country �
 
 test('REAL FLOW: search 北京南 → 上海虹桥, record with a train model, see 中国 stats + the model in the diary', async ({ page }) => {
   // Seed a JP ride first so the map (and the mark FAB) is reachable — a Japan rider adding China.
-  await enterSearchMode(page, 'jp-東日本旅客鉄道-山手線:0-1');
+  await enterSearchMode(page, 'jp-東日本旅客鉄道-山手線:004095-004135');
 
   // Search two China stations by name and pick them.
   await page.locator('#rp-q-a').fill('北京南');
@@ -106,7 +106,7 @@ test('MOBILE: per-country cards (never a blended 全国) on the mobile map scree
     null,
     { timeout: 20_000 },
   );
-  await seedRide(page, 'jp-東日本旅客鉄道-山手線:0-1'); // a Japan ride
+  await seedRide(page, 'jp-東日本旅客鉄道-山手線:004095-004135'); // a Japan ride
   await seedRide(page, CN_SEG); // and a China ride
   await page.reload();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -120,7 +120,7 @@ test('MOBILE: per-country cards (never a blended 全国) on the mobile map scree
 });
 
 test('DISCOVERABLE: the line picker has a 中国 filter that surfaces 京沪高速铁路 in one tap', async ({ page }) => {
-  await enterSearchMode(page, 'jp-東日本旅客鉄道-山手線:0-1');
+  await enterSearchMode(page, 'jp-東日本旅客鉄道-山手線:004095-004135');
   // back to the default tap-mode picker, where the country filter lives
   await page.getByRole('tab', { name: '地図でタップ' }).click();
   await expect(page.getByRole('tab', { name: '中国' })).toBeVisible({ timeout: 15_000 });
