@@ -8,6 +8,16 @@ Mode: Builder
 
 > Working name **RailPrint** is a placeholder. Other candidates surfaced in research: *RailLog*, *Norimap*, *乗りつぶしマップ*. Rename freely.
 
+## Build Status (as of v0.9.0.0, 2026-06-26)
+
+This doc is the original /office-hours design record; the sections below capture the vision and the
+v0 plan. What has actually shipped since:
+
+- **Shipped (v0.x):** the static web app + real MLIT N02 national network (594 lines, ~10k stations) in official color + logos + operating-company labels + bilingual names; the zoom-tiered map; line-first **and** station-search marking with **cross-line route-finding** (a 特急ひのとり 津→大阪難波 through-service is one trip); CSV import/export; the Wrapped share card.
+- **Shipped (v0.8 — the narrative layer):** the ride log is now an **append-only journey log** (repeat rides record new dated trips; coverage % still dedupes); a **旅の記録 trip diary**; and **train-model capture** (the first of the "gamified collection" axis — N700S, CR400AF, …, canonicalized).
+- **Shipped (v0.9 — Japan + China):** the **京沪高速铁路** corridor proves the country-agnostic schema (WGS-84, no GCJ-02) — multi-package boot, and **per-country stats** so the Japan % is never blended with China.
+- **Still deferred:** offline/PWA, auto-import (QR/OCR/email-parse), the rest of the collection loop (badges, GPS check-in), community heatmap, broad China beyond the 京沪 corridor, the standalone `rail-geo` package, any backend.
+
 ## Problem Statement
 
 A rail fan has no good way to do for trains what 航旅纵横 (Umetrip) "我的航线" and Flightradar24's MyFlightradar do for flights: log which railway line **segments** (乘车区间) you've personally ridden, see them lit up on a map in **real track geometry**, and watch a running **total km + % of the network completed**, with a Spotify-Wrapped-style annual share card. The user wants this for **Japan + China**, built **open-source for the rail-fan community** (乗り鉄 / 高铁打卡), where the line data is a shared asset and distribution is the community itself.
