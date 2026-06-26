@@ -114,6 +114,7 @@
     stationA = null;
     stationAName = null;
     markTrainModel = '';
+    pickerCountry = null;
     resetSearch();
   }
 
@@ -165,6 +166,14 @@
     }
     return groups;
   });
+
+  // The picker is Japan-first, but China must be reachable in one tap — not buried under 594 JP
+  // lines. A segmented country filter (shown only when >1 country is loaded) defaults to the first
+  // country (JP) and scopes the list to the selected one.
+  let pickerCountry = $state<string | null>(null);
+  const activeCountry = $derived(pickerCountry ?? lineGroups[0]?.country ?? 'JP');
+  const activeLines = $derived(lineGroups.find((g) => g.country === activeCountry)?.lines ?? []);
+  const countryLabel = (c: string): string => (c === 'JP' ? '日本' : c === 'CN' ? '中国' : c);
 
   // segment midpoints for the flood sweep — recomputed only when packages change.
   let midpoints = new Map<string, SegPoint>();
@@ -838,16 +847,27 @@
       {#if entryMode === 'tap'}
         {#if !selectedLine}
           <p class="mark-title">路線を選択</p>
-          <div class="line-list">
-            {#each lineGroups as group (group.country)}
-              {#each group.lines as line (line.lineId)}
-                <button class="line-chip" onclick={() => pickLine(line)}>
-                  {@render companyTag(line)}
-                  {@render lineMark(line)}
-                  <span class="line-name" title={bilingualLabel(line.name, line.nameRoma)}>{bilingualLabel(line.name, line.nameRoma)}</span>
-                  {#if line.isHSR}<span class="hsr">新幹線</span>{/if}
-                </button>
+          {#if lineGroups.length > 1}
+            <div class="country-tabs" role="tablist" aria-label="国で絞り込み">
+              {#each lineGroups as group (group.country)}
+                <button
+                  class="country-tab"
+                  class:active={activeCountry === group.country}
+                  role="tab"
+                  aria-selected={activeCountry === group.country}
+                  onclick={() => (pickerCountry = group.country)}
+                >{countryLabel(group.country)}</button>
               {/each}
+            </div>
+          {/if}
+          <div class="line-list">
+            {#each activeLines as line (line.lineId)}
+              <button class="line-chip" onclick={() => pickLine(line)}>
+                {@render companyTag(line)}
+                {@render lineMark(line)}
+                <span class="line-name" title={bilingualLabel(line.name, line.nameRoma)}>{bilingualLabel(line.name, line.nameRoma)}</span>
+                {#if line.isHSR}<span class="hsr">新幹線</span>{/if}
+              </button>
             {/each}
           </div>
         {:else}
@@ -1058,6 +1078,29 @@
     margin-bottom: var(--space-sm);
     text-transform: none;
     letter-spacing: 0.02em;
+  }
+  /* Country filter — one tap to China so the corridor isn't buried under 594 JP lines. */
+  .country-tabs {
+    display: flex;
+    gap: var(--space-xs);
+    margin-bottom: var(--space-sm);
+  }
+  .country-tab {
+    flex: 1;
+    min-height: 40px;
+    padding: 0 var(--space-md);
+    border: 1px solid var(--rail-dim);
+    border-radius: var(--radius-button);
+    background: var(--white);
+    color: var(--ink-muted);
+    font-size: var(--size-label);
+    font-weight: var(--weight-label);
+    cursor: pointer;
+  }
+  .country-tab.active {
+    background: var(--rail-text);
+    color: var(--white);
+    border-color: var(--rail-text);
   }
   .line-list {
     display: flex;
