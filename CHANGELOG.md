@@ -2,6 +2,27 @@
 
 All notable changes to RailPrint are documented here.
 
+## [0.9.0.2] - 2026-06-26
+
+Hardening pass from a full-codebase audit: close real data-loss and trust holes in shipped code, backfill tests, and polish the rough UX edges.
+
+### Fixed (data-safety & correctness)
+- **Import "replace" could wipe the whole ridelog with no confirmation.** Replace mode now routes through an explicit, clearly-destructive confirm step (it names how many records will be deleted) before touching the log. Merge commits straight through.
+- **Overlapping imports silently duplicated diary entries.** Imported rows now dedupe against the existing log on (ride date + segmentId), so re-importing an overlapping export adds nothing — while manual repeat-rides are still preserved (the journey log stays append-only).
+- **Cold-start could hang forever on a stalled network.** Package fetches now time out (15s) and degrade to the JP-only fallback + retry instead of freezing the loading screen.
+- **Only 43% of lines had English names** despite the reading data being on disk — the build pipeline didn't carry line readings through. Now wired: line romaji coverage 43% → **87%** (515/594).
+- **iOS share contract was comment-only.** `shareCard` now guards that it received an eagerly-built non-empty Blob (a spent gesture throws NotAllowedError on iOS Safari otherwise), backed by tests.
+
+### Added (UX)
+- Undo on a success toast for both marking a ride and importing ("元に戻す").
+- Station search: a "該当する駅が見つかりません" message on no results, and Enter (pick first hit) / Escape (clear/exit) keyboard handling.
+- Import: a progress spinner during commit; the export button is disabled (not just toast-on-click) when there are no rides.
+- An offline strip on the stats/import screens (previously the offline signal was map-only, so importing offline failed silently).
+- A "京沪プレビュー" caption on the China stat card so its % reads as "of the preview corridor", not all-China.
+
+### Tests
+- New: `import/parse.test.ts` (fuzzy resolution, +13), `wrapped/share.test.ts` (iOS gesture safety, +9), `pipeline/verify-jp.test.ts` (golden-gate), `e2e/import.spec.ts` (cold-start + replace-confirm), a fetch-timeout boot test, and dedup regression tests in `import/commit.test.ts`. 238 → 269 unit tests; 10 → 12 E2E.
+
 ## [0.9.0.1] - 2026-06-26
 
 Release-hardening: make the 0.9.0 claims true everywhere.

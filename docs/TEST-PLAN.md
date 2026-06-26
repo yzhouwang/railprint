@@ -13,7 +13,7 @@ Stack target: Vite + Svelte · Vitest (unit) · Playwright (E2E)
 - Pick a line → tap station A → tap station B → segment lights, km/% update (line-first model).
 - Attempt to tap two stations on DIFFERENT lines → app rejects/guides (no cross-line slice).
 - Mark a loop line (山手線 / 大阪環状線) → correct arc direction stored, km correct.
-- Import a real 乗りつぶしオンライン CSV → map fills, dedupe on (date+line+from+to), merge-vs-replace prompt.
+- Import a real 乗りつぶしオンライン CSV → map fills. Imported rows dedupe against the existing log on (ride date + segmentId) — a re-imported overlapping export adds nothing — while manual repeat-rides are preserved (append-only). Merge-vs-replace, and **replace is gated by an explicit confirm** (it wipes the whole ridelog).
 - Export CSV → clear browser data → re-import → identical state (round-trip).
 - Generate Wrapped card → font loaded before draw (no tofu) → share on iOS Safari without NotAllowedError.
 
@@ -30,12 +30,14 @@ Stack target: Vite + Svelte · Vitest (unit) · Playwright (E2E)
 ## Critical Paths (must work end-to-end)
 `[E2E]` marks the target tier. The Playwright harness now covers the zoom-tiered map LOD
 (`tests/e2e/map-lod.spec.ts`), the search → route-picker → record flow incl. train-model capture
-(`route-picker.spec.ts`), the trip diary (`diary.spec.ts`), and the China corridor
-(`china-corridor.spec.ts`). The import / share / durability flows remain planned E2E.
+(`route-picker.spec.ts`), the trip diary (`diary.spec.ts`), the China corridor
+(`china-corridor.spec.ts`), and the **import flow** (`import.spec.ts`: cold-start paste→stats coverage,
+and replace-mode routed through an explicit confirm). The share/durability E2E remain planned (share
+is unit-covered — see below).
 - First-run: empty map → pick line → mark first ride → % ticks up. [E2E]
-- Cold-start trust: import incumbent CSV → non-empty correct map. [E2E]
-- The flex: mark rides → generate + share Wrapped card. [E2E]
-- Durability: export → simulate clear-data → re-import recovers everything. [E2E]
+- Cold-start trust: import CSV → non-empty correct map. [E2E `import.spec.ts`]
+- The flex: mark rides → generate + share Wrapped card. (share path unit-covered: `wrapped/share.test.ts`)
+- Durability: export → simulate clear-data → re-import recovers everything. (round-trip unit-covered: `import/commit.test.ts`)
 
 ## Geometry Correctness (golden-file suite — the #1 risk)
 - Assert computed km ≈ published official length (within tolerance) for: 山手線 (loop), 東海道新幹線 (HSR), a single-operator branch line, a multi-segment private line.
