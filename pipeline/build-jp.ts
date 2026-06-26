@@ -111,30 +111,9 @@ mkdirSync('public/rail/migrations/jp', { recursive: true });
 writeFileSync(JP_MIGRATION_PATH, `${JSON.stringify(migration, null, 2)}\n`);
 console.log('wrote', JP_MIGRATION_PATH, 'lineIdMap', Object.keys(migration.lineIdMap).length, 'segmentIdMap', segmentIdMapSize);
 
-const cnPackage = JSON.parse(readFileSync('public/rail/cn-jinghu-2025.json', 'utf8')) as { version?: unknown };
-if (typeof cnPackage.version !== 'string' || !cnPackage.version) {
-  throw new Error('public/rail/cn-jinghu-2025.json is missing a version');
-}
-const manifest = {
-  schemaVersion: 1,
-  packages: {
-    JP: {
-      version: JP_PACKAGE_VERSION,
-      path: 'rail/jp-2025.json',
-      migrations: [
-        {
-          fromVersion: JP_PREVIOUS_PACKAGE_VERSION,
-          toVersion: JP_PACKAGE_VERSION,
-          path: `rail/migrations/jp/${JP_PREVIOUS_PACKAGE_VERSION}-to-${JP_PACKAGE_VERSION}.json`,
-        },
-      ],
-    },
-    CN: {
-      version: cnPackage.version,
-      path: 'rail/cn-jinghu-2025.json',
-      migrations: [],
-    },
-  },
-};
-writeFileSync('public/rail/manifest.json', `${JSON.stringify(manifest, null, 2)}\n`);
-console.log('wrote public/rail/manifest.json');
+// The integrity manifest (rail/manifest.json, schema v2 with per-file SHA-256) is written SOLELY by
+// pipeline/build-manifest.ts, which discovers migrations from the maps directory above and hashes
+// each shipped file. build-jp intentionally does NOT write it: verify-jp runs build-jp to rebuild the
+// package, and a manifest write here would clobber the sha-bearing manifest with a sha-less one — the
+// exact durability regression this program exists to prevent. Run `npm run build:manifest` (or the
+// build:rail-geo chain) after this to refresh the manifest's hashes.
