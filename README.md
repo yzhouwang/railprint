@@ -4,10 +4,13 @@ An open-source map of every train you've ridden — 航旅纵横 / Flightradar, 
 
 Log which railway line **segments** you've personally ridden, see them lit on a map in
 real track geometry, and watch your total km + % of the national network + % HSR climb.
-One tap gives you a Spotify-Wrapped-style share card. Japan-first, and now Japan **and** China
-in one map — the 京沪 corridor proves the network model is country-agnostic.
+One tap gives you a Spotify-Wrapped-style share card. **Japan, plus one China corridor preview**
+(京沪高速铁路) — enough to prove the network model is country-agnostic.
 
-> Working name. Status: **v0.9.0.0** — the real MLIT N02 national network (594 lines, ~10,000 stations,
+> **China corridor is a preview.** It's a curated WGS-84 station-sequence polyline (北京南 → 上海虹桥,
+> 13 stops), **not** full China track geometry yet — that's a tracked refinement from OpenStreetMap ways (ODbL).
+
+> Working name. Status: **v0.9.0.1** — the real MLIT N02 national network (594 lines, ~10,000 stations,
 > ~26,800 km) in full official color with logos, operating-company labels, bilingual names, and a
 > zoom-tiered map; cross-line route marking; a trip diary + train-model collection; and the first
 > China corridor (京沪高速铁路).

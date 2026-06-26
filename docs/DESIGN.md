@@ -15,7 +15,7 @@ v0 plan. What has actually shipped since:
 
 - **Shipped (v0.x):** the static web app + real MLIT N02 national network (594 lines, ~10k stations) in official color + logos + operating-company labels + bilingual names; the zoom-tiered map; line-first **and** station-search marking with **cross-line route-finding** (a 特急ひのとり 津→大阪難波 through-service is one trip); CSV import/export; the Wrapped share card.
 - **Shipped (v0.8 — the narrative layer):** the ride log is now an **append-only journey log** (repeat rides record new dated trips; coverage % still dedupes); a **旅の記録 trip diary**; and **train-model capture** (the first of the "gamified collection" axis — N700S, CR400AF, …, canonicalized).
-- **Shipped (v0.9 — Japan + China):** the **京沪高速铁路** corridor proves the country-agnostic schema (WGS-84, no GCJ-02) — multi-package boot, and **per-country stats** so the Japan % is never blended with China.
+- **Shipped (v0.9 — Japan + China):** the **京沪高速铁路** corridor proves the country-agnostic schema (WGS-84, no GCJ-02) — multi-package boot, and **per-country stats** so the Japan % is never blended with China. It is a **preview**: a curated 13-station station-sequence polyline (北京南 → 上海虹桥), not yet full China track geometry (a tracked refinement from OpenStreetMap ways, ODbL).
 - **Still deferred:** offline/PWA, auto-import (QR/OCR/email-parse), the rest of the collection loop (badges, GPS check-in), community heatmap, broad China beyond the 京沪 corridor, the standalone `rail-geo` package, any backend.
 
 ## Problem Statement

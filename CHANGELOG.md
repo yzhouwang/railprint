@@ -2,6 +2,19 @@
 
 All notable changes to RailPrint are documented here.
 
+## [0.9.0.1] - 2026-06-26
+
+Release-hardening: make the 0.9.0 claims true everywhere.
+
+### Fixed
+- **Mobile showed a blended "全国" card.** The phone map screen still summed Japan + China into one misleading "% national". All three stat surfaces (desktop side panel, mobile map, 統計) now share one `CountryStatCards` component, so they can't drift apart again — Japan's % is Japan's alone.
+- **The China corridor was buried under 594 JP lines.** The line picker gains a 日本 / 中国 country filter (Japan-first default) so 京沪高速铁路 is one tap away.
+- **Package integrity:** the loader rejects a wrong-country payload (a CN url serving a JP package never loads as CN), and there is no fake-CN fallback — if the corridor fails to load, the app runs Japan-only and flags saved China rides as degraded rather than stranding them silently.
+- Version files reconciled (VERSION + package.json + package-lock.json all at 0.9.0.1; the lock had lagged at 0.6.1.0).
+
+### Internal
+- A real-user China E2E (mark mode → search 北京南 → 上海虹桥 → record with a train model → 中国 stats + the model in the diary), plus mobile per-country and line-picker-filter E2Es; the direct-seed test stays as a render smoke test. Boot tests cover the wrong-country rejection and the no-fake-CN fallback.
+
 ## [0.9.0.0] - 2026-06-25
 
 ### Added
