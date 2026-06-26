@@ -4,6 +4,7 @@
 // `--refresh` is intentionally separate and never used by the package build.
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { haversineKm } from './geometry.ts';
+import { lineNameAliases, stripWikiParen } from './line-aliases.ts';
 
 type RomaSource = 'osm' | 'wikidata' | 'manual';
 
@@ -40,7 +41,7 @@ interface WikiBinding {
   en?: { value?: string };
 }
 
-interface WikiLineBinding {
+export interface WikiLineBinding {
   op?: { value?: string };
   ja?: { value?: string };
   en?: { value?: string };
@@ -95,7 +96,7 @@ interface Candidate<T> {
   lat: number;
 }
 
-interface LineGroup {
+export interface LineGroup {
   operator: string;
   name: string;
 }
@@ -288,15 +289,6 @@ function parseLineGroups(n02Lines: N02FC): LineGroup[] {
   return out.sort((a, b) => n02LineReadingKey(a.operator, a.name).localeCompare(n02LineReadingKey(b.operator, b.name), 'ja'));
 }
 
-function normalizeWikiJaLineLabel(label: string): string {
-  let out = label.trim();
-  for (;;) {
-    const next = out.replace(/\s*(?:（[^（）]*）|\([^()]*\))\s*$/u, '').trim();
-    if (next === out) return out;
-    out = next;
-  }
-}
-
 function parseWikiLineReadings(wikidataLines: { results?: { bindings?: WikiLineBinding[] } } | undefined): {
   byOperatorName: Map<string, string>;
   byName: Map<string, string>;
@@ -308,7 +300,7 @@ function parseWikiLineReadings(wikidataLines: { results?: { bindings?: WikiLineB
     const ja = b.ja?.value;
     const en = b.en?.value;
     if (!ja || !en) continue;
-    const name = normalizeWikiJaLineLabel(ja);
+    const name = stripWikiParen(ja);
     const romaji = normalizeRomaji(en, false);
     if (!name || !romaji) continue;
     if (op) {
@@ -339,16 +331,50 @@ function lineNameCounts(groups: LineGroup[]): Map<string, number> {
   return counts;
 }
 
-function unambiguousWikiLineReading(
+function wikiLineReadingForGroup(
   key: string,
-  name: string,
+  group: LineGroup,
   nameCounts: Map<string, number>,
   wikiLineReadings: ReturnType<typeof parseWikiLineReadings>,
 ): string | undefined {
   const exact = wikiLineReadings.byOperatorName.get(key);
   if (exact) return exact;
-  if ((nameCounts.get(name) ?? 0) !== 1) return undefined;
-  return wikiLineReadings.byName.get(name);
+  for (const alias of lineNameAliases(group.operator, group.name)) {
+    if (alias === group.name && (nameCounts.get(group.name) ?? 0) !== 1) continue;
+    const reading = wikiLineReadings.byName.get(alias);
+    if (reading) return reading;
+  }
+  return undefined;
+}
+
+export function buildLineReadings(
+  lineGroups: LineGroup[],
+  wikidataLines?: { results?: { bindings?: WikiLineBinding[] } },
+  seedReadings: Record<string, string> = {},
+): Record<string, string> {
+  const lineReadings = { ...curatedLineReadings(), ...seedReadings };
+  const wikiLineReadings = parseWikiLineReadings(wikidataLines);
+  const nameCounts = lineNameCounts(lineGroups);
+  for (const g of lineGroups) {
+    const key = n02LineReadingKey(g.operator, g.name);
+    if (lineReadings[key]) continue;
+
+    const wikiReading = wikiLineReadingForGroup(key, g, nameCounts, wikiLineReadings);
+    if (wikiReading) {
+      lineReadings[key] = wikiReading;
+      continue;
+    }
+
+    if (g.name.endsWith('線')) {
+      const base = g.name.replace(/線$/, '').replace(/新幹$/, '');
+      if (/^[A-Za-z0-9 -]+$/.test(base)) {
+        lineReadings[key] = g.name.endsWith('新幹線')
+          ? `${normalizeRomaji(base, false)} Shinkansen`
+          : `${normalizeRomaji(base, false)} Line`;
+      }
+    }
+  }
+  return lineReadings;
 }
 
 export function buildReadings(inputs: JoinInputs): JoinResult {
@@ -449,29 +475,8 @@ export function buildReadings(inputs: JoinInputs): JoinResult {
     }
   }
 
-  const lineReadings = curatedLineReadings();
-  const wikiLineReadings = parseWikiLineReadings(inputs.wikidataLines);
   const lineGroups = parseLineGroups(inputs.n02RailSections ?? inputs.n02Stations);
-  const nameCounts = lineNameCounts(lineGroups);
-  for (const g of lineGroups) {
-    const key = n02LineReadingKey(g.operator, g.name);
-    if (lineReadings[key]) continue;
-
-    const wikiReading = unambiguousWikiLineReading(key, g.name, nameCounts, wikiLineReadings);
-    if (wikiReading) {
-      lineReadings[key] = wikiReading;
-      continue;
-    }
-
-    if (g.name.endsWith('線')) {
-      const base = g.name.replace(/線$/, '').replace(/新幹$/, '');
-      if (/^[A-Za-z0-9 -]+$/.test(base)) {
-        lineReadings[key] = g.name.endsWith('新幹線')
-          ? `${normalizeRomaji(base, false)} Shinkansen`
-          : `${normalizeRomaji(base, false)} Line`;
-      }
-    }
-  }
+  const lineReadings = buildLineReadings(lineGroups, inputs.wikidataLines);
 
   const matched = Object.keys(stationReadings).length;
   return {
