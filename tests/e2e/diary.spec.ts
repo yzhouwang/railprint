@@ -20,8 +20,8 @@ async function seedTwoTrips(page: Page): Promise<void> {
         const tx = db.transaction('rideEvents', 'readwrite');
         const store = tx.objectStore('rideEvents');
         // Same A→B ridden on two different days = two journeys; one carries a train model.
-        store.put({ id: `t1:${seg}`, segmentId: seg, railGeoVersion: '2025.1.0', source: 'manual', tripId: 't1', date: '2025-11-03', trainModel: 'E235系', createdAt: '2025-11-03T00:00:00.000Z' });
-        store.put({ id: `t2:${seg}`, segmentId: seg, railGeoVersion: '2025.1.0', source: 'manual', tripId: 't2', date: '2026-01-15', createdAt: '2026-01-15T00:00:00.000Z' });
+        store.put({ id: `t1:${seg}`, segmentId: seg, railGeoVersion: '2025.2.0', source: 'manual', tripId: 't1', date: '2025-11-03', trainModel: 'E235系', createdAt: '2025-11-03T00:00:00.000Z' });
+        store.put({ id: `t2:${seg}`, segmentId: seg, railGeoVersion: '2025.2.0', source: 'manual', tripId: 't2', date: '2026-01-15', createdAt: '2026-01-15T00:00:00.000Z' });
         tx.oncomplete = () => { db.close(); resolve(); };
         tx.onerror = () => reject(tx.error);
       };

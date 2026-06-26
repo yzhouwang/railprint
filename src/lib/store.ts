@@ -259,6 +259,8 @@ function bindFallbackRetry(): void {
       if (ok) {
         packages.set(pkgs); // swap in whatever loaded (JP, or JP+CN); usingFallback clears off the stub
         usingFallback.set(false);
+        void migrateEventsIfNeeded(pkgs); // the real (versioned) package just arrived — migrate now,
+        // since init()'s one migration pass ran against the stub and saw nothing to do
       }
       // Only stop retrying once EVERY package is present — a JP-ok/CN-fail round keeps listening.
       if (complete) for (const ev of events) window.removeEventListener(ev, handler);
@@ -283,41 +285,56 @@ interface Manifest {
   packages: Record<string, { version: string; path: string; migrations: MigrationStep[] }>;
 }
 
-/** Ordered migration steps that carry `fromVersion` up to some loaded package's current version. */
-function migrationChain(manifest: Manifest, fromVersion: string): MigrationStep[] | null {
-  for (const pkg of Object.values(manifest.packages)) {
-    if (pkg.version === fromVersion) return []; // already current — nothing to do
-    const byFrom = new Map(pkg.migrations.map((m) => [m.fromVersion, m]));
-    const steps: MigrationStep[] = [];
-    let cur = fromVersion;
-    while (cur !== pkg.version) {
-      const step = byFrom.get(cur);
-      if (!step) break; // chain broke — not this package
-      steps.push(step);
-      cur = step.toVersion;
-    }
-    if (cur === pkg.version && steps.length) return steps;
+/** Ordered migration steps WITHIN one package that carry `fromVersion` up to its current version. */
+function chainWithin(
+  pkg: { version: string; migrations: MigrationStep[] },
+  fromVersion: string,
+): MigrationStep[] | null {
+  if (pkg.version === fromVersion) return []; // already current
+  const byFrom = new Map(pkg.migrations.map((m) => [m.fromVersion, m]));
+  const steps: MigrationStep[] = [];
+  const seen = new Set<string>();
+  let cur = fromVersion;
+  while (cur !== pkg.version) {
+    if (seen.has(cur) || steps.length > pkg.migrations.length) return null; // cycle / runaway → refuse
+    seen.add(cur);
+    const step = byFrom.get(cur);
+    if (!step || step.toVersion === cur) break; // broken chain / self-loop
+    steps.push(step);
+    cur = step.toVersion;
   }
-  return null; // no package can migrate this version (truly unknown — leave it; surfaces via warnings)
+  return cur === pkg.version && steps.length ? steps : null;
+}
+
+/** Namespace from the STABLE country prefix (jp-… / cn-…), which a scheme migration never changes. */
+function namespaceOf(segmentId: string): Country {
+  return segmentId.startsWith('cn-') ? 'CN' : 'JP';
 }
 
 let migrationRetryBound = false;
 function bindMigrationRetry(pkgs: RailGeoPackage[]): void {
   if (migrationRetryBound || typeof window === 'undefined') return;
   migrationRetryBound = true;
+  const triggers = ['online', 'focus', 'visibilitychange'];
   const handler = (): void => {
     migrationRetryBound = false;
-    window.removeEventListener('online', handler);
+    for (const t of triggers) window.removeEventListener(t, handler);
     void migrateEventsIfNeeded(pkgs);
   };
-  window.addEventListener('online', handler);
+  for (const t of triggers) window.addEventListener(t, handler);
 }
 
 async function migrateEventsIfNeeded(pkgs: RailGeoPackage[]): Promise<void> {
   if (typeof fetch === 'undefined') return;
   const evs = get(events);
-  const current = new Set(pkgs.map((p) => p.version));
-  const stale = evs.filter((e) => !current.has(e.railGeoVersion));
+  if (evs.length === 0) return;
+  // PER-NAMESPACE current version — JP and CN bump independently, so a global version set would let
+  // CN's version (e.g. 2025.1.0) mask a genuinely-stale JP event also pinned to 2025.1.0.
+  const versionByNs = new Map(pkgs.map((p) => [p.country, p.version]));
+  const stale = evs.filter((e) => {
+    const v = versionByNs.get(namespaceOf(e.segmentId));
+    return v !== undefined && e.railGeoVersion !== v;
+  });
   if (stale.length === 0) return;
 
   let manifest: Manifest;
@@ -348,7 +365,9 @@ async function migrateEventsIfNeeded(pkgs: RailGeoPackage[]): Promise<void> {
   const migrated: RideEvent[] = [];
   let deferred = false; // a map didn't load → retry online, don't lose the migration
   for (const ev of stale) {
-    const chain = migrationChain(manifest, ev.railGeoVersion);
+    const pkgEntry = manifest.packages[namespaceOf(ev.segmentId)];
+    if (!pkgEntry) continue; // no manifest entry for this namespace → leave (surfaces via warnings)
+    const chain = chainWithin(pkgEntry, ev.railGeoVersion);
     if (!chain || chain.length === 0) continue;
     let segId = ev.segmentId;
     let version = ev.railGeoVersion;

@@ -23,7 +23,7 @@ async function seedRide(page: Page, segmentId: string): Promise<void> {
         const db = open.result;
         const tx = db.transaction('rideEvents', 'readwrite');
         tx.objectStore('rideEvents').put({
-          id: crypto.randomUUID(), segmentId: seg, railGeoVersion: '2025.1.0', source: 'manual', createdAt: new Date().toISOString(),
+          id: crypto.randomUUID(), segmentId: seg, railGeoVersion: '2025.2.0', source: 'manual', createdAt: new Date().toISOString(),
         });
         tx.oncomplete = () => { db.close(); resolve(); };
         tx.onerror = () => reject(tx.error);

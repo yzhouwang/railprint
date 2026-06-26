@@ -137,38 +137,48 @@ describe('N→N+1 geometry migration (GOLDEN: coverage preserved across a versio
   const NEW_SEG = 'x:00100g-00101g';
   // v2 of the same JP package: the SAME physical segment, new group-pair id, version advanced.
   const v2Pkg: RailGeoPackage = { ...realPkg, version: '2025.2.0', segments: [{ ...realPkg.segments[0], segmentId: NEW_SEG }] };
+  // JP bumped to 2025.2.0; CN stays at 2025.1.0 — independent versions. This is the case that a
+  // GLOBAL version set gets wrong (CN's 2025.1.0 would mask a stale JP event also pinned 2025.1.0).
   const manifest = {
     packages: {
       JP: {
         version: '2025.2.0', path: 'rail/jp-2025.json',
         migrations: [{ fromVersion: '2025.1.0', toVersion: '2025.2.0', path: 'rail/migrations/jp/2025.1.0-to-2025.2.0.json' }],
       },
+      CN: { version: '2025.1.0', path: 'rail/cn-jinghu-2025.json', migrations: [] },
     },
   };
   const map = { fromVersion: '2025.1.0', toVersion: '2025.2.0', segmentIdMap: { [OLD_SEG]: NEW_SEG } };
   const stubFetch = (mapResp: { ok: boolean; status?: number }) =>
     vi.fn(async (url: string) => {
-      if (String(url).includes('manifest')) return { ok: true, json: async () => manifest };
-      if (String(url).includes('/migrations/')) return { ...mapResp, json: async () => map };
-      return { ok: true, json: async () => v2Pkg }; // jp + cn urls → v2 (cn rejected by the country guard)
+      const u = String(url);
+      if (u.includes('manifest')) return { ok: true, json: async () => manifest };
+      if (u.includes('/migrations/')) return { ...mapResp, json: async () => map };
+      if (u.includes('cn-')) return { ok: true, json: async () => cnPkg }; // CN v1 (2025.1.0) loads for real
+      return { ok: true, json: async () => v2Pkg }; // JP v2 (2025.2.0)
     });
 
-  it('re-points an event pinned to the old version+id; coverage self-heals, original id preserved', async () => {
+  it('re-points a stale JP event EVEN WHILE CN sits at the old version; CN untouched, coverage self-heals', async () => {
     vi.stubGlobal('fetch', stubFetch({ ok: true }));
     const store = await import('./store');
     await store.clearAllRides();
-    // a returning user's event: pinned to 2025.1.0 with the OLD positional id.
-    await store.addEvents([{ id: 'e1', segmentId: OLD_SEG, railGeoVersion: '2025.1.0', source: 'manual', tripId: 't1', createdAt: 't' }]);
+    await store.addEvents([
+      { id: 'e1', segmentId: OLD_SEG, railGeoVersion: '2025.1.0', source: 'manual', tripId: 't1', createdAt: 't' }, // JP, stale
+      { id: 'cn1', segmentId: 'cn-x:0-1', railGeoVersion: '2025.1.0', source: 'manual', tripId: 'tc', createdAt: 't' }, // CN, current
+    ]);
     await store.init();
     await vi.waitFor(() => {
       expect(get(store.events).find((e) => e.id === 'e1')?.segmentId).toBe(NEW_SEG); // async migration landed
     });
     const e = get(store.events).find((x) => x.id === 'e1')!;
-    expect(e.segmentId).toBe(NEW_SEG);           // re-pointed to the new id
-    expect(e.originalSegmentId).toBe(OLD_SEG);   // first-ever id recorded (reversibility)
-    expect(e.railGeoVersion).toBe('2025.2.0');   // version advanced
-    expect(e.id).toBe('e1');                     // primary key UNCHANGED — coverage keys on segmentId
-    expect(get(store.dataDegraded)).toBe(false); // the ride RESOLVES — coverage was NOT silently lost
+    const cn = get(store.events).find((x) => x.id === 'cn1')!;
+    expect(e.segmentId).toBe(NEW_SEG);            // JP migrated despite CN ALSO being pinned to 2025.1.0 (per-namespace!)
+    expect(e.originalSegmentId).toBe(OLD_SEG);    // first-ever id recorded (reversibility)
+    expect(e.railGeoVersion).toBe('2025.2.0');    // version advanced
+    expect(e.id).toBe('e1');                      // primary key UNCHANGED — coverage keys on segmentId
+    expect(cn.segmentId).toBe('cn-x:0-1');        // CN event LEFT ALONE (the CN package really is at 2025.1.0)
+    expect(cn.railGeoVersion).toBe('2025.1.0');
+    expect(get(store.dataDegraded)).toBe(false);  // the JP ride RESOLVES — coverage was NOT silently lost
     await store.clearAllRides();
   });
 

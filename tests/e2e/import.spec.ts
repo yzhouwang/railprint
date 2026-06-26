@@ -15,7 +15,7 @@ const SEG = 'jp-東日本旅客鉄道-山手線:004095-004135'; // a real JP seg
 function exportCsv(segmentId: string, tripId: string, date = '2025-04-01'): string {
   return [
     'segmentId,lineId,railGeoVersion,rode,source,tripId,createdAt,date,trainModel',
-    `${segmentId},,2025.1.0,true,import,${tripId},${date}T00:00:00.000Z,${date},`,
+    `${segmentId},,2025.2.0,true,import,${tripId},${date}T00:00:00.000Z,${date},`,
   ].join('\n');
 }
 
