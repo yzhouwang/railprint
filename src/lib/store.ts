@@ -184,49 +184,91 @@ export const dataDegraded: Readable<boolean> = derived(
 
 let initialized = false;
 
-/** Built RailGeoPackages, served as static assets (pipeline/build-jp.ts, build-cn.ts). */
-const JP_PACKAGE_URL = `${import.meta.env.BASE_URL}rail/jp-2025.json`;
-const CN_PACKAGE_URL = `${import.meta.env.BASE_URL}rail/cn-jinghu-2025.json`;
+// Packages are served as static assets AND listed in rail/manifest.json (path + version + SHA-256).
+const RAIL_PRIMARY = import.meta.env.BASE_URL; // same-origin today
+// Optional China-reachable secondary origin (a CDN), tried when the primary fails. Empty until a CDN
+// is provisioned — the mechanism ships now; the URL is deploy config (VITE_RAIL_CDN_SECONDARY).
+const RAIL_SECONDARY = (import.meta.env.VITE_RAIL_CDN_SECONDARY as string | undefined) || '';
+const RAIL_ORIGINS = RAIL_SECONDARY ? [RAIL_PRIMARY, RAIL_SECONDARY] : [RAIL_PRIMARY];
 
 // Cold-start guard: a stalled/flaky network must never hang the loading screen forever. After this
 // long we abort the fetch, degrade (JP fallback / CN-miss retry), and let `bindFallbackRetry` recover.
 const FETCH_TIMEOUT_MS = 15_000;
+// The manifest is tiny (~1.5 KB) and only adds integrity/version over the stable package paths, so it
+// gets a SHORTER leash — a hung manifest must never serialize a full FETCH_TIMEOUT_MS ahead of the packages.
+const MANIFEST_TIMEOUT_MS = 5_000;
 
-/** Fetch one package, REJECTING a wrong-country payload; null on any failure (incl. timeout) so callers degrade. */
-async function fetchOne(url: string, expectedCountry: Country): Promise<RailGeoPackage | null> {
+/** fetch that self-aborts after `timeoutMs` so a stalled network can never hang boot. Rejects on abort. */
+async function timedFetch(url: string, timeoutMs: number): Promise<Response> {
   const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
-  const timer =
-    ctl && typeof window !== 'undefined' ? window.setTimeout(() => ctl.abort(), FETCH_TIMEOUT_MS) : null;
+  const timer = ctl && typeof window !== 'undefined' ? window.setTimeout(() => ctl.abort(), timeoutMs) : null;
   try {
-    const res = await fetch(url, ctl ? { signal: ctl.signal } : undefined);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const pkg = (await res.json()) as RailGeoPackage;
-    if (!pkg?.lines?.length || !pkg?.segments?.length) throw new Error('empty package');
-    // A swapped/poisoned artifact (the CN url serving a JP package, or vice-versa) must never load
-    // under the wrong namespace — that would strand or mis-count rides.
-    if (pkg.country !== expectedCountry) throw new Error(`expected ${expectedCountry}, got ${pkg.country}`);
-    if (pkg.crs !== 'WGS84') throw new Error(`non-WGS84 crs ${pkg.crs}`); // never accept GCJ-02
-    return pkg;
-  } catch (err) {
-    const reason = ctl?.signal.aborted ? `timed out after ${FETCH_TIMEOUT_MS}ms` : String(err);
-    console.warn(`[store] ${expectedCountry} package ${url} unavailable (${reason})`);
-    return null;
+    return await fetch(url, ctl ? { signal: ctl.signal } : undefined);
   } finally {
     if (timer !== null) window.clearTimeout(timer);
   }
 }
 
+/** Hex SHA-256 of bytes; null in an insecure context (no crypto.subtle → integrity check is skipped). */
+async function sha256Hex(buf: ArrayBuffer): Promise<string | null> {
+  if (typeof crypto === 'undefined' || !crypto.subtle) return null;
+  const digest = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 /**
- * Load the real network packages with PER-PACKAGE handling. JP is REQUIRED — its failure falls back
- * to the stub so the app always boots with SOMETHING. The CN corridor is ADDITIVE: if it 404s or is
- * malformed we boot JP-only rather than failing the whole map. `ok` reflects only the required JP load.
+ * Fetch + verify one package by its relative path, trying each origin (primary, then the CDN
+ * secondary). REJECTS a wrong-country payload AND — when the manifest supplies a sha — a payload
+ * whose bytes don't match (a truncated/poisoned artifact silently shifts the km denominator).
+ * null on total failure so callers degrade.
+ */
+async function fetchOne(relPath: string, expectedCountry: Country, expectedSha?: string): Promise<RailGeoPackage | null> {
+  for (const origin of RAIL_ORIGINS) {
+    const url = `${origin}${relPath}`;
+    try {
+      const res = await timedFetch(url, FETCH_TIMEOUT_MS);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const buf = await res.arrayBuffer();
+      if (expectedSha) {
+        const got = await sha256Hex(buf);
+        if (got !== null && got !== expectedSha) throw new Error(`sha256 mismatch (${got.slice(0, 8)}… ≠ ${expectedSha.slice(0, 8)}…)`);
+      }
+      const pkg = JSON.parse(new TextDecoder().decode(new Uint8Array(buf))) as RailGeoPackage;
+      if (!pkg?.lines?.length || !pkg?.segments?.length) throw new Error('empty package');
+      // A swapped/poisoned artifact (the CN url serving a JP package, or vice-versa) must never load
+      // under the wrong namespace — that would strand or mis-count rides.
+      if (pkg.country !== expectedCountry) throw new Error(`expected ${expectedCountry}, got ${pkg.country}`);
+      if (pkg.crs !== 'WGS84') throw new Error(`non-WGS84 crs ${pkg.crs}`); // never accept GCJ-02
+      return pkg;
+    } catch (err) {
+      const aborted = err instanceof DOMException && err.name === 'AbortError';
+      const reason = aborted ? `timed out after ${FETCH_TIMEOUT_MS}ms` : String(err);
+      console.warn(`[store] ${expectedCountry} package ${url} unavailable (${reason})`); // try the next origin
+    }
+  }
+  return null;
+}
+
+/**
+ * Load the real network packages, MANIFEST-DRIVEN (rail/manifest.json gives each package's path +
+ * SHA-256). If the manifest is unavailable we fall back to the known paths WITHOUT a sha check —
+ * integrity is best-effort, availability is not. JP is REQUIRED (its failure → JP-only stub); the
+ * CN corridor is ADDITIVE (404 → JP-only + retry). `ok` reflects only the required JP load.
  */
 async function fetchPackages(): Promise<{ ok: boolean; complete: boolean; pkgs: RailGeoPackage[] }> {
-  const [jp, cn] = await Promise.all([fetchOne(JP_PACKAGE_URL, 'JP'), fetchOne(CN_PACKAGE_URL, 'CN')]);
+  let manifest: Manifest | null = null;
+  try {
+    const res = await timedFetch(`${RAIL_PRIMARY}rail/manifest.json`, MANIFEST_TIMEOUT_MS);
+    if (res.ok) manifest = (await res.json()) as Manifest;
+  } catch { /* no manifest → path fallback below (no sha) */ }
+  const jpEntry = manifest?.packages?.JP;
+  const cnEntry = manifest?.packages?.CN;
+  const [jp, cn] = await Promise.all([
+    fetchOne(jpEntry?.path ?? 'rail/jp-2025.json', 'JP', jpEntry?.sha256),
+    fetchOne(cnEntry?.path ?? 'rail/cn-jinghu-2025.json', 'CN', cnEntry?.sha256),
+  ]);
   if (!jp) {
-    // JP-ONLY fallback — never seed a fake CN stub. The stub's CN ids don't match the real CN
-    // package, so a CN fallback would let a user "record" a China ride against mismatched ids that
-    // then strand on the real data. If CN itself fails, the same rule holds: JP-only + degraded.
+    // JP-ONLY fallback — never seed a fake CN stub whose ids mismatch the real package.
     console.warn('[store] real JP package unavailable; using JP-only stub (no CN fallback)');
     return { ok: false, complete: false, pkgs: [JP_PACKAGE] };
   }
@@ -282,7 +324,10 @@ const MANIFEST_URL = `${import.meta.env.BASE_URL}rail/manifest.json`;
 
 interface MigrationStep { fromVersion: string; toVersion: string; path: string }
 interface Manifest {
-  packages: Record<string, { version: string; path: string; migrations: MigrationStep[] }>;
+  schemaVersion?: number;
+  generatedAt?: string;
+  // sha256 is present from manifest schema v2 on (Phase 1); absent → integrity check is skipped.
+  packages: Record<string, { version: string; path: string; sha256?: string; migrations: MigrationStep[] }>;
 }
 
 /** Ordered migration steps WITHIN one package that carry `fromVersion` up to its current version. */

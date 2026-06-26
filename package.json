@@ -10,13 +10,15 @@
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "build:rail-geo:fixture": "node pipeline/cli.ts --input rail-geo/fixtures/jp-toy-input.json --out rail-geo/generated",
     "build:rail-geo:jp": "node pipeline/build-jp.ts --out public/rail/jp-2025.json",
+    "build:manifest": "node pipeline/build-manifest.ts",
     "verify:rail-geo:jp": "node pipeline/verify-jp.ts",
     "test": "node --test tests/geometry/*.test.ts && node pipeline/verify-jp.ts && vitest run",
     "test:geometry": "node --test tests/geometry/*.test.ts",
     "test:app": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "build:rail-geo:cn": "node pipeline/build-cn.ts --out public/rail/cn-jinghu-2025.json"
+    "build:rail-geo:cn": "node pipeline/build-cn.ts --out public/rail/cn-jinghu-2025.json",
+    "build:rail-geo": "npm run build:rail-geo:jp && npm run build:rail-geo:cn && npm run build:manifest"
   },
   "dependencies": {
     "dexie": "^4.0.11",

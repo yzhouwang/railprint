@@ -1,20 +1,24 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
+  "generatedAt": "2025-04-01T00:00:00.000Z",
   "packages": {
     "JP": {
       "version": "2025.2.0",
       "path": "rail/jp-2025.json",
+      "sha256": "1a153551ff4116b844e76db5057520a21f8965d44a2744e6520d80ac560350d2",
       "migrations": [
         {
           "fromVersion": "2025.1.0",
           "toVersion": "2025.2.0",
-          "path": "rail/migrations/jp/2025.1.0-to-2025.2.0.json"
+          "path": "rail/migrations/jp/2025.1.0-to-2025.2.0.json",
+          "sha256": "623adad6ee7554ed893e53bd324ba90a4107dc960c3527bfc280c39399ce74c8"
         }
       ]
     },
     "CN": {
       "version": "2025.1.0",
       "path": "rail/cn-jinghu-2025.json",
+      "sha256": "8b107921148930a1828f0b8157df0c8e591446450960431fa80fdad3a04bb3da",
       "migrations": []
     }
   }
