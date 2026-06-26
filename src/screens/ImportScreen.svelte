@@ -16,7 +16,7 @@
   import Icon from '../components/Icon.svelte';
   import ProgressBar from '../components/ProgressBar.svelte';
   import EmptyState from '../components/EmptyState.svelte';
-  import { events, geo, packages, headline, requestPersistence } from '../lib/store';
+  import { events, geo, packages, headline, requestPersistence, removeImportBatch } from '../lib/store';
   import { toast, goToTab } from '../lib/ui';
   import * as db from '../lib/db';
   import { parseImport, type ParseResult } from '../lib/import/parse';
@@ -44,6 +44,13 @@
 
   let mode = $state<ImportMode>('merge');
   let committing = $state(false);
+  // Replace-mode is destructive (wipes the entire ridelog), so committing it routes through an
+  // explicit confirm panel first. Merge commits straight through.
+  let confirmingReplace = $state(false);
+
+  // Export is disabled (not just toast-on-tap) when there's nothing to write — so the user
+  // doesn't tap to discover emptiness.
+  const hasRides = $derived($events.length > 0);
 
   // Export-nag state.
   let nag = $state<string | null>(null);
@@ -203,11 +210,32 @@
     return { importBatchId: parsed.report.importBatchId, confirmed, skipped: skip };
   }
 
+  // Commit trigger. Replace-mode is destructive (wipes the whole ridelog), so it routes through
+  // an explicit confirm panel first; merge commits straight through.
+  function requestCommit(): void {
+    if (!parsed || committing) return;
+    if (mode === 'replace') {
+      confirmingReplace = true;
+      return;
+    }
+    void commit();
+  }
+
+  function cancelReplace(): void {
+    confirmingReplace = false;
+  }
+
+  function confirmReplace(): void {
+    confirmingReplace = false;
+    void commit();
+  }
+
   async function commit(): Promise<void> {
     if (!parsed || committing) return;
     committing = true;
     try {
       const resolution = buildResolution();
+      const importBatchId = resolution.importBatchId;
       const written = await commitImport(parsed.resolved, resolution, get(packages), mode);
 
       // Durability: first ever import asks the browser to make storage persistent.
@@ -220,8 +248,14 @@
         toast('取り込む区間がありませんでした', 'info');
       } else {
         // The signature beat: the toast fires and the map floods green (litSegmentIds
-        // recomputes from the new events; the map screen animates the wave).
-        toast(`${written.length.toLocaleString()}件を取り込みました`, 'success');
+        // recomputes from the new events; the map screen animates the wave). The undo action
+        // rolls back just this batch — a longer ttl gives the user time to react.
+        toast(
+          `${written.length.toLocaleString()}件を取り込みました`,
+          'success',
+          6000,
+          { label: '元に戻す', fn: () => void removeImportBatch(importBatchId) },
+        );
       }
       phase = 'done';
     } catch (err) {
@@ -239,6 +273,7 @@
     pasteText = '';
     choice = {};
     skipped = {};
+    confirmingReplace = false;
   }
 
   function viewMap(): void {
@@ -313,7 +348,9 @@
 
     <hr class="rule" />
 
-    <Button variant="secondary" icon="download" full onclick={doExport}>CSV を書き出す</Button>
+    <Button variant="secondary" icon="download" full disabled={!hasRides} onclick={doExport}>
+      CSV を書き出す
+    </Button>
     {#if nag}
       <p class="nag" role="status">
         <Icon name="info" size={16} />
@@ -416,10 +453,41 @@
       </div>
     </FolderTabCard>
 
+    {#if confirmingReplace}
+      <!-- Replace is irreversible: an explicit, clearly-marked destructive confirm gates it.
+           Cancel is the default (primary-weight) action; Confirm is the destructive one. -->
+      <FolderTabCard label="置き換えの確認">
+        <div class="confirm" role="alertdialog" aria-modal="true" aria-labelledby="confirm-head">
+          <p id="confirm-head" class="confirm-head">
+            <Icon name="alert" size={18} />
+            <span>今ある記録をすべて削除します。</span>
+          </p>
+          <p class="u-muted small">
+            置き換えると、これまでの {$events.length.toLocaleString()} 件の記録は
+            <strong>すべて消えます</strong>。この操作は取り消せません。
+          </p>
+          <div class="confirm-actions">
+            <Button variant="secondary" onclick={cancelReplace}>やめる</Button>
+            <button type="button" class="danger-btn" onclick={confirmReplace}>
+              <Icon name="alert" size={18} />
+              <span>すべて削除して置き換える</span>
+            </button>
+          </div>
+        </div>
+      </FolderTabCard>
+    {/if}
+
     <div class="commit-bar">
       <Button variant="secondary" onclick={reset}>やめる</Button>
-      <Button icon="check" disabled={committing || willCommit === 0} onclick={commit}>
-        {committing ? '取り込み中…' : `${willCommit.toLocaleString()}件を取り込む`}
+      <Button icon="check" disabled={committing || willCommit === 0} onclick={requestCommit}>
+        {#if committing}
+          <span class="committing">
+            <span class="spinner" aria-hidden="true"></span>
+            取り込み中…
+          </span>
+        {:else}
+          {willCommit.toLocaleString()}件を取り込む
+        {/if}
       </Button>
     </div>
   {/if}
@@ -745,6 +813,79 @@
     justify-content: flex-end;
     position: sticky;
     bottom: var(--space-sm);
+  }
+
+  /* in-flight commit affordance — a small spinner so a big import doesn't read as frozen */
+  .committing {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
+  }
+  .spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner {
+      animation-duration: 1.8s;
+    }
+  }
+
+  /* replace-mode destructive confirm */
+  .confirm {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+  .confirm-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    margin: 0;
+    color: var(--ink);
+    font-weight: var(--weight-label);
+  }
+  .confirm-actions {
+    display: flex;
+    gap: var(--space-sm);
+    justify-content: flex-end;
+    margin-top: var(--space-xs);
+  }
+  /* destructive action. The system is emerald-monochrome with NO danger hue (DESIGN.md), and
+     toasts already mark "serious" with the ink surface + alert glyph, not a second color. The
+     danger button follows that: an ink (not emerald) fill + the alert glyph so it reads clearly
+     as "this deletes" and is distinct from the emerald primary, without forking the palette.
+     Button.svelte only ships primary/secondary, so it's local but mirrors Button's metrics. */
+  .danger-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-sm);
+    min-height: 44px;
+    padding: 0 var(--space-lg);
+    border-radius: var(--radius-button);
+    font-size: var(--size-stat);
+    font-weight: var(--weight-label);
+    border: 2px solid var(--ink);
+    background: var(--ink);
+    color: var(--white);
+    transition: transform 0.08s ease, opacity 0.15s ease;
+  }
+  .danger-btn:active {
+    transform: scale(0.98);
+  }
+  .danger-btn:focus-visible {
+    outline: 2px solid var(--rail-text);
+    outline-offset: 2px;
   }
 
   /* done */

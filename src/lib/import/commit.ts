@@ -21,9 +21,31 @@
 import type { RideEvent, RideSource, ImportResolution, RailGeoPackage } from '../../contract/types';
 import type { ResolvedRow } from './parse';
 import * as store from '../store';
+import * as db from '../db';
 import { hashString } from './hash';
 
 export type ImportMode = 'merge' | 'replace';
+
+/**
+ * The "logical ride" key for cross-existing dedup: a calendar day + a segmentId. Two events
+ * with the SAME (ride date, segmentId) describe the same logical ride, even if they came from
+ * different export files (different createdAt/tripId/event id). The ride date is, in priority:
+ *   1. the event's explicit `date` (the day the ride happened), else
+ *   2. the calendar day of `createdAt` (best-effort fallback for undated events).
+ * Manual repeat-rides of a segment on the same day SHARE this key — which is exactly why the
+ * dedup below is gated to IMPORT-source events only, never touching manual/corridor marks.
+ */
+export function logicalRideKey(ev: { segmentId: string; date?: string; createdAt: string }): string {
+  const day = (ev.date && ev.date.trim()) || calendarDay(ev.createdAt);
+  return `${day}|${ev.segmentId}`;
+}
+
+/** The YYYY-MM-DD calendar day of an ISO timestamp; the raw string if it isn't parseable. */
+function calendarDay(iso: string): string {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return iso;
+  return new Date(t).toISOString().slice(0, 10);
+}
 
 /** Incumbent-row id — stable because importBatchId is a content hash of the CSV (parse.ts). */
 export function eventId(importBatchId: string, rawIndex: number, segmentId: string): string {
@@ -156,11 +178,36 @@ export async function commitImport(
   pkg: RailGeoPackage | RailGeoPackage[],
   mode: ImportMode,
 ): Promise<RideEvent[]> {
-  const events = buildImportEvents(resolved, resolution, pkg);
+  const built = buildImportEvents(resolved, resolution, pkg);
   if (mode === 'replace') {
-    await store.replaceEvents(events);
-  } else {
-    await store.addEvents(events);
+    // Replace wipes the whole log first, so there is no existing event to dedup against.
+    await store.replaceEvents(built);
+    return built;
   }
+  // Merge: an IMPORT row must not re-add a logical ride the existing log already covers
+  // (the same ride date + segmentId), even when it arrives from a DIFFERENT export file
+  // with a fresh createdAt/tripId/event id. Manual/corridor marks are append-only and are
+  // NEVER deduped — so we gate strictly on source === 'import'.
+  const events = await dropEventsAlreadyInLog(built);
+  await store.addEvents(events);
   return events;
+}
+
+/**
+ * Drop the import-source events whose logical ride (date, segmentId) is already in the
+ * durable log. Pure-ish: reads the existing events through the db kernel, mutates nothing.
+ * Non-import events (manual/corridor re-imports) pass through untouched.
+ */
+async function dropEventsAlreadyInLog(built: RideEvent[]): Promise<RideEvent[]> {
+  // Only import-source events are eligible for cross-existing dedup; if there are none we
+  // skip the db read entirely.
+  if (!built.some((e) => e.source === 'import')) return built;
+
+  const existing = await db.getAllEvents();
+  const existingKeys = new Set(existing.map(logicalRideKey));
+
+  return built.filter((e) => {
+    if (e.source !== 'import') return true; // append-only: manual/corridor are never deduped
+    return !existingKeys.has(logicalRideKey(e));
+  });
 }

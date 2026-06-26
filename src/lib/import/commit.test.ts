@@ -1,9 +1,10 @@
-import { describe, it, expect } from 'vitest';
-import type { ImportResolution } from '../../contract/types';
+import { describe, it, expect, beforeEach } from 'vitest';
+import type { ImportResolution, RideEvent } from '../../contract/types';
 import { buildGeoIndex } from '../store';
 import { JP_PACKAGE, STUB_PACKAGES } from '../../fixtures/stubPackage';
 import { parseImport, type ResolvedRow } from './parse';
-import { buildImportEvents, eventId } from './commit';
+import { buildImportEvents, commitImport, eventId } from './commit';
+import * as db from '../db';
 
 const geo = buildGeoIndex(STUB_PACKAGES);
 
@@ -156,5 +157,152 @@ describe('our-own-export fast-path', () => {
     expect(e.date).toBe('2025-01-01');
     expect(e.trainModel).toBe('キハ');
     expect(e.railGeoVersion).toBe(JP_PACKAGE.version);
+  });
+});
+
+// commitImport dedups an IMPORT row against the EXISTING log by logical ride
+// (ride date, segmentId) in merge mode — even when an overlapping export arrives from a
+// different file (fresh createdAt/tripId/event id). Manual/corridor marks are append-only
+// and must NEVER be deduped. These tests hit the real Dexie kernel (fake-indexeddb).
+describe('commitImport — cross-existing dedup (merge mode)', () => {
+  beforeEach(async () => {
+    await db.clearAll();
+  });
+
+  const incumbentCsv = (date: string) =>
+    ['路線名,乗車駅,降車駅,乗車日,車両', `久留里線,木更津,横田,${date},キハE130`].join('\n');
+
+  // An own-export CSV for ONE segment ridden on `date`, with a caller-chosen createdAt/tripId
+  // and an import source — so it resolves to source 'import' and is dedup-eligible.
+  const exportCsv = (opts: { segmentId: string; date: string; createdAt: string; tripId: string; source?: string }) =>
+    [
+      'segmentId,lineId,railGeoVersion,rode,source,tripId,createdAt,date,trainModel',
+      `${opts.segmentId},久留里線,${JP_PACKAGE.version},1,${opts.source ?? 'import'},${opts.tripId},${opts.createdAt},${opts.date},`,
+    ].join('\n');
+
+  it('does NOT add a second event when re-importing an OVERLAPPING export of the same (date, segmentId)', async () => {
+    // First export of the ride: segment jr-kururi:0-1 ridden 2025-06-01.
+    const fileA = exportCsv({
+      segmentId: 'jr-kururi:0-1',
+      date: '2025-06-01',
+      createdAt: '2025-06-01T08:00:00.000Z',
+      tripId: 'tripA',
+    });
+    const pA = parseImport(fileA, STUB_PACKAGES, geo);
+    const resA: ImportResolution = { importBatchId: pA.report.importBatchId, confirmed: [], skipped: [] };
+    const wroteA = await commitImport(pA.resolved, resA, STUB_PACKAGES, 'merge');
+    expect(wroteA).toHaveLength(1);
+    expect(await db.getAllEvents()).toHaveLength(1);
+
+    // A SECOND export of the SAME logical ride — different file ⇒ different createdAt, tripId
+    // and therefore a different content-derived event id. Without the logical-ride dedup this
+    // would append a duplicate diary entry; with it, it must write nothing.
+    const fileB = exportCsv({
+      segmentId: 'jr-kururi:0-1',
+      date: '2025-06-01',
+      createdAt: '2025-09-30T23:00:00.000Z',
+      tripId: 'tripB',
+    });
+    const pB = parseImport(fileB, STUB_PACKAGES, geo);
+    // sanity: the second file really does mint a different event id.
+    const builtB = buildImportEvents(pB.resolved, { importBatchId: 'b', confirmed: [], skipped: [] }, STUB_PACKAGES);
+    expect(builtB[0].id).not.toBe(wroteA[0].id);
+
+    const resB: ImportResolution = { importBatchId: pB.report.importBatchId, confirmed: [], skipped: [] };
+    const wroteB = await commitImport(pB.resolved, resB, STUB_PACKAGES, 'merge');
+    expect(wroteB).toHaveLength(0);
+    expect(await db.getAllEvents()).toHaveLength(1);
+  });
+
+  it('also dedups an incumbent (fuzzy) re-import against an existing event for the same (date, segmentId)', async () => {
+    // Seed the log with the kururi leg via an incumbent import.
+    const p1 = parseImport(incumbentCsv('2025-07-04'), STUB_PACKAGES, geo);
+    const r1: ImportResolution = { importBatchId: p1.report.importBatchId, confirmed: [], skipped: [] };
+    const wrote1 = await commitImport(p1.resolved, r1, STUB_PACKAGES, 'merge');
+    expect(wrote1.length).toBe(4);
+    const before = (await db.getAllEvents()).length;
+    expect(before).toBe(4);
+
+    // Re-import the SAME leg on the SAME day (its batch id is content-stable, so even the
+    // event ids match) — nothing new should be written.
+    const p2 = parseImport(incumbentCsv('2025-07-04'), STUB_PACKAGES, geo);
+    const r2: ImportResolution = { importBatchId: p2.report.importBatchId, confirmed: [], skipped: [] };
+    const wrote2 = await commitImport(p2.resolved, r2, STUB_PACKAGES, 'merge');
+    expect(wrote2).toHaveLength(0);
+    expect((await db.getAllEvents()).length).toBe(before);
+  });
+
+  it('PRESERVES a manual repeat-ride on the same day — never deduped away', async () => {
+    // A manual mark of the segment already ridden (date 2025-06-01) — same logical key as a
+    // prior import, but source 'manual' ⇒ append-only ⇒ both events coexist.
+    const importEvent: RideEvent = {
+      id: 'imp:0:jr-kururi:0-1',
+      segmentId: 'jr-kururi:0-1',
+      railGeoVersion: JP_PACKAGE.version,
+      date: '2025-06-01',
+      source: 'import',
+      tripId: 'imp-trip',
+      createdAt: '2025-06-01T08:00:00.000Z',
+    };
+    await db.putEvents([importEvent]);
+
+    // Re-importing an own-export whose source is 'manual' must NOT be dedup-gated.
+    const manualReride = exportCsv({
+      segmentId: 'jr-kururi:0-1',
+      date: '2025-06-01',
+      createdAt: '2025-06-01T20:00:00.000Z',
+      tripId: 'manual-trip',
+      source: 'manual',
+    });
+    const p = parseImport(manualReride, STUB_PACKAGES, geo);
+    const res: ImportResolution = { importBatchId: p.report.importBatchId, confirmed: [], skipped: [] };
+    const wrote = await commitImport(p.resolved, res, STUB_PACKAGES, 'merge');
+
+    expect(wrote).toHaveLength(1);
+    expect(wrote[0].source).toBe('manual');
+    // both the original import event and the manual re-ride survive in the log.
+    const all = await db.getAllEvents();
+    expect(all).toHaveLength(2);
+    expect(all.filter((e) => e.segmentId === 'jr-kururi:0-1')).toHaveLength(2);
+  });
+
+  it('stays idempotent when the EXACT same file is re-imported in merge mode', async () => {
+    const file = incumbentCsv('2025-08-15');
+    const p1 = parseImport(file, STUB_PACKAGES, geo);
+    const r1: ImportResolution = { importBatchId: p1.report.importBatchId, confirmed: [], skipped: [] };
+    await commitImport(p1.resolved, r1, STUB_PACKAGES, 'merge');
+    const after1 = await db.getAllEvents();
+
+    const p2 = parseImport(file, STUB_PACKAGES, geo);
+    const r2: ImportResolution = { importBatchId: p2.report.importBatchId, confirmed: [], skipped: [] };
+    await commitImport(p2.resolved, r2, STUB_PACKAGES, 'merge');
+    const after2 = await db.getAllEvents();
+
+    expect(after2.length).toBe(after1.length);
+    expect(after2.map((e) => e.id).sort()).toEqual(after1.map((e) => e.id).sort());
+  });
+
+  it('replace mode wipes the log first, so no cross-existing dedup is applied', async () => {
+    // Pre-existing event with a logical key that an incoming import would also produce.
+    await db.putEvents([
+      {
+        id: 'old:jr-kururi:0-1',
+        segmentId: 'jr-kururi:0-1',
+        railGeoVersion: JP_PACKAGE.version,
+        date: '2025-03-01',
+        source: 'import',
+        tripId: 'old',
+        createdAt: '2025-03-01T00:00:00.000Z',
+      },
+    ]);
+    const p = parseImport(incumbentCsv('2025-03-01'), STUB_PACKAGES, geo);
+    const res: ImportResolution = { importBatchId: p.report.importBatchId, confirmed: [], skipped: [] };
+    const wrote = await commitImport(p.resolved, res, STUB_PACKAGES, 'replace');
+
+    // replace builds the full span and the old event is gone — the log is exactly the import.
+    expect(wrote.length).toBe(4);
+    const all = await db.getAllEvents();
+    expect(all.length).toBe(4);
+    expect(all.some((e) => e.id === 'old:jr-kururi:0-1')).toBe(false);
   });
 });
