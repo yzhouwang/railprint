@@ -10,8 +10,11 @@ export default defineConfig({
     svelte(),
     // Phase 2 — OFFLINE. A Workbox service worker precaches the app shell AND the rail packages
     // (rail/*.json + migration maps) so a ride can be marked with no signal. Precaching the package
-    // and manifest at ONE revision keeps them consistent — fetchOne's SHA-256 check can never see a
-    // fresh-manifest / stale-package skew. autoUpdate swaps the whole set atomically on the next load.
+    // and manifest TOGETHER at one content-revision keeps them consistent — fetchOne's SHA-256 check
+    // can never see a fresh-manifest / stale-package skew, and a within-year version bump (filename
+    // unchanged) still busts the cache because the revision is the file's content hash. On a new
+    // deploy `autoUpdate` activates the new SW and auto-reloads the tab, so the app re-boots against
+    // the new package+manifest as a set — never a half-old / half-new tab.
     VitePWA({
       registerType: 'autoUpdate',
       injectRegister: null, // registered manually in main.ts for control
@@ -29,6 +32,10 @@ export default defineConfig({
       },
       workbox: {
         // Precache the shell + the rail data. jp-2025.json is ~8.8 MB, so raise the per-file cap.
+        // NOTE: only SAME-ORIGIN rail/*.json is precached, so the offline guarantee requires the
+        // canonical package to ship in this build. When the package later moves to a CDN
+        // (VITE_RAIL_CDN_SECONDARY, store.ts), this needs a revisioned/runtime-warmed entry for that
+        // origin or offline breaks — tracked in docs/designs/rail-geo-durable-package.md.
         globPatterns: ['**/*.{js,css,html,svg,woff2}', 'rail/*.json', 'rail/migrations/**/*.json'],
         maximumFileSizeToCacheInBytes: 12 * 1024 * 1024,
         cleanupOutdatedCaches: true,

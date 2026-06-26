@@ -198,12 +198,17 @@ const FETCH_TIMEOUT_MS = 15_000;
 // gets a SHORTER leash — a hung manifest must never serialize a full FETCH_TIMEOUT_MS ahead of the packages.
 const MANIFEST_TIMEOUT_MS = 5_000;
 
-/** fetch that self-aborts after `timeoutMs` so a stalled network can never hang boot. Rejects on abort. */
-async function timedFetch(url: string, timeoutMs: number): Promise<Response> {
+/**
+ * fetch + fully consume the body under a SINGLE abort timeout. The timer stays armed across the
+ * `consume` callback, so a 200 response with a STALLED BODY aborts too — clearing the timer only
+ * after the body is read is what keeps boot from hanging on a half-delivered 8.8 MB package.
+ */
+async function withTimeout<T>(url: string, timeoutMs: number, consume: (res: Response) => Promise<T>): Promise<T> {
   const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
   const timer = ctl && typeof window !== 'undefined' ? window.setTimeout(() => ctl.abort(), timeoutMs) : null;
   try {
-    return await fetch(url, ctl ? { signal: ctl.signal } : undefined);
+    const res = await fetch(url, ctl ? { signal: ctl.signal } : undefined);
+    return await consume(res);
   } finally {
     if (timer !== null) window.clearTimeout(timer);
   }
@@ -216,6 +221,13 @@ async function sha256Hex(buf: ArrayBuffer): Promise<string | null> {
   return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+/** A manifest sha is usable only as a well-formed 64-char lowercase hex digest (case-normalized). */
+function normalizeSha(sha: string | undefined): string | null {
+  if (!sha) return null;
+  const hex = sha.trim().toLowerCase();
+  return /^[0-9a-f]{64}$/.test(hex) ? hex : null;
+}
+
 /**
  * Fetch + verify one package by its relative path, trying each origin (primary, then the CDN
  * secondary). REJECTS a wrong-country payload AND — when the manifest supplies a sha — a payload
@@ -223,23 +235,29 @@ async function sha256Hex(buf: ArrayBuffer): Promise<string | null> {
  * null on total failure so callers degrade.
  */
 async function fetchOne(relPath: string, expectedCountry: Country, expectedSha?: string): Promise<RailGeoPackage | null> {
+  const wantSha = normalizeSha(expectedSha);
+  if (expectedSha && !wantSha) {
+    console.warn(`[store] ${expectedCountry} manifest sha "${expectedSha}" is malformed; loading without integrity check`);
+  }
   for (const origin of RAIL_ORIGINS) {
     const url = `${origin}${relPath}`;
     try {
-      const res = await timedFetch(url, FETCH_TIMEOUT_MS);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const buf = await res.arrayBuffer();
-      if (expectedSha) {
-        const got = await sha256Hex(buf);
-        if (got !== null && got !== expectedSha) throw new Error(`sha256 mismatch (${got.slice(0, 8)}… ≠ ${expectedSha.slice(0, 8)}…)`);
-      }
-      const pkg = JSON.parse(new TextDecoder().decode(new Uint8Array(buf))) as RailGeoPackage;
-      if (!pkg?.lines?.length || !pkg?.segments?.length) throw new Error('empty package');
-      // A swapped/poisoned artifact (the CN url serving a JP package, or vice-versa) must never load
-      // under the wrong namespace — that would strand or mis-count rides.
-      if (pkg.country !== expectedCountry) throw new Error(`expected ${expectedCountry}, got ${pkg.country}`);
-      if (pkg.crs !== 'WGS84') throw new Error(`non-WGS84 crs ${pkg.crs}`); // never accept GCJ-02
-      return pkg;
+      return await withTimeout(url, FETCH_TIMEOUT_MS, async (res): Promise<RailGeoPackage> => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const buf = await res.arrayBuffer(); // body read is COVERED by the same abort timer
+        if (wantSha) {
+          const got = await sha256Hex(buf);
+          // got === null only in an insecure context (no crypto.subtle); HTTPS prod always verifies.
+          if (got !== null && got !== wantSha) throw new Error(`sha256 mismatch (${got.slice(0, 8)}… ≠ ${wantSha.slice(0, 8)}…)`);
+        }
+        const pkg = JSON.parse(new TextDecoder().decode(new Uint8Array(buf))) as RailGeoPackage;
+        if (!pkg?.lines?.length || !pkg?.segments?.length) throw new Error('empty package');
+        // A swapped/poisoned artifact (the CN url serving a JP package, or vice-versa) must never load
+        // under the wrong namespace — that would strand or mis-count rides.
+        if (pkg.country !== expectedCountry) throw new Error(`expected ${expectedCountry}, got ${pkg.country}`);
+        if (pkg.crs !== 'WGS84') throw new Error(`non-WGS84 crs ${pkg.crs}`); // never accept GCJ-02
+        return pkg;
+      });
     } catch (err) {
       const aborted = err instanceof DOMException && err.name === 'AbortError';
       const reason = aborted ? `timed out after ${FETCH_TIMEOUT_MS}ms` : String(err);
@@ -258,11 +276,19 @@ async function fetchOne(relPath: string, expectedCountry: Country, expectedSha?:
 async function fetchPackages(): Promise<{ ok: boolean; complete: boolean; pkgs: RailGeoPackage[] }> {
   let manifest: Manifest | null = null;
   try {
-    const res = await timedFetch(`${RAIL_PRIMARY}rail/manifest.json`, MANIFEST_TIMEOUT_MS);
-    if (res.ok) manifest = (await res.json()) as Manifest;
+    manifest = await withTimeout(`${RAIL_PRIMARY}rail/manifest.json`, MANIFEST_TIMEOUT_MS, async (res) =>
+      res.ok ? ((await res.json()) as Manifest) : null,
+    );
   } catch { /* no manifest → path fallback below (no sha) */ }
   const jpEntry = manifest?.packages?.JP;
   const cnEntry = manifest?.packages?.CN;
+  // A loaded-but-incomplete manifest (entry/sha missing) is a build smell — warn, but still load
+  // best-effort from the default path. The manifest is a same-origin trusted root; bricking the app
+  // on a manifest typo is worse than loading unverified same-origin bytes (the sha guards transfer
+  // corruption, not a same-origin attacker who could rewrite both files anyway).
+  if (manifest && (!jpEntry?.sha256 || !cnEntry?.sha256)) {
+    console.warn('[store] manifest present but a package sha is missing; loading default path without integrity check');
+  }
   const [jp, cn] = await Promise.all([
     fetchOne(jpEntry?.path ?? 'rail/jp-2025.json', 'JP', jpEntry?.sha256),
     fetchOne(cnEntry?.path ?? 'rail/cn-jinghu-2025.json', 'CN', cnEntry?.sha256),
