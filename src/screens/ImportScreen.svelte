@@ -16,7 +16,7 @@
   import Icon from '../components/Icon.svelte';
   import ProgressBar from '../components/ProgressBar.svelte';
   import EmptyState from '../components/EmptyState.svelte';
-  import { events, geo, packages, headline, requestPersistence, removeImportBatch } from '../lib/store';
+  import { events, geo, packages, headline, requestPersistence, removeEvents } from '../lib/store';
   import { toast, goToTab } from '../lib/ui';
   import * as db from '../lib/db';
   import { parseImport, type ParseResult } from '../lib/import/parse';
@@ -235,7 +235,7 @@
     committing = true;
     try {
       const resolution = buildResolution();
-      const importBatchId = resolution.importBatchId;
+      const committedMode = mode; // capture before reset() clears it
       const written = await commitImport(parsed.resolved, resolution, get(packages), mode);
 
       // Durability: first ever import asks the browser to make storage persistent.
@@ -246,15 +246,21 @@
 
       if (written.length === 0) {
         toast('取り込む区間がありませんでした', 'info');
+      } else if (committedMode === 'replace') {
+        // A replace already WIPED the prior log, so there's nothing to undo back to — offering
+        // "元に戻す" would just delete the new rows and leave the user with an empty log, not a
+        // restore. So a replace confirms (the destructive gate) but does not offer undo.
+        toast(`${written.length.toLocaleString()}件で置き換えました`, 'success');
       } else {
-        // The signature beat: the toast fires and the map floods green (litSegmentIds
-        // recomputes from the new events; the map screen animates the wave). The undo action
-        // rolls back just this batch — a longer ttl gives the user time to react.
+        // The signature beat: the toast fires and the map floods green. Undo deletes EXACTLY the
+        // rows this commit wrote (by id, not by the content-derived batch), so it can never remove
+        // an older import that hashed to the same batch. A longer ttl gives time to react.
+        const undoIds = written.map((e) => e.id);
         toast(
           `${written.length.toLocaleString()}件を取り込みました`,
           'success',
           6000,
-          { label: '元に戻す', fn: () => void removeImportBatch(importBatchId) },
+          { label: '元に戻す', fn: () => void removeEvents(undoIds) },
         );
       }
       phase = 'done';

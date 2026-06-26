@@ -13,7 +13,7 @@ Stack target: Vite + Svelte · Vitest (unit) · Playwright (E2E)
 - Pick a line → tap station A → tap station B → segment lights, km/% update (line-first model).
 - Attempt to tap two stations on DIFFERENT lines → app rejects/guides (no cross-line slice).
 - Mark a loop line (山手線 / 大阪環状線) → correct arc direction stored, km correct.
-- Import a real 乗りつぶしオンライン CSV → map fills. Imported rows dedupe against the existing log on (ride date + segmentId) — a re-imported overlapping export adds nothing — while manual repeat-rides are preserved (append-only). Merge-vs-replace, and **replace is gated by an explicit confirm** (it wipes the whole ridelog).
+- Import a real 乗りつぶしオンライン CSV → map fills. Imported rows dedupe against **prior imports** on (ride date + segmentId), format-agnostic (`2025/6/1` = `2025-06-01`) — a re-imported overlapping export adds nothing — while a manual mark and an import of the same ride stay independent append-only records (neither silently shadows the other). Merge-vs-replace, and **replace is gated by an explicit confirm** (it wipes the whole ridelog).
 - Export CSV → clear browser data → re-import → identical state (round-trip).
 - Generate Wrapped card → font loaded before draw (no tofu) → share on iOS Safari without NotAllowedError.
 

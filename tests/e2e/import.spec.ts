@@ -41,6 +41,26 @@ async function pasteAndParse(page: Page, csv: string): Promise<void> {
   await page.getByRole('button', { name: '貼り付けたCSVを取り込む' }).click();
 }
 
+// Read the segmentIds currently in the rideEvents store — to prove what a replace actually did.
+async function readSegments(page: Page): Promise<string[]> {
+  return page.evaluate(
+    () =>
+      new Promise<string[]>((resolve, reject) => {
+        const open = indexedDB.open('railprint');
+        open.onsuccess = () => {
+          const db = open.result;
+          const req = db.transaction('rideEvents', 'readonly').objectStore('rideEvents').getAll();
+          req.onsuccess = () => {
+            db.close();
+            resolve((req.result as { segmentId: string }[]).map((e) => e.segmentId));
+          };
+          req.onerror = () => reject(req.error);
+        };
+        open.onerror = () => reject(open.error);
+      }),
+  );
+}
+
 test('COLD-START: pasting an export CSV fills the map — stats show 日本 coverage', async ({ page }) => {
   await gotoImport(page);
   await pasteAndParse(page, exportCsv(SEG, 'trip-cold'));
@@ -51,21 +71,31 @@ test('COLD-START: pasting an export CSV fills the map — stats show 日本 cove
   await expect(page.getByText('日本 全国')).toBeVisible({ timeout: 15_000 });
 });
 
-test('REPLACE is guarded — it shows a confirm step before wiping, then completes on confirm', async ({ page }) => {
+const SEG2 = 'jp-東日本旅客鉄道-山手線:1-2'; // a second real segment, distinct from SEG
+
+test('REPLACE is guarded — confirm before wiping, and it truly swaps old data for new', async ({ page }) => {
   await gotoImport(page);
-  // an initial ride via the default merge mode
+  // an initial ride (segment :0-1) via the default merge mode
   await pasteAndParse(page, exportCsv(SEG, 'trip-1'));
   await page.getByRole('button', { name: /件を取り込む/ }).click();
   await expect(page.getByText(/件を取り込みました/)).toBeVisible({ timeout: 15_000 });
 
-  // import again, this time in REPLACE mode
+  // import a DIFFERENT segment (:1-2) in REPLACE mode
   await page.getByRole('button', { name: '続けて取り込む' }).click();
-  await pasteAndParse(page, exportCsv(SEG, 'trip-2'));
+  await pasteAndParse(page, exportCsv(SEG2, 'trip-2'));
   await page.getByRole('button', { name: '置き換え' }).click();
   await page.getByRole('button', { name: /件を取り込む/ }).click();
 
-  // the destructive replace does NOT wipe immediately — it routes through an explicit confirm.
+  // the destructive replace does NOT wipe immediately — it routes through an explicit confirm,
+  // and the OLD ride is still in the store until the user confirms.
   await expect(page.getByText('置き換えの確認')).toBeVisible({ timeout: 10_000 });
+  expect(await readSegments(page)).toContain(SEG);
+
   await page.getByRole('button', { name: 'すべて削除して置き換える' }).click();
-  await expect(page.getByText(/件を取り込みました/)).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(/置き換えました/)).toBeVisible({ timeout: 15_000 });
+
+  // after confirm: ONLY the replacement segment remains, the original is gone.
+  const after = await readSegments(page);
+  expect(after).toContain(SEG2);
+  expect(after).not.toContain(SEG);
 });

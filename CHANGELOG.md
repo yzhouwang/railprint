@@ -8,7 +8,7 @@ Hardening pass from a full-codebase audit: close real data-loss and trust holes 
 
 ### Fixed (data-safety & correctness)
 - **Import "replace" could wipe the whole ridelog with no confirmation.** Replace mode now routes through an explicit, clearly-destructive confirm step (it names how many records will be deleted) before touching the log. Merge commits straight through.
-- **Overlapping imports silently duplicated diary entries.** Imported rows now dedupe against the existing log on (ride date + segmentId), so re-importing an overlapping export adds nothing — while manual repeat-rides are still preserved (the journey log stays append-only).
+- **Overlapping imports silently duplicated diary entries.** Imported rows now dedupe against prior imports on (ride date + segmentId), format-agnostic (`2025/6/1` = `2025-06-01`), so re-importing an overlapping export adds nothing — while a manual mark and an import of the same ride stay independent records (append-only; neither silently shadows the other). Undo on an import deletes exactly the rows it wrote (by id), and a replace confirms but offers no undo (it can't restore a wiped log).
 - **Cold-start could hang forever on a stalled network.** Package fetches now time out (15s) and degrade to the JP-only fallback + retry instead of freezing the loading screen.
 - **Only 43% of lines had English names** despite the reading data being on disk — the build pipeline didn't carry line readings through. Now wired: line romaji coverage 43% → **87%** (515/594).
 - **iOS share contract was comment-only.** `shareCard` now guards that it received an eagerly-built non-empty Blob (a spent gesture throws NotAllowedError on iOS Safari otherwise), backed by tests.

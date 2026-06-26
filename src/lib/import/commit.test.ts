@@ -266,6 +266,62 @@ describe('commitImport — cross-existing dedup (merge mode)', () => {
     expect(all.filter((e) => e.segmentId === 'jr-kururi:0-1')).toHaveLength(2);
   });
 
+  it('does NOT let an existing MANUAL mark shadow an incoming import (no silent drop)', async () => {
+    // A manual mark of the segment on 2025-06-01 already in the log.
+    const manualEvent: RideEvent = {
+      id: 'man:0:jr-kururi:0-1',
+      segmentId: 'jr-kururi:0-1',
+      railGeoVersion: JP_PACKAGE.version,
+      date: '2025-06-01',
+      source: 'manual',
+      tripId: 'man-trip',
+      createdAt: '2025-06-01T08:00:00.000Z',
+    };
+    await db.putEvents([manualEvent]);
+
+    // Importing the same segment+day must NOT be dropped — dedup is import-vs-import only, so a
+    // manual mark never silently shadows an incoming import ride.
+    const imp = exportCsv({
+      segmentId: 'jr-kururi:0-1',
+      date: '2025-06-01',
+      createdAt: '2025-06-02T08:00:00.000Z',
+      tripId: 'imp-trip',
+    });
+    const p = parseImport(imp, STUB_PACKAGES, geo);
+    const res: ImportResolution = { importBatchId: p.report.importBatchId, confirmed: [], skipped: [] };
+    const wrote = await commitImport(p.resolved, res, STUB_PACKAGES, 'merge');
+
+    expect(wrote).toHaveLength(1); // the import ride is kept, not shadowed
+    expect(wrote[0].source).toBe('import');
+    expect(await db.getAllEvents()).toHaveLength(2); // manual + import coexist
+  });
+
+  it('dedups overlapping imports even when the ride date is written in a DIFFERENT format', async () => {
+    const fileISO = exportCsv({
+      segmentId: 'jr-kururi:0-1',
+      date: '2025-06-01',
+      createdAt: '2025-06-01T08:00:00.000Z',
+      tripId: 'iso',
+    });
+    const pISO = parseImport(fileISO, STUB_PACKAGES, geo);
+    const rISO: ImportResolution = { importBatchId: pISO.report.importBatchId, confirmed: [], skipped: [] };
+    await commitImport(pISO.resolved, rISO, STUB_PACKAGES, 'merge');
+    expect(await db.getAllEvents()).toHaveLength(1);
+
+    // Same logical day, slash format — canonicalDay folds 2025/6/1 → 2025-06-01, so it dedups.
+    const fileSlash = exportCsv({
+      segmentId: 'jr-kururi:0-1',
+      date: '2025/6/1',
+      createdAt: '2025-07-01T08:00:00.000Z',
+      tripId: 'slash',
+    });
+    const pSlash = parseImport(fileSlash, STUB_PACKAGES, geo);
+    const rSlash: ImportResolution = { importBatchId: pSlash.report.importBatchId, confirmed: [], skipped: [] };
+    const wrote = await commitImport(pSlash.resolved, rSlash, STUB_PACKAGES, 'merge');
+    expect(wrote).toHaveLength(0); // different format, same day ⇒ still deduped
+    expect(await db.getAllEvents()).toHaveLength(1);
+  });
+
   it('stays idempotent when the EXACT same file is re-imported in merge mode', async () => {
     const file = incumbentCsv('2025-08-15');
     const p1 = parseImport(file, STUB_PACKAGES, geo);

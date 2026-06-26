@@ -443,6 +443,17 @@ export async function removeImportBatch(importBatchId: string): Promise<void> {
   await refresh();
 }
 
+/**
+ * Delete exactly these event ids — the precise undo for an import. Deleting by id (not by the
+ * content-derived importBatchId) means undo only ever removes the rows THIS commit wrote, never an
+ * older import that happened to hash to the same batch id.
+ */
+export async function removeEvents(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  await db.deleteEvents(ids);
+  await refresh();
+}
+
 /** Delete every event of one trip. The append model's undo primitive — the toast-undo UI that
  *  will call it is a deferred fast-follow; for now it backs tests + a future diary edit/delete. */
 export async function removeTrip(tripId: string): Promise<void> {
