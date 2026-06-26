@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="RailPrint">
+  <rect width="512" height="512" rx="112" fill="#00A040"/>
+  <polyline points="116,372 220,256 300,300 396,150" fill="none" stroke="#ffffff" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="116" cy="372" r="34" fill="#ffffff"/>
+  <circle cx="220" cy="256" r="22" fill="#00A040" stroke="#ffffff" stroke-width="13"/>
+  <circle cx="300" cy="300" r="22" fill="#00A040" stroke="#ffffff" stroke-width="13"/>
+  <circle cx="396" cy="150" r="34" fill="#ffffff"/>
+</svg>
