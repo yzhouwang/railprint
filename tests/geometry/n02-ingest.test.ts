@@ -256,6 +256,13 @@ test('package invariants hold across a multi-line build', () => {
     station('OP', 'L2', 'e', 'e', 140.10, 36.0),
   ];
   const { pkg } = build(secs, stns);
+  assert.deepEqual(pkg.lines.map((line) => line.lineId), ['jp-OP-L1', 'jp-OP-L2'], 'clean lineIds without hash suffixes');
+  assert.deepEqual(pkg.segments.map((segment) => segment.segmentId), [
+    'jp-OP-L1:c-b',
+    'jp-OP-L1:b-a',
+    'jp-OP-L2:e-d',
+  ], 'canonical segmentIds use ordered N02_005g group pairs');
+  const groupByStationId = new Map(pkg.stations.map((s) => [s.stationId, s.stationGroupId]));
   const segIds = new Set<string>();
   for (const line of pkg.lines) {
     assert.equal(line.lineId.includes(':'), false, 'lineId colon-free');
@@ -264,7 +271,9 @@ test('package invariants hold across a multi-line build', () => {
     assert.equal(new Set(lineStations.map((s) => s.stationId)).size, lineStations.length, 'unique stationIds per line');
   }
   for (const seg of pkg.segments) {
-    assert.equal(seg.segmentId, `${seg.lineId}:${seg.fromSeq}-${seg.toSeq}`, 'canonical segmentId');
+    const fromGroup = groupByStationId.get(seg.fromStationId);
+    const toGroup = groupByStationId.get(seg.toStationId);
+    assert.equal(seg.segmentId, `${seg.lineId}:${fromGroup}-${toGroup}`, 'canonical group-pair segmentId');
     assert.equal(seg.segmentId.split(':')[0], seg.lineId, 'lineId recoverable from segmentId');
     assert.ok(seg.km > 0, 'positive km');
     assert.ok(!segIds.has(seg.segmentId), 'unique segmentId');

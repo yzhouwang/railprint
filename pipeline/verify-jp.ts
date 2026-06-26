@@ -175,9 +175,10 @@ expectStationReadingAt('神戸', 'jp-豊橋鉄道-渥美線', 137.27737, 34.6679
 // operator-aware join; total color includes operator/Shinkansen defaults.
 console.log('\n━━━ line styles ━━━');
 const rawLines = groupN02(n02RailSections, n02Stations as never);
-const lineStyles = buildLineStyleIndex(rawLines, wikidataStyle, logoIndex);
-const styleByLineId = new Map(rawLines.map((raw) => [lineId(raw.operator, raw.name), lineStyles[`${raw.operator}\u0000${raw.name}`]]));
-const rawByLineId = new Map(rawLines.map((raw) => [lineId(raw.operator, raw.name), raw]));
+const identityRawLines = rawLines.map((raw) => ({ ...raw, operator: raw.operatorId }));
+const lineStyles = buildLineStyleIndex(identityRawLines, wikidataStyle, logoIndex);
+const styleByLineId = new Map(identityRawLines.map((raw) => [lineId(raw.operator, raw.name), lineStyles[`${raw.operator}\u0000${raw.name}`]]));
+const rawByLineId = new Map(rawLines.map((raw) => [lineId(raw.operatorId, raw.name), raw]));
 const logoEntryBySrc = new Map(Object.values(logoIndex).filter((entry) => entry.src).map((entry) => [entry.src, entry]));
 const sourcedColor = pkg.lines.filter((l) => styleByLineId.get(l.lineId)?.colorSource === 'sourced');
 const colored = pkg.lines.filter((l) => typeof l.color === 'string' && l.color.trim().length > 0);

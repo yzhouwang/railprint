@@ -13,21 +13,22 @@ const stationReadings = existsSync('data/readings/station-readings.json')
   ? JSON.parse(readFileSync('data/readings/station-readings.json', 'utf8'))
   : {};
 const rawLines = groupN02(RS, ST);
+const identityRawLines = rawLines.map((raw) => ({ ...raw, operator: raw.operatorId }));
 const cachedLineReadings = existsSync('data/readings/line-readings.json')
   ? JSON.parse(readFileSync('data/readings/line-readings.json', 'utf8'))
   : {};
 const wikidataLines = existsSync('data/readings/wikidata-lines.json')
   ? JSON.parse(readFileSync('data/readings/wikidata-lines.json', 'utf8')) as { results?: { bindings?: WikiLineBinding[] } }
   : undefined;
-const lineReadings = buildLineReadings(rawLines, wikidataLines, cachedLineReadings);
+const lineReadings = buildLineReadings(identityRawLines, wikidataLines, cachedLineReadings);
 const wikidataStyle = existsSync('data/readings/wikidata-line-style.json')
   ? JSON.parse(readFileSync('data/readings/wikidata-line-style.json', 'utf8')) as WikiStyleCache
   : {};
 const logoIndex = existsSync('data/readings/logo-index.json')
   ? JSON.parse(readFileSync('data/readings/logo-index.json', 'utf8')) as LogoIndex
   : {};
-const lineStyles = buildLineStyleIndex(rawLines, wikidataStyle, logoIndex);
-const styleByLineId = new Map(rawLines.map((raw) => [lineId(raw.operator, raw.name), lineStyles[`${raw.operator}\u0000${raw.name}`]]));
+const lineStyles = buildLineStyleIndex(identityRawLines, wikidataStyle, logoIndex);
+const styleByLineId = new Map(identityRawLines.map((raw) => [lineId(raw.operator, raw.name), lineStyles[`${raw.operator}\u0000${raw.name}`]]));
 
 const { pkg, stats } = buildPackageFromN02(RS, ST, {
   country: 'JP',

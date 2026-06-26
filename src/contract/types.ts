@@ -39,7 +39,13 @@ export interface RailLine {
 
 // The coverage PRIMITIVE: one inter-station segment with precomputed km.
 export interface RailSegment {
-  segmentId: string;     // canonical id, MUST be `${lineId}:${fromSeq}-${toSeq}`
+  // canonical id = `${lineId}:${discriminator}`, a BUILD-STABLE key for the inter-station segment.
+  //  • JP (v2 scheme): the endpoints' raw N02_005g group codes `${fromGroup}-${toGroup}` —
+  //    content-addressed, stable across data refreshes (revisit lines: `${fromGroup}@${k}-${toGroup}@${k}`).
+  //  • Generic/CN builds still emit positional `${fromSeq}-${toSeq}` until a per-namespace station
+  //    identity scheme lands (CN has no group codes yet — deferred to E2 broad-China).
+  // positional fromSeq/toSeq stay on the struct as metadata regardless. [JP v2 — steering bump 2026-06-27]
+  segmentId: string;
   lineId: string;
   fromStationId: string;
   toStationId: string;
