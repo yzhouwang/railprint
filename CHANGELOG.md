@@ -2,6 +2,17 @@
 
 All notable changes to RailPrint are documented here.
 
+## [0.9.1.0] - 2026-06-27
+
+Rail-geo durability, Phase 0: rail IDs are now content-addressed and deterministic, and a returning user's saved rides survive a routine data refresh.
+
+### Added
+- **Content-addressed JP IDs.** `segmentId` is now `lineId:fromGroup-toGroup` (the endpoints' N02 group codes) instead of positional `fromSeq-toSeq`, and `lineId` drops the build-ORDER `#N` collision suffix for a content hash (only on a real slug clash). IDs no longer drift when the N02 source reorders, so a routine annual refresh can't silently break a user's coverage. Geometry is byte-identical (only the 9,442 IDs changed); rebuild is deterministic.
+- **N→N+1 migration engine.** The build ships an old→new `segmentId` map (`public/rail/migrations/jp/<from>-to-<to>.json`) + a `manifest.json`; on a version bump the app re-points a user's pinned events in place — **non-blocking** (after first paint), idempotent, **per-namespace** (JP and CN bump independently), `originalSegmentId` preserved for reversibility, and a fail-safe that leaves events intact + retries online rather than ever locking a user out. `RideEvent` gains `originalSegmentId`.
+
+### How it was built
+A full `/plan-ceo-review` + `/plan-eng-review`, a 2-round Codex↔Claude design conversation that locked the ID scheme (hash-on-collision), and a Codex↔Claude cross-review (2 P1 store bugs caught + fixed; the migration map verified a corruption-free 9442/9442 bijection against the shipped package). 274 vitest + 41 geometry + 12 e2e + a version-bump golden test (coverage preserved across a bump). CN stays positional pending its own station-identity scheme; broad China + the package CDN/offline phases remain in `docs/designs/rail-geo-durable-package.md`.
+
 ## [0.9.0.2] - 2026-06-26
 
 Hardening pass from a full-codebase audit: close real data-loss and trust holes in shipped code, backfill tests, and polish the rough UX edges.
