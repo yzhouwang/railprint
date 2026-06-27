@@ -1,0 +1,23 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  app:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci
+      # The rail-geo data is produced by the railnet package and vendored here (public/rail). Verify
+      # the vendored artifacts match their own manifest SHA-256 — a corrupted or partial sync fails
+      # the build rather than shipping a poisoned km denominator.
+      - run: npm run verify:rail
+      - run: npm run check        # svelte-check (typecheck)
+      - run: npm run test:app     # vitest
+      - run: npm run build

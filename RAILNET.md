@@ -25,10 +25,15 @@ coverage.
 1. In `railnet`: update the source / bump the data version, `npm run build && npm run verify`.
 2. In this app: `npm run sync:railnet` — copies the artifacts + contract over and **verifies every
    package's bytes against railnet's manifest SHA-256** before succeeding. Then `git diff` and commit.
-3. CI runs `npm run sync:railnet:check`, which fails the build if the vendored data has drifted from
-   the pinned railnet version.
 
-By default the script reads a `railnet` checkout beside the app (`../railnet`, or `$RAILNET_PATH`).
+Two integrity gates, by what they need:
+
+- **`npm run verify:rail`** — self-contained; needs NO railnet checkout. Verifies the vendored
+  `public/rail/*` against their own manifest SHA-256, so a corrupted or partial sync fails the build.
+  This runs in the app's CI (`.github/workflows/ci.yml`) on every PR.
+- **`npm run sync:railnet:check`** — the cross-repo *pin* check; needs a `railnet` checkout beside the
+  app (`../railnet`, or `$RAILNET_PATH`). Fails if the vendored data/contract has drifted from the
+  pinned railnet version. Run it after a sync, or in a combined CI once railnet is published.
 
 ## Why vendored-and-committed, not a runtime CDN
 

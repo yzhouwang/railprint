@@ -10,6 +10,7 @@
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "sync:railnet": "node scripts/sync-railnet.mjs",
     "sync:railnet:check": "node scripts/sync-railnet.mjs --check",
+    "verify:rail": "node scripts/verify-rail.mjs",
     "test": "npm run check && vitest run",
     "test:app": "vitest run",
     "test:watch": "vitest",
