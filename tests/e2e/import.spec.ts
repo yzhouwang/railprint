@@ -10,12 +10,12 @@ const BLANK_PNG = Buffer.from(
   'base64',
 );
 
-const SEG = 'jp-東日本旅客鉄道-山手線:0-1'; // a real JP segment from public/rail/jp-2025.json
+const SEG = 'jp-東日本旅客鉄道-山手線:004095-004135'; // a real JP segment from public/rail/jp-2025.json
 
 function exportCsv(segmentId: string, tripId: string, date = '2025-04-01'): string {
   return [
     'segmentId,lineId,railGeoVersion,rode,source,tripId,createdAt,date,trainModel',
-    `${segmentId},,2025.1.0,true,import,${tripId},${date}T00:00:00.000Z,${date},`,
+    `${segmentId},,2025.2.0,true,import,${tripId},${date}T00:00:00.000Z,${date},`,
   ].join('\n');
 }
 
@@ -71,7 +71,7 @@ test('COLD-START: pasting an export CSV fills the map — stats show 日本 cove
   await expect(page.getByText('日本 全国')).toBeVisible({ timeout: 15_000 });
 });
 
-const SEG2 = 'jp-東日本旅客鉄道-山手線:1-2'; // a second real segment, distinct from SEG
+const SEG2 = 'jp-東日本旅客鉄道-山手線:004135-004110'; // a second real segment, distinct from SEG
 
 test('REPLACE is guarded — confirm before wiping, and it truly swaps old data for new', async ({ page }) => {
   await gotoImport(page);

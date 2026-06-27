@@ -13,25 +13,29 @@ const stationReadings = existsSync('data/readings/station-readings.json')
   ? JSON.parse(readFileSync('data/readings/station-readings.json', 'utf8'))
   : {};
 const rawLines = groupN02(RS, ST);
+const identityRawLines = rawLines.map((raw) => ({ ...raw, operator: raw.operatorId }));
 const cachedLineReadings = existsSync('data/readings/line-readings.json')
   ? JSON.parse(readFileSync('data/readings/line-readings.json', 'utf8'))
   : {};
 const wikidataLines = existsSync('data/readings/wikidata-lines.json')
   ? JSON.parse(readFileSync('data/readings/wikidata-lines.json', 'utf8')) as { results?: { bindings?: WikiLineBinding[] } }
   : undefined;
-const lineReadings = buildLineReadings(rawLines, wikidataLines, cachedLineReadings);
+const lineReadings = buildLineReadings(identityRawLines, wikidataLines, cachedLineReadings);
 const wikidataStyle = existsSync('data/readings/wikidata-line-style.json')
   ? JSON.parse(readFileSync('data/readings/wikidata-line-style.json', 'utf8')) as WikiStyleCache
   : {};
 const logoIndex = existsSync('data/readings/logo-index.json')
   ? JSON.parse(readFileSync('data/readings/logo-index.json', 'utf8')) as LogoIndex
   : {};
-const lineStyles = buildLineStyleIndex(rawLines, wikidataStyle, logoIndex);
-const styleByLineId = new Map(rawLines.map((raw) => [lineId(raw.operator, raw.name), lineStyles[`${raw.operator}\u0000${raw.name}`]]));
+const lineStyles = buildLineStyleIndex(identityRawLines, wikidataStyle, logoIndex);
+const styleByLineId = new Map(identityRawLines.map((raw) => [lineId(raw.operator, raw.name), lineStyles[`${raw.operator}\u0000${raw.name}`]]));
+const JP_PREVIOUS_PACKAGE_VERSION = '2025.1.0';
+const JP_PACKAGE_VERSION = '2025.2.0';
+const JP_MIGRATION_PATH = `public/rail/migrations/jp/${JP_PREVIOUS_PACKAGE_VERSION}-to-${JP_PACKAGE_VERSION}.json`;
 
-const { pkg, stats } = buildPackageFromN02(RS, ST, {
+const { pkg, migrationDraft, stats } = buildPackageFromN02(RS, ST, {
   country: 'JP',
-  version: '2025.1.0',
+  version: JP_PACKAGE_VERSION,
   generatedAt: '2025-04-01T00:00:00.000Z',
   simplifyTolDeg: 0.00008, // ~9m — plenty for map zooms, big size win
   stationReadings,
@@ -82,3 +86,34 @@ if (!hasExplicitOut) {
   writeFileSync('public/rail/jp-2025.json', json);
   console.log('wrote public/rail/jp-2025.json', (json.length / 1e6).toFixed(1), 'MB');
 }
+
+const migration = {
+  schemaVersion: 1,
+  kind: 'railprint.segment-id-migration',
+  namespace: 'JP',
+  fromVersion: JP_PREVIOUS_PACKAGE_VERSION,
+  toVersion: JP_PACKAGE_VERSION,
+  fromScheme: 'positional-v1',
+  toScheme: 'group-pair-v2',
+  lineIdMap: migrationDraft.lineIdMap,
+  segmentIdMap: migrationDraft.segmentIdMap,
+  unmapped: migrationDraft.unmapped,
+};
+const segmentIdMapSize = Object.keys(migration.segmentIdMap).length;
+if (segmentIdMapSize !== pkg.segments.length) {
+  throw new Error(`segment migration is not exhaustive: ${segmentIdMapSize}/${pkg.segments.length}`);
+}
+const packageSegmentIds = new Set(pkg.segments.map((segment) => segment.segmentId));
+for (const newSegmentId of Object.values(migration.segmentIdMap)) {
+  if (!packageSegmentIds.has(newSegmentId)) throw new Error(`segment migration points to missing segmentId: ${newSegmentId}`);
+}
+mkdirSync('public/rail/migrations/jp', { recursive: true });
+writeFileSync(JP_MIGRATION_PATH, `${JSON.stringify(migration, null, 2)}\n`);
+console.log('wrote', JP_MIGRATION_PATH, 'lineIdMap', Object.keys(migration.lineIdMap).length, 'segmentIdMap', segmentIdMapSize);
+
+// The integrity manifest (rail/manifest.json, schema v2 with per-file SHA-256) is written SOLELY by
+// pipeline/build-manifest.ts, which discovers migrations from the maps directory above and hashes
+// each shipped file. build-jp intentionally does NOT write it: verify-jp runs build-jp to rebuild the
+// package, and a manifest write here would clobber the sha-bearing manifest with a sha-less one — the
+// exact durability regression this program exists to prevent. Run `npm run build:manifest` (or the
+// build:rail-geo chain) after this to refresh the manifest's hashes.

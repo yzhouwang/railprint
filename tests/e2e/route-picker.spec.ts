@@ -19,8 +19,8 @@ async function seedRide(page: Page): Promise<void> {
         const tx = db.transaction('rideEvents', 'readwrite');
         tx.objectStore('rideEvents').put({
           id: crypto.randomUUID(),
-          segmentId: 'jp-東日本旅客鉄道-山手線:0-1',
-          railGeoVersion: '2025.1.0',
+          segmentId: 'jp-東日本旅客鉄道-山手線:004095-004135',
+          railGeoVersion: '2025.2.0',
           source: 'manual',
           createdAt: new Date().toISOString(),
         });

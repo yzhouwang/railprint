@@ -9,11 +9,11 @@ import { test, expect, type Page } from '@playwright/test';
 // We seed a ridden 山手線 (rank 2, minz 5) and assert both directions: at z4 nothing below the
 // tier leaks except the ridden line; zooming into Tokyo reveals the urban tiers.
 
-const VERSION = '2025.1.0';
+const VERSION = '2025.2.0';
 const RIDDEN_YAMANOTE = [
-  'jp-東日本旅客鉄道-山手線:0-1',
-  'jp-東日本旅客鉄道-山手線:1-2',
-  'jp-東日本旅客鉄道-山手線:2-3',
+  'jp-東日本旅客鉄道-山手線:004095-004135',
+  'jp-東日本旅客鉄道-山手線:004135-004110',
+  'jp-東日本旅客鉄道-山手線:004110-004072',
 ];
 
 type RenderedSeg = { segmentId: string; minz: number };

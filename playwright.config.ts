@@ -13,6 +13,10 @@ export default defineConfig({
   // miss the first 'load' tick); the LOD assertions pass deterministically on a clean run, so a
   // single retry absorbs that transient without masking a real logic failure.
   retries: process.env.CI ? 2 : 1,
+  // Cap concurrency: each spec spins up a SwiftShader WebGL2 context, and too many at once is the
+  // real source of the boot-timeout flakes (a heavy spec like route-picker can exceed 30s under
+  // contention, then pass clean on retry). 3 workers keeps the suite quick without saturating GL.
+  workers: 3,
   reporter: process.env.CI ? 'line' : 'list',
   use: {
     baseURL: 'http://localhost:4173',

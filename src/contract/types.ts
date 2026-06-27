@@ -39,7 +39,13 @@ export interface RailLine {
 
 // The coverage PRIMITIVE: one inter-station segment with precomputed km.
 export interface RailSegment {
-  segmentId: string;     // canonical id, MUST be `${lineId}:${fromSeq}-${toSeq}`
+  // canonical id = `${lineId}:${discriminator}`, a BUILD-STABLE key for the inter-station segment.
+  //  • JP (v2 scheme): the endpoints' raw N02_005g group codes `${fromGroup}-${toGroup}` —
+  //    content-addressed, stable across data refreshes (revisit lines: `${fromGroup}@${k}-${toGroup}@${k}`).
+  //  • Generic/CN builds still emit positional `${fromSeq}-${toSeq}` until a per-namespace station
+  //    identity scheme lands (CN has no group codes yet — deferred to E2 broad-China).
+  // positional fromSeq/toSeq stay on the struct as metadata regardless. [JP v2 — steering bump 2026-06-27]
+  segmentId: string;
   lineId: string;
   fromStationId: string;
   toStationId: string;
@@ -74,14 +80,19 @@ export interface RailStation {
 export type RideSource = 'manual' | 'import' | 'corridor';
 
 export interface RideEvent {
-  id: string;            // uuid
-  segmentId: string;
-  railGeoVersion: string; // pin — resolver warns/migrates on mismatch
+  id: string;            // uuid (kept STABLE across a geo-version migration — coverage keys on segmentId, not id)
+  segmentId: string;     // remapped in place by a railGeoVersion migration; coverage derives from THIS
+  originalSegmentId?: string; // the FIRST-EVER segmentId, set once on the first migration — reversibility audit
+  railGeoVersion: string; // pin — bumped to the package version once an N→N+1 migration remaps this event
+  // Phase 4 quarantine steering bump: snapshot km at record time so an abolished segment can
+  // remain visible as closed-line history even after the segment leaves the loaded package.
+  km?: number;
   date?: string;         // ISO date; OPTIONAL (undated imports still count to coverage)
   trainModel?: string;
   source: RideSource;
   tripId?: string;       // Claude T11 groups legs into a trip
   importBatchId?: string;
+  quarantine?: 'kept';   // Phase 4: user kept an orphan as closed-line history; absent = active/pending
   createdAt: string;     // ISO
 }
 

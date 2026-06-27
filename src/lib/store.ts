@@ -172,61 +172,219 @@ export const litSegmentIds: Readable<string[]> = derived(coverages, ($coverages)
  * shows a 'network data unavailable, retrying' banner instead of presenting that as truth.
  */
 export const dataDegraded: Readable<boolean> = derived(
-  [usingFallback, events, geo],
-  ([$usingFallback, $events, $geo]) =>
-    ($usingFallback && $events.length > 0) ||
-    // a saved ride whose segment is in NO loaded package = a package (e.g. the CN corridor) failed
-    // to load, so that ride would silently read as 0 coverage. Surface it instead of hiding it.
-    $events.some((e) => !$geo.segmentById.has(e.segmentId)),
+  [usingFallback, events, packages],
+  ([$usingFallback, $events, $packages]) => {
+    if ($usingFallback && $events.length > 0) return true;
+    const loadedSegments = loadedSegmentSetsByNamespace($packages, $usingFallback);
+    // A saved ride whose NAMESPACE has no loaded package = a package (e.g. the CN corridor)
+    // failed to load, so that ride would silently read as 0 coverage. A missing segment inside a
+    // loaded namespace is Phase 4 quarantine data, not a transient package-load failure.
+    return $events.some((e) => !loadedSegments.has(namespaceOf(e.segmentId)));
+  },
+);
+
+// ─────────────────────────────── quarantine ─────────────────────────────────
+
+export interface OrphanRide {
+  id: string;
+  segmentId: string;
+  lineLabel: string;
+  date?: string;
+  km?: number;
+}
+
+export interface OrphanGroup {
+  lineId: string;
+  lineLabel: string;
+  rides: OrphanRide[];
+}
+
+function lineIdOfSegment(segmentId: string): string {
+  const i = segmentId.indexOf(':');
+  return i === -1 ? segmentId : segmentId.slice(0, i);
+}
+
+function lineLabelFromLineId(lineId: string): string {
+  const parts = lineId.split('-').filter(Boolean);
+  return parts.length > 0 ? parts[parts.length - 1] : lineId;
+}
+
+function loadedSegmentSetsByNamespace(pkgs: RailGeoPackage[], degradedJP: boolean): Map<Country, Set<string>> {
+  const out = new Map<Country, Set<string>>();
+  for (const pkg of pkgs) {
+    // `usingFallback` means JP is represented by the stub, not the user's real namespace package.
+    // Treat that namespace as degraded so a transient fetch failure cannot quarantine the log.
+    if (pkg.country === 'JP' && degradedJP) continue;
+    out.set(pkg.country, new Set(pkg.segments.map((s) => s.segmentId)));
+  }
+  return out;
+}
+
+/** Pending abolished-segment rides, grouped by parsed line label for the quarantine UI. */
+export const orphanGroups: Readable<OrphanGroup[]> = derived(
+  [packages, events, usingFallback],
+  ([$packages, $events, $usingFallback]) => {
+    const loadedSegments = loadedSegmentSetsByNamespace($packages, $usingFallback);
+    const groups = new Map<string, { lineLabel: string; rides: (OrphanRide & { sortKey: string })[] }>();
+
+    for (const ev of $events) {
+      if (ev.quarantine === 'kept') continue;
+      const segs = loadedSegments.get(namespaceOf(ev.segmentId));
+      if (!segs || segs.has(ev.segmentId)) continue;
+
+      const lineId = lineIdOfSegment(ev.segmentId);
+      const lineLabel = lineLabelFromLineId(lineId);
+      const group = groups.get(lineId) ?? { lineLabel, rides: [] };
+      group.rides.push({
+        id: ev.id,
+        segmentId: ev.segmentId,
+        lineLabel,
+        date: ev.date,
+        km: ev.km,
+        sortKey: ev.date ?? ev.createdAt,
+      });
+      groups.set(lineId, group);
+    }
+
+    return [...groups.entries()]
+      .map(([lineId, group]) => ({
+        lineId,
+        lineLabel: group.lineLabel,
+        rides: group.rides
+          .sort((a, b) => b.sortKey.localeCompare(a.sortKey) || a.id.localeCompare(b.id))
+          .map(({ sortKey: _sortKey, ...ride }) => ride),
+      }))
+      .sort((a, b) => b.rides.length - a.rides.length || a.lineLabel.localeCompare(b.lineLabel) || a.lineId.localeCompare(b.lineId));
+  },
+);
+
+export const orphanCount: Readable<number> = derived(orphanGroups, ($groups) =>
+  $groups.reduce((sum, g) => sum + g.rides.length, 0),
+);
+
+export const closedLineKm: Readable<number> = derived(events, ($events) =>
+  round2($events.reduce((sum, ev) => sum + (ev.quarantine === 'kept' ? ev.km ?? 0 : 0), 0)),
+);
+
+export const closedLineCount: Readable<number> = derived(events, ($events) =>
+  $events.filter((ev) => ev.quarantine === 'kept').length,
 );
 
 // ───────────────────────────────── actions ──────────────────────────────────
 
 let initialized = false;
 
-/** Built RailGeoPackages, served as static assets (pipeline/build-jp.ts, build-cn.ts). */
-const JP_PACKAGE_URL = `${import.meta.env.BASE_URL}rail/jp-2025.json`;
-const CN_PACKAGE_URL = `${import.meta.env.BASE_URL}rail/cn-jinghu-2025.json`;
+// Packages are served as static assets AND listed in rail/manifest.json (path + version + SHA-256).
+const RAIL_PRIMARY = import.meta.env.BASE_URL; // same-origin today
+// Optional China-reachable secondary origin (a CDN), tried when the primary fails. Empty until a CDN
+// is provisioned — the mechanism ships now; the URL is deploy config (VITE_RAIL_CDN_SECONDARY).
+const RAIL_SECONDARY = (import.meta.env.VITE_RAIL_CDN_SECONDARY as string | undefined) || '';
+const RAIL_ORIGINS = RAIL_SECONDARY ? [RAIL_PRIMARY, RAIL_SECONDARY] : [RAIL_PRIMARY];
 
 // Cold-start guard: a stalled/flaky network must never hang the loading screen forever. After this
 // long we abort the fetch, degrade (JP fallback / CN-miss retry), and let `bindFallbackRetry` recover.
 const FETCH_TIMEOUT_MS = 15_000;
+// The manifest is tiny (~1.5 KB) and only adds integrity/version over the stable package paths, so it
+// gets a SHORTER leash — a hung manifest must never serialize a full FETCH_TIMEOUT_MS ahead of the packages.
+const MANIFEST_TIMEOUT_MS = 5_000;
 
-/** Fetch one package, REJECTING a wrong-country payload; null on any failure (incl. timeout) so callers degrade. */
-async function fetchOne(url: string, expectedCountry: Country): Promise<RailGeoPackage | null> {
+/**
+ * fetch + fully consume the body under a SINGLE abort timeout. The timer stays armed across the
+ * `consume` callback, so a 200 response with a STALLED BODY aborts too — clearing the timer only
+ * after the body is read is what keeps boot from hanging on a half-delivered 8.8 MB package.
+ */
+async function withTimeout<T>(url: string, timeoutMs: number, consume: (res: Response) => Promise<T>): Promise<T> {
   const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
-  const timer =
-    ctl && typeof window !== 'undefined' ? window.setTimeout(() => ctl.abort(), FETCH_TIMEOUT_MS) : null;
+  const timer = ctl && typeof window !== 'undefined' ? window.setTimeout(() => ctl.abort(), timeoutMs) : null;
   try {
     const res = await fetch(url, ctl ? { signal: ctl.signal } : undefined);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const pkg = (await res.json()) as RailGeoPackage;
-    if (!pkg?.lines?.length || !pkg?.segments?.length) throw new Error('empty package');
-    // A swapped/poisoned artifact (the CN url serving a JP package, or vice-versa) must never load
-    // under the wrong namespace — that would strand or mis-count rides.
-    if (pkg.country !== expectedCountry) throw new Error(`expected ${expectedCountry}, got ${pkg.country}`);
-    if (pkg.crs !== 'WGS84') throw new Error(`non-WGS84 crs ${pkg.crs}`); // never accept GCJ-02
-    return pkg;
-  } catch (err) {
-    const reason = ctl?.signal.aborted ? `timed out after ${FETCH_TIMEOUT_MS}ms` : String(err);
-    console.warn(`[store] ${expectedCountry} package ${url} unavailable (${reason})`);
-    return null;
+    return await consume(res);
   } finally {
     if (timer !== null) window.clearTimeout(timer);
   }
 }
 
+/** Hex SHA-256 of bytes; null in an insecure context (no crypto.subtle → integrity check is skipped). */
+async function sha256Hex(buf: ArrayBuffer): Promise<string | null> {
+  if (typeof crypto === 'undefined' || !crypto.subtle) return null;
+  const digest = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** A manifest sha is usable only as a well-formed 64-char lowercase hex digest (case-normalized). */
+function normalizeSha(sha: string | undefined): string | null {
+  if (!sha) return null;
+  const hex = sha.trim().toLowerCase();
+  return /^[0-9a-f]{64}$/.test(hex) ? hex : null;
+}
+
 /**
- * Load the real network packages with PER-PACKAGE handling. JP is REQUIRED — its failure falls back
- * to the stub so the app always boots with SOMETHING. The CN corridor is ADDITIVE: if it 404s or is
- * malformed we boot JP-only rather than failing the whole map. `ok` reflects only the required JP load.
+ * Fetch + verify one package by its relative path, trying each origin (primary, then the CDN
+ * secondary). REJECTS a wrong-country payload AND — when the manifest supplies a sha — a payload
+ * whose bytes don't match (a truncated/poisoned artifact silently shifts the km denominator).
+ * null on total failure so callers degrade.
+ */
+async function fetchOne(relPath: string, expectedCountry: Country, expectedSha?: string): Promise<RailGeoPackage | null> {
+  const wantSha = normalizeSha(expectedSha);
+  if (expectedSha && !wantSha) {
+    console.warn(`[store] ${expectedCountry} manifest sha "${expectedSha}" is malformed; loading without integrity check`);
+  }
+  for (const origin of RAIL_ORIGINS) {
+    const url = `${origin}${relPath}`;
+    try {
+      return await withTimeout(url, FETCH_TIMEOUT_MS, async (res): Promise<RailGeoPackage> => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const buf = await res.arrayBuffer(); // body read is COVERED by the same abort timer
+        if (wantSha) {
+          const got = await sha256Hex(buf);
+          // got === null only in an insecure context (no crypto.subtle); HTTPS prod always verifies.
+          if (got !== null && got !== wantSha) throw new Error(`sha256 mismatch (${got.slice(0, 8)}… ≠ ${wantSha.slice(0, 8)}…)`);
+        }
+        const pkg = JSON.parse(new TextDecoder().decode(new Uint8Array(buf))) as RailGeoPackage;
+        if (!pkg?.lines?.length || !pkg?.segments?.length) throw new Error('empty package');
+        // A swapped/poisoned artifact (the CN url serving a JP package, or vice-versa) must never load
+        // under the wrong namespace — that would strand or mis-count rides.
+        if (pkg.country !== expectedCountry) throw new Error(`expected ${expectedCountry}, got ${pkg.country}`);
+        if (pkg.crs !== 'WGS84') throw new Error(`non-WGS84 crs ${pkg.crs}`); // never accept GCJ-02
+        return pkg;
+      });
+    } catch (err) {
+      const aborted = err instanceof DOMException && err.name === 'AbortError';
+      const reason = aborted ? `timed out after ${FETCH_TIMEOUT_MS}ms` : String(err);
+      console.warn(`[store] ${expectedCountry} package ${url} unavailable (${reason})`); // try the next origin
+    }
+  }
+  return null;
+}
+
+/**
+ * Load the real network packages, MANIFEST-DRIVEN (rail/manifest.json gives each package's path +
+ * SHA-256). If the manifest is unavailable we fall back to the known paths WITHOUT a sha check —
+ * integrity is best-effort, availability is not. JP is REQUIRED (its failure → JP-only stub); the
+ * CN corridor is ADDITIVE (404 → JP-only + retry). `ok` reflects only the required JP load.
  */
 async function fetchPackages(): Promise<{ ok: boolean; complete: boolean; pkgs: RailGeoPackage[] }> {
-  const [jp, cn] = await Promise.all([fetchOne(JP_PACKAGE_URL, 'JP'), fetchOne(CN_PACKAGE_URL, 'CN')]);
+  let manifest: Manifest | null = null;
+  try {
+    manifest = await withTimeout(`${RAIL_PRIMARY}rail/manifest.json`, MANIFEST_TIMEOUT_MS, async (res) =>
+      res.ok ? ((await res.json()) as Manifest) : null,
+    );
+  } catch { /* no manifest → path fallback below (no sha) */ }
+  const jpEntry = manifest?.packages?.JP;
+  const cnEntry = manifest?.packages?.CN;
+  // A loaded-but-incomplete manifest (entry/sha missing) is a build smell — warn, but still load
+  // best-effort from the default path. The manifest is a same-origin trusted root; bricking the app
+  // on a manifest typo is worse than loading unverified same-origin bytes (the sha guards transfer
+  // corruption, not a same-origin attacker who could rewrite both files anyway).
+  if (manifest && (!jpEntry?.sha256 || !cnEntry?.sha256)) {
+    console.warn('[store] manifest present but a package sha is missing; loading default path without integrity check');
+  }
+  const [jp, cn] = await Promise.all([
+    fetchOne(jpEntry?.path ?? 'rail/jp-2025.json', 'JP', jpEntry?.sha256),
+    fetchOne(cnEntry?.path ?? 'rail/cn-jinghu-2025.json', 'CN', cnEntry?.sha256),
+  ]);
   if (!jp) {
-    // JP-ONLY fallback — never seed a fake CN stub. The stub's CN ids don't match the real CN
-    // package, so a CN fallback would let a user "record" a China ride against mismatched ids that
-    // then strand on the real data. If CN itself fails, the same rule holds: JP-only + degraded.
+    // JP-ONLY fallback — never seed a fake CN stub whose ids mismatch the real package.
     console.warn('[store] real JP package unavailable; using JP-only stub (no CN fallback)');
     return { ok: false, complete: false, pkgs: [JP_PACKAGE] };
   }
@@ -259,6 +417,8 @@ function bindFallbackRetry(): void {
       if (ok) {
         packages.set(pkgs); // swap in whatever loaded (JP, or JP+CN); usingFallback clears off the stub
         usingFallback.set(false);
+        void migrateEventsIfNeeded(pkgs); // the real (versioned) package just arrived — migrate now,
+        // since init()'s one migration pass ran against the stub and saw nothing to do
       }
       // Only stop retrying once EVERY package is present — a JP-ok/CN-fail round keeps listening.
       if (complete) for (const ev of events) window.removeEventListener(ev, handler);
@@ -268,6 +428,149 @@ function bindFallbackRetry(): void {
   };
   const handler = (): void => { void attempt(); };
   for (const ev of events) window.addEventListener(ev, handler);
+}
+
+// ── N→N+1 geometry migration ────────────────────────────────────────────────────────────────
+// When a package version bumps and its segmentIds changed (the Phase-0 scheme change is the first
+// such), a returning user's events still pin the OLD ids. The build ships an old→new map per
+// version step; here we replay the chain to re-point events IN PLACE (id stays stable, coverage
+// keys on segmentId). NON-BLOCKING: runs after `ready`, off the first-paint path; a map that can't
+// load (offline / 404) leaves events untouched (the degraded banner covers it) and retries online.
+const MANIFEST_URL = `${import.meta.env.BASE_URL}rail/manifest.json`;
+
+interface MigrationStep { fromVersion: string; toVersion: string; path: string }
+interface Manifest {
+  schemaVersion?: number;
+  generatedAt?: string;
+  // sha256 is present from manifest schema v2 on (Phase 1); absent → integrity check is skipped.
+  packages: Record<string, { version: string; path: string; sha256?: string; migrations: MigrationStep[] }>;
+}
+
+/** Ordered migration steps WITHIN one package that carry `fromVersion` up to its current version. */
+function chainWithin(
+  pkg: { version: string; migrations: MigrationStep[] },
+  fromVersion: string,
+): MigrationStep[] | null {
+  if (pkg.version === fromVersion) return []; // already current
+  const byFrom = new Map(pkg.migrations.map((m) => [m.fromVersion, m]));
+  const steps: MigrationStep[] = [];
+  const seen = new Set<string>();
+  let cur = fromVersion;
+  while (cur !== pkg.version) {
+    if (seen.has(cur) || steps.length > pkg.migrations.length) return null; // cycle / runaway → refuse
+    seen.add(cur);
+    const step = byFrom.get(cur);
+    if (!step || step.toVersion === cur) break; // broken chain / self-loop
+    steps.push(step);
+    cur = step.toVersion;
+  }
+  return cur === pkg.version && steps.length ? steps : null;
+}
+
+/** Namespace from the STABLE country prefix (jp-… / cn-…), which a scheme migration never changes. */
+function namespaceOf(segmentId: string): Country {
+  return segmentId.startsWith('cn-') ? 'CN' : 'JP';
+}
+
+function withKmSnapshots(rows: RideEvent[]): RideEvent[] {
+  if (rows.length === 0) return rows;
+  const segById = get(geo).segmentById;
+  let changed = false;
+  const snapped = rows.map((ev) => {
+    if (ev.km !== undefined) return ev;
+    const seg = segById.get(ev.segmentId);
+    if (!seg) return ev;
+    changed = true;
+    return { ...ev, km: seg.km };
+  });
+  return changed ? snapped : rows;
+}
+
+let migrationRetryBound = false;
+function bindMigrationRetry(pkgs: RailGeoPackage[]): void {
+  if (migrationRetryBound || typeof window === 'undefined') return;
+  migrationRetryBound = true;
+  const triggers = ['online', 'focus', 'visibilitychange'];
+  const handler = (): void => {
+    migrationRetryBound = false;
+    for (const t of triggers) window.removeEventListener(t, handler);
+    void migrateEventsIfNeeded(pkgs);
+  };
+  for (const t of triggers) window.addEventListener(t, handler);
+}
+
+async function migrateEventsIfNeeded(pkgs: RailGeoPackage[]): Promise<void> {
+  if (typeof fetch === 'undefined') return;
+  const evs = get(events);
+  if (evs.length === 0) return;
+  // PER-NAMESPACE current version — JP and CN bump independently, so a global version set would let
+  // CN's version (e.g. 2025.1.0) mask a genuinely-stale JP event also pinned to 2025.1.0.
+  const versionByNs = new Map(pkgs.map((p) => [p.country, p.version]));
+  const stale = evs.filter((e) => {
+    const v = versionByNs.get(namespaceOf(e.segmentId));
+    return v !== undefined && e.railGeoVersion !== v;
+  });
+  if (stale.length === 0) return;
+
+  let manifest: Manifest;
+  try {
+    const res = await fetch(MANIFEST_URL);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    manifest = (await res.json()) as Manifest;
+  } catch (err) {
+    console.warn(`[store] migration manifest unavailable (${String(err)}); retrying on reconnect`);
+    bindMigrationRetry(pkgs);
+    return;
+  }
+
+  const mapCache = new Map<string, Record<string, string> | null>();
+  const segmentIdMap = async (path: string): Promise<Record<string, string> | null> => {
+    if (mapCache.has(path)) return mapCache.get(path)!;
+    let map: Record<string, string> | null = null;
+    try {
+      const res = await fetch(`${import.meta.env.BASE_URL}${path}`);
+      if (res.ok) map = ((await res.json()) as { segmentIdMap: Record<string, string> }).segmentIdMap ?? {};
+    } catch {
+      map = null;
+    }
+    mapCache.set(path, map);
+    return map;
+  };
+
+  const migrated: RideEvent[] = [];
+  let deferred = false; // a map didn't load → retry online, don't lose the migration
+  for (const ev of stale) {
+    const pkgEntry = manifest.packages[namespaceOf(ev.segmentId)];
+    if (!pkgEntry) continue; // no manifest entry for this namespace → leave (surfaces via warnings)
+    const chain = chainWithin(pkgEntry, ev.railGeoVersion);
+    if (!chain || chain.length === 0) continue;
+    let segId = ev.segmentId;
+    let version = ev.railGeoVersion;
+    let broke = false;
+    for (const step of chain) {
+      const map = await segmentIdMap(step.path);
+      if (map === null) { deferred = true; broke = true; break; } // transient — keep, retry
+      const next = map[segId];
+      if (next === undefined) { broke = true; break; } // unmapped (abolished segment) → orphan, leave as-is
+      segId = next;
+      version = step.toVersion;
+    }
+    if (broke) continue;
+    if (segId !== ev.segmentId || version !== ev.railGeoVersion) {
+      migrated.push({
+        ...ev,
+        segmentId: segId,
+        originalSegmentId: ev.originalSegmentId ?? ev.segmentId, // set ONCE — first-ever id
+        railGeoVersion: version,
+      });
+    }
+  }
+
+  if (migrated.length > 0) {
+    await db.putEvents(migrated); // bulkPut overwrites in place by the stable id; idempotent re-run is a no-op
+    await refresh(); // coverage self-heals on the new segmentIds
+  }
+  if (deferred) bindMigrationRetry(pkgs);
 }
 
 /** Boot the app: open db, load events + the real (or fallback) packages. Idempotent. */
@@ -284,7 +587,8 @@ export async function init(): Promise<void> {
     window.addEventListener('online', sync);
     window.addEventListener('offline', sync);
   }
-  ready.set(true);
+  ready.set(true);                  // render immediately (non-blocking)
+  void migrateEventsIfNeeded(pkgs); // re-point any version-stale events off the first-paint path
 }
 
 /** Swap in explicit RailGeoPackage(s) — used by tests and the importer's package override. */
@@ -367,10 +671,12 @@ export async function markRide(opts: {
   const tripId = db.newId();
   const createdAt = new Date().toISOString();
   const trainModel = opts.trainModel === undefined ? undefined : canonicalizeTrainModel(opts.trainModel) || undefined;
+  const segById = new Map(opts.pkg.segments.map((seg) => [seg.segmentId, seg]));
   const candidates: RideEvent[] = segmentIds.map((segmentId) => ({
     id: `${tripId}:${segmentId}`,
     segmentId,
     railGeoVersion: opts.pkg.version,
+    km: segById.get(segmentId)?.km,
     date: opts.date,
     trainModel,
     source: opts.source ?? 'manual',
@@ -428,13 +734,24 @@ export async function markRoute(
 
 /** Persist already-built events (importer commit, corridor seed). Merge semantics. */
 export async function addEvents(newEvents: RideEvent[]): Promise<void> {
-  await db.putEvents(newEvents);
+  await db.putEvents(withKmSnapshots(newEvents));
   await refresh();
 }
 
 /** Replace the entire log (merge-vs-replace = replace). */
 export async function replaceEvents(newEvents: RideEvent[]): Promise<void> {
-  await db.replaceAllEvents(newEvents);
+  await db.replaceAllEvents(withKmSnapshots(newEvents));
+  await refresh();
+}
+
+export async function keepAsOrphan(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const wanted = new Set(ids);
+  const updates = get(events)
+    .filter((ev) => wanted.has(ev.id))
+    .map((ev) => (ev.quarantine === 'kept' ? ev : { ...ev, quarantine: 'kept' as const }));
+  if (updates.length === 0) return;
+  await db.putEvents(updates);
   await refresh();
 }
 

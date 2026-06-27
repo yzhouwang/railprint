@@ -10,10 +10,12 @@ One tap gives you a Spotify-Wrapped-style share card. **Japan, plus one China co
 > **China corridor is a preview.** It's a curated WGS-84 station-sequence polyline (北京南 → 上海虹桥,
 > 13 stops), **not** full China track geometry yet — that's a tracked refinement from OpenStreetMap ways (ODbL).
 
-> Working name. Status: **v0.9.0.2** — the real MLIT N02 national network (594 lines, ~10,000 stations,
+> Working name. Status: **v0.10.0.0** — the real MLIT N02 national network (594 lines, ~10,000 stations,
 > ~26,800 km) in full official color with logos, operating-company labels, bilingual names, and a
 > zoom-tiered map; cross-line route marking; a trip diary + train-model collection; and the first
-> China corridor (京沪高速铁路).
+> China corridor (京沪高速铁路). The rail data is content-addressed and SHA-256 verified, works fully
+> offline (installable PWA), and a returning rider's coverage survives multi-version data refreshes —
+> rides on now-abolished track are kept as closed-line history rather than silently dropped.
 
 ## v0 (web-app-first)
 

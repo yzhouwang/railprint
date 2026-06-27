@@ -2,6 +2,48 @@
 
 All notable changes to RailPrint are documented here.
 
+## [0.10.0.0] - 2026-06-27
+
+Rail-geo durability program complete (Phases 0-4): deterministic content-addressed IDs, SHA-256 package integrity, an offline service worker (installable PWA), a chained N→N+2 migration engine, and the quarantine review below. The 0.9.1.0–0.9.2.0 entries are the development increments folded into this milestone.
+
+This release adds **Phase 4 (quarantine):** rides whose track was abolished in a data refresh are no longer silently dropped from coverage — they surface for review and can be kept as closed-line history.
+
+### Added
+- **Quarantine review.** When a refresh abolishes the segment a ride was recorded on, the ride becomes an "orphan" (its `segmentId` no longer resolves). Before, it silently vanished from your map. Now a calm **確認待ち** card in 統計 (not the "network failed" banner — the package loaded fine, only one segment is gone) opens a review sheet that **groups orphans by line** with a one-tap すべて廃線として残す. The honest action for abolished track is **keep as a closed line** (廃線として残す): the ride stays as real history and surfaces as a positive **廃線 km** stat, never a coverage deduction. `RideEvent` gains `km` (snapshotted at record time, since an abolished segment's km is otherwise unknowable) + `quarantine`; `orphanGroups` / `orphanCount` / `closedLineKm` are namespace-aware, so a transient package-load failure can never mass-quarantine a log.
+
+### Fixed
+- **An all-orphaned log was hidden.** A returning user whose entire log was orphaned (0 resolved km) saw the cold-start empty state instead of the review — orphans hidden exactly when every ride needed them. The stats body and `App` cold-start gate now stay live whenever there are orphans or kept closed-line rides. (Caught by a Codex↔Claude cross-review.)
+
+### How it was built
+Two-lane Codex (engine) + Claude (UI), a `/plan-design-review` that took the one-line plan to a full spec, then a Codex↔Claude cross-review (the P1 above + dialog a11y: Escape on `svelte:window`, 44px touch targets, distinct close labels) and /qa. 282 vitest + 41 geometry + 16 e2e (incl. an orphan-only review-reachability test) + svelte-check clean. This release rides on the same PR as Phases 0-3 (re-landing Phase 0 onto master). The package CDN extraction + E1 open ridelog remain, tracked in `docs/designs/rail-geo-durable-package.md`.
+
+## [0.9.2.0] - 2026-06-27
+
+Rail-geo durability, Phases 1-3: the rail data is now integrity-verified, works fully offline, and a returning user's coverage survives multi-version data refreshes.
+
+### Added
+- **Package integrity (SHA-256).** The build emits a `manifest.json` (schema v2) carrying a per-file SHA-256 for every rail package and migration map, deterministic across rebuilds. The app now loads packages manifest-driven and verifies the fetched bytes against that digest — a truncated or poisoned package is rejected rather than silently shifting your coverage denominator. A configurable China-reachable secondary origin (`VITE_RAIL_CDN_SECONDARY`) is tried after the primary.
+- **Offline support (service worker).** A Workbox service worker precaches the app shell plus all rail data (packages + migration maps, 15 entries / ~11 MB) at one content-revision, so you can open the app and mark a ride with no signal. Manifest and package are cached together, so the integrity check never sees a fresh-manifest / stale-package skew; a within-year data refresh still busts the cache because the cache key is the file's content hash. RailPrint is now an installable PWA (manifest + icon).
+- **Chained migration.** The N→N+1 engine is proven to chain N→N+2 (e.g. 2025.1.0 → 2025.2.0 → 2025.3.0): a pinned event walks every step to the current id, `originalSegmentId` preserved as the first-ever id. A missing mid-chain map is all-or-nothing — the event stays at its known-good id and retries, never half-migrated.
+
+### Fixed
+- **Boot could hang on a stalled package body.** The cold-start timeout now stays armed through the response body read (`arrayBuffer`/`json`), so a 200 response with a half-delivered 8.8 MB package aborts and degrades instead of freezing the loading screen. (Caught by a Codex↔Claude cross-review.)
+- SHA-256 comparison is now case-normalized and format-validated; a malformed manifest digest logs and skips rather than mis-comparing.
+
+### How it was built
+Two-lane Codex + Claude (engine + app), a Codex↔Claude cross-review that caught the P1 boot-hang and a weak offline test, then /qa and /ship. 278 vitest (incl. SHA-mismatch + chained-migration + a new **offline-record e2e** that marks a ride with the network cut) + 41 geometry + 14 e2e + deterministic manifest. This PR also re-lands Phase 0 (v0.9.1.0) onto master, which had merged only into an intermediate branch. Remaining: the package CDN extraction + full quarantine UX + the open ridelog spec, tracked in `docs/designs/rail-geo-durable-package.md`.
+
+## [0.9.1.0] - 2026-06-27
+
+Rail-geo durability, Phase 0: rail IDs are now content-addressed and deterministic, and a returning user's saved rides survive a routine data refresh.
+
+### Added
+- **Content-addressed JP IDs.** `segmentId` is now `lineId:fromGroup-toGroup` (the endpoints' N02 group codes) instead of positional `fromSeq-toSeq`, and `lineId` drops the build-ORDER `#N` collision suffix for a content hash (only on a real slug clash). IDs no longer drift when the N02 source reorders, so a routine annual refresh can't silently break a user's coverage. Geometry is byte-identical (only the 9,442 IDs changed); rebuild is deterministic.
+- **N→N+1 migration engine.** The build ships an old→new `segmentId` map (`public/rail/migrations/jp/<from>-to-<to>.json`) + a `manifest.json`; on a version bump the app re-points a user's pinned events in place — **non-blocking** (after first paint), idempotent, **per-namespace** (JP and CN bump independently), `originalSegmentId` preserved for reversibility, and a fail-safe that leaves events intact + retries online rather than ever locking a user out. `RideEvent` gains `originalSegmentId`.
+
+### How it was built
+A full `/plan-ceo-review` + `/plan-eng-review`, a 2-round Codex↔Claude design conversation that locked the ID scheme (hash-on-collision), and a Codex↔Claude cross-review (2 P1 store bugs caught + fixed; the migration map verified a corruption-free 9442/9442 bijection against the shipped package). 274 vitest + 41 geometry + 12 e2e + a version-bump golden test (coverage preserved across a bump). CN stays positional pending its own station-identity scheme; broad China + the package CDN/offline phases remain in `docs/designs/rail-geo-durable-package.md`.
+
 ## [0.9.0.2] - 2026-06-26
 
 Hardening pass from a full-codebase audit: close real data-loss and trust holes in shipped code, backfill tests, and polish the rough UX edges.

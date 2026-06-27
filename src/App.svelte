@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ready, offline, headline, dataDegraded } from './lib/store';
+  import { ready, offline, headline, dataDegraded, orphanCount, closedLineCount } from './lib/store';
   import { activeTab, markMode, type Tab } from './lib/ui';
   import { isDesktop } from './lib/media';
 
@@ -16,8 +16,13 @@
   import StatsScreen from './screens/StatsScreen.svelte';
   import ImportScreen from './screens/ImportScreen.svelte';
 
-  // Cold-start hero everywhere except the place you fix it (the import tab).
-  const showEmpty = $derived(!$headline.hasRides && $activeTab !== 'import');
+  // Cold-start hero everywhere except the place you fix it (the import tab). A returning user whose
+  // whole log is now orphaned (riddenKm 0 → !hasRides) still has rides to review/keep, so orphans or
+  // kept closed-line rides keep the app out of the cold-start state — otherwise Phase 4's quarantine
+  // surface would be unreachable exactly when every ride needs it.
+  const showEmpty = $derived(
+    !$headline.hasRides && $orphanCount === 0 && $closedLineCount === 0 && $activeTab !== 'import',
+  );
 
   function toggleMark(): void {
     activeTab.set('map');
