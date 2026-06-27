@@ -172,12 +172,102 @@ export const litSegmentIds: Readable<string[]> = derived(coverages, ($coverages)
  * shows a 'network data unavailable, retrying' banner instead of presenting that as truth.
  */
 export const dataDegraded: Readable<boolean> = derived(
-  [usingFallback, events, geo],
-  ([$usingFallback, $events, $geo]) =>
-    ($usingFallback && $events.length > 0) ||
-    // a saved ride whose segment is in NO loaded package = a package (e.g. the CN corridor) failed
-    // to load, so that ride would silently read as 0 coverage. Surface it instead of hiding it.
-    $events.some((e) => !$geo.segmentById.has(e.segmentId)),
+  [usingFallback, events, packages],
+  ([$usingFallback, $events, $packages]) => {
+    if ($usingFallback && $events.length > 0) return true;
+    const loadedSegments = loadedSegmentSetsByNamespace($packages, $usingFallback);
+    // A saved ride whose NAMESPACE has no loaded package = a package (e.g. the CN corridor)
+    // failed to load, so that ride would silently read as 0 coverage. A missing segment inside a
+    // loaded namespace is Phase 4 quarantine data, not a transient package-load failure.
+    return $events.some((e) => !loadedSegments.has(namespaceOf(e.segmentId)));
+  },
+);
+
+// ─────────────────────────────── quarantine ─────────────────────────────────
+
+export interface OrphanRide {
+  id: string;
+  segmentId: string;
+  lineLabel: string;
+  date?: string;
+  km?: number;
+}
+
+export interface OrphanGroup {
+  lineId: string;
+  lineLabel: string;
+  rides: OrphanRide[];
+}
+
+function lineIdOfSegment(segmentId: string): string {
+  const i = segmentId.indexOf(':');
+  return i === -1 ? segmentId : segmentId.slice(0, i);
+}
+
+function lineLabelFromLineId(lineId: string): string {
+  const parts = lineId.split('-').filter(Boolean);
+  return parts.length > 0 ? parts[parts.length - 1] : lineId;
+}
+
+function loadedSegmentSetsByNamespace(pkgs: RailGeoPackage[], degradedJP: boolean): Map<Country, Set<string>> {
+  const out = new Map<Country, Set<string>>();
+  for (const pkg of pkgs) {
+    // `usingFallback` means JP is represented by the stub, not the user's real namespace package.
+    // Treat that namespace as degraded so a transient fetch failure cannot quarantine the log.
+    if (pkg.country === 'JP' && degradedJP) continue;
+    out.set(pkg.country, new Set(pkg.segments.map((s) => s.segmentId)));
+  }
+  return out;
+}
+
+/** Pending abolished-segment rides, grouped by parsed line label for the quarantine UI. */
+export const orphanGroups: Readable<OrphanGroup[]> = derived(
+  [packages, events, usingFallback],
+  ([$packages, $events, $usingFallback]) => {
+    const loadedSegments = loadedSegmentSetsByNamespace($packages, $usingFallback);
+    const groups = new Map<string, { lineLabel: string; rides: (OrphanRide & { sortKey: string })[] }>();
+
+    for (const ev of $events) {
+      if (ev.quarantine === 'kept') continue;
+      const segs = loadedSegments.get(namespaceOf(ev.segmentId));
+      if (!segs || segs.has(ev.segmentId)) continue;
+
+      const lineId = lineIdOfSegment(ev.segmentId);
+      const lineLabel = lineLabelFromLineId(lineId);
+      const group = groups.get(lineId) ?? { lineLabel, rides: [] };
+      group.rides.push({
+        id: ev.id,
+        segmentId: ev.segmentId,
+        lineLabel,
+        date: ev.date,
+        km: ev.km,
+        sortKey: ev.date ?? ev.createdAt,
+      });
+      groups.set(lineId, group);
+    }
+
+    return [...groups.entries()]
+      .map(([lineId, group]) => ({
+        lineId,
+        lineLabel: group.lineLabel,
+        rides: group.rides
+          .sort((a, b) => b.sortKey.localeCompare(a.sortKey) || a.id.localeCompare(b.id))
+          .map(({ sortKey: _sortKey, ...ride }) => ride),
+      }))
+      .sort((a, b) => b.rides.length - a.rides.length || a.lineLabel.localeCompare(b.lineLabel) || a.lineId.localeCompare(b.lineId));
+  },
+);
+
+export const orphanCount: Readable<number> = derived(orphanGroups, ($groups) =>
+  $groups.reduce((sum, g) => sum + g.rides.length, 0),
+);
+
+export const closedLineKm: Readable<number> = derived(events, ($events) =>
+  round2($events.reduce((sum, ev) => sum + (ev.quarantine === 'kept' ? ev.km ?? 0 : 0), 0)),
+);
+
+export const closedLineCount: Readable<number> = derived(events, ($events) =>
+  $events.filter((ev) => ev.quarantine === 'kept').length,
 );
 
 // ───────────────────────────────── actions ──────────────────────────────────
@@ -382,6 +472,20 @@ function namespaceOf(segmentId: string): Country {
   return segmentId.startsWith('cn-') ? 'CN' : 'JP';
 }
 
+function withKmSnapshots(rows: RideEvent[]): RideEvent[] {
+  if (rows.length === 0) return rows;
+  const segById = get(geo).segmentById;
+  let changed = false;
+  const snapped = rows.map((ev) => {
+    if (ev.km !== undefined) return ev;
+    const seg = segById.get(ev.segmentId);
+    if (!seg) return ev;
+    changed = true;
+    return { ...ev, km: seg.km };
+  });
+  return changed ? snapped : rows;
+}
+
 let migrationRetryBound = false;
 function bindMigrationRetry(pkgs: RailGeoPackage[]): void {
   if (migrationRetryBound || typeof window === 'undefined') return;
@@ -567,10 +671,12 @@ export async function markRide(opts: {
   const tripId = db.newId();
   const createdAt = new Date().toISOString();
   const trainModel = opts.trainModel === undefined ? undefined : canonicalizeTrainModel(opts.trainModel) || undefined;
+  const segById = new Map(opts.pkg.segments.map((seg) => [seg.segmentId, seg]));
   const candidates: RideEvent[] = segmentIds.map((segmentId) => ({
     id: `${tripId}:${segmentId}`,
     segmentId,
     railGeoVersion: opts.pkg.version,
+    km: segById.get(segmentId)?.km,
     date: opts.date,
     trainModel,
     source: opts.source ?? 'manual',
@@ -628,13 +734,24 @@ export async function markRoute(
 
 /** Persist already-built events (importer commit, corridor seed). Merge semantics. */
 export async function addEvents(newEvents: RideEvent[]): Promise<void> {
-  await db.putEvents(newEvents);
+  await db.putEvents(withKmSnapshots(newEvents));
   await refresh();
 }
 
 /** Replace the entire log (merge-vs-replace = replace). */
 export async function replaceEvents(newEvents: RideEvent[]): Promise<void> {
-  await db.replaceAllEvents(newEvents);
+  await db.replaceAllEvents(withKmSnapshots(newEvents));
+  await refresh();
+}
+
+export async function keepAsOrphan(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const wanted = new Set(ids);
+  const updates = get(events)
+    .filter((ev) => wanted.has(ev.id))
+    .map((ev) => (ev.quarantine === 'kept' ? ev : { ...ev, quarantine: 'kept' as const }));
+  if (updates.length === 0) return;
+  await db.putEvents(updates);
   await refresh();
 }
 

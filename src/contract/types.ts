@@ -84,11 +84,15 @@ export interface RideEvent {
   segmentId: string;     // remapped in place by a railGeoVersion migration; coverage derives from THIS
   originalSegmentId?: string; // the FIRST-EVER segmentId, set once on the first migration — reversibility audit
   railGeoVersion: string; // pin — bumped to the package version once an N→N+1 migration remaps this event
+  // Phase 4 quarantine steering bump: snapshot km at record time so an abolished segment can
+  // remain visible as closed-line history even after the segment leaves the loaded package.
+  km?: number;
   date?: string;         // ISO date; OPTIONAL (undated imports still count to coverage)
   trainModel?: string;
   source: RideSource;
   tripId?: string;       // Claude T11 groups legs into a trip
   importBatchId?: string;
+  quarantine?: 'kept';   // Phase 4: user kept an orphan as closed-line history; absent = active/pending
   createdAt: string;     // ISO
 }
 
