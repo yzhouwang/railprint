@@ -2,9 +2,11 @@
 
 All notable changes to RailPrint are documented here.
 
-## [0.9.3.0] - 2026-06-27
+## [0.10.0.0] - 2026-06-27
 
-Rail-geo durability, Phase 4: rides whose track was abolished in a data refresh are no longer silently dropped from coverage — they surface for review and can be kept as closed-line history.
+Rail-geo durability program complete (Phases 0-4): deterministic content-addressed IDs, SHA-256 package integrity, an offline service worker (installable PWA), a chained N→N+2 migration engine, and the quarantine review below. The 0.9.1.0–0.9.2.0 entries are the development increments folded into this milestone.
+
+This release adds **Phase 4 (quarantine):** rides whose track was abolished in a data refresh are no longer silently dropped from coverage — they surface for review and can be kept as closed-line history.
 
 ### Added
 - **Quarantine review.** When a refresh abolishes the segment a ride was recorded on, the ride becomes an "orphan" (its `segmentId` no longer resolves). Before, it silently vanished from your map. Now a calm **確認待ち** card in 統計 (not the "network failed" banner — the package loaded fine, only one segment is gone) opens a review sheet that **groups orphans by line** with a one-tap すべて廃線として残す. The honest action for abolished track is **keep as a closed line** (廃線として残す): the ride stays as real history and surfaces as a positive **廃線 km** stat, never a coverage deduction. `RideEvent` gains `km` (snapshotted at record time, since an abolished segment's km is otherwise unknowable) + `quarantine`; `orphanGroups` / `orphanCount` / `closedLineKm` are namespace-aware, so a transient package-load failure can never mass-quarantine a log.
