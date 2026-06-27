@@ -12,7 +12,12 @@
   import Button from '../components/Button.svelte';
   import Pill from '../components/Pill.svelte';
   import Diorama from '../components/Diorama.svelte';
-  import { headline, coverages, geo, events } from '../lib/store';
+  import QuarantineCard from '../components/QuarantineCard.svelte';
+  import QuarantineSheet from '../components/QuarantineSheet.svelte';
+  import { headline, coverages, geo, events, closedLineKm, closedLineCount } from '../lib/store';
+
+  // Phase 4 — the quarantine review sheet opens from the QuarantineCard below the coverage cards.
+  let quarantineOpen = $state(false);
   import { summarizeDiary } from '../lib/trips';
   import { toast } from '../lib/ui';
   import { buildWrappedData, renderWrappedBlobSync } from '../lib/wrapped/card';
@@ -121,12 +126,24 @@
   {#if $headline.hasRides}
     <CountryStatCards />
 
+    <QuarantineCard onopen={() => (quarantineOpen = true)} />
+
     <FolderTabCard label="記録">
       <div class="rows">
         <div class="row">
           <span class="u-label">都道府県・地域</span>
           <span class="rowval"><span class="num u-display">{$headline.prefectures}</span></span>
         </div>
+        {#if $closedLineCount > 0}
+          <!-- Phase 4: rides on now-abolished track, kept as history — a positive 廃線 stat, never a deduction. -->
+          <div class="row">
+            <span class="u-label">廃線</span>
+            <span class="rowval">
+              <span class="sval">{$closedLineKm.toLocaleString()} km</span>
+              <span class="ssub u-emphasis">{$closedLineCount}区間</span>
+            </span>
+          </div>
+        {/if}
         {#each wrapped.superlatives as s (s.label)}
           <div class="row">
             <span class="u-label">{s.label}</span>
@@ -190,6 +207,10 @@
     </FolderTabCard>
   {/if}
 </div>
+
+{#if quarantineOpen}
+  <QuarantineSheet onclose={() => (quarantineOpen = false)} />
+{/if}
 
 <style>
   .stats {
