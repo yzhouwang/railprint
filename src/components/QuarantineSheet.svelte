@@ -15,6 +15,14 @@
   let { onclose }: Props = $props();
 
   let busy = $state(false);
+  let sheetEl: HTMLDivElement | undefined = $state();
+
+  // Move focus into the dialog on open so keyboard + screen-reader users land inside it. A full
+  // Tab focus-trap is deferred; initial focus + Escape (on svelte:window, since the backdrop isn't
+  // focusable) cover the core modal a11y.
+  $effect(() => {
+    sheetEl?.focus();
+  });
 
   async function keep(ids: string[]): Promise<void> {
     if (busy || ids.length === 0) return;
@@ -27,23 +35,19 @@
   }
 </script>
 
-<div
-  class="backdrop"
-  role="presentation"
-  onclick={onclose}
-  onkeydown={(e) => e.key === 'Escape' && onclose()}
-></div>
-<div class="sheet" role="dialog" aria-modal="true" aria-label="確認待ちの記録">
+<svelte:window onkeydown={(e) => e.key === 'Escape' && onclose()} />
+<div class="backdrop" role="presentation" onclick={onclose}></div>
+<div class="sheet" bind:this={sheetEl} tabindex="-1" role="dialog" aria-modal="true" aria-label="確認待ちの記録">
   <header class="head">
     <h2 class="htitle">確認待ちの記録</h2>
-    <button class="close" type="button" aria-label="閉じる" onclick={onclose}>✕</button>
+    <button class="close" type="button" aria-label="確認待ちの記録を閉じる" onclick={onclose}>✕</button>
   </header>
 
   {#if $orphanGroups.length === 0}
     <div class="done">
       <p class="donemark" aria-hidden="true">✓</p>
       <p class="u-muted">すべて確認済みです。</p>
-      <Button full onclick={onclose}>閉じる</Button>
+      <Button full onclick={onclose}>統計に戻る</Button>
     </div>
   {:else}
     <p class="reassure u-muted">
@@ -60,7 +64,7 @@
             {#each g.rides as r (r.id)}
               <li class="ride">
                 <span class="rdate u-muted">{r.date ?? '日付なし'}</span>
-                {#if r.km}<span class="rkm u-muted">{r.km.toLocaleString()} km</span>{/if}
+                {#if r.km}<span class="rkm u-muted">{r.km.toLocaleString('ja-JP')} km</span>{/if}
                 <button class="rkeep" type="button" disabled={busy} onclick={() => keep([r.id])}>
                   廃線として残す
                 </button>
@@ -124,7 +128,9 @@
     background: none;
     font-size: 18px;
     line-height: 1;
-    padding: 6px;
+    min-width: 44px;
+    min-height: 44px;
+    margin: -8px -8px -8px 0; /* keep the 44px hit area without bloating the header height */
     cursor: pointer;
     color: var(--rail-text);
   }
@@ -173,7 +179,7 @@
   }
   .rkeep {
     margin-left: auto;
-    min-height: 32px;
+    min-height: 44px;
     padding: 0 var(--space-md);
     border: 1px solid var(--rail-dim);
     border-radius: var(--radius-button);

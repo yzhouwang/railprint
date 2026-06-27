@@ -56,9 +56,44 @@ test('QUARANTINE: an orphaned ride surfaces in 統計 and "keep as a closed line
   await page.getByRole('button', { name: /すべて廃線として残す/ }).click();
   await expect(page.getByText('すべて確認済みです')).toBeVisible({ timeout: 10_000 });
 
-  // Close the sheet (the done-state primary button; the header ✕ shares the 閉じる label) → the
-  // orphan is now a positive 廃線 stat (42 km), and the 確認待ち card is gone.
-  await page.getByRole('button', { name: '閉じる' }).last().click();
+  // Close the sheet → the orphan is now a positive 廃線 stat (42 km), and the 確認待ち card is gone.
+  await page.getByRole('button', { name: '統計に戻る' }).click();
   await expect(page.getByText('42 km')).toBeVisible({ timeout: 10_000 });
   await expect(page.getByRole('button', { name: '確認する' })).toHaveCount(0);
+});
+
+/** Seed only an orphan (no resolved ride) straight into IndexedDB → riddenKm stays 0 (!hasRides). */
+async function seedOrphanOnly(page: Page): Promise<void> {
+  await page.evaluate(
+    async ({ orphanSeg, version }) => {
+      await new Promise<void>((resolve, reject) => {
+        const open = indexedDB.open('railprint');
+        open.onsuccess = () => {
+          const db = open.result;
+          const tx = db.transaction('rideEvents', 'readwrite');
+          tx.objectStore('rideEvents').put({ id: crypto.randomUUID(), segmentId: orphanSeg, railGeoVersion: version, source: 'manual', date: '2025-05-01', km: 7, createdAt: new Date().toISOString() });
+          tx.oncomplete = () => { db.close(); resolve(); };
+          tx.onerror = () => reject(tx.error);
+        };
+        open.onerror = () => reject(open.error);
+      });
+    },
+    { orphanSeg: ORPHAN_SEG, version: VERSION },
+  );
+}
+
+test('QUARANTINE: an all-orphaned log (riddenKm 0) still reaches the review, not the cold-start empty state', async ({ page }) => {
+  await page.goto('/?e2e=1');
+  await page.waitForFunction(bootedDb, null, { timeout: 20_000 });
+  await seedOrphanOnly(page);
+  await page.reload();
+  await page.waitForFunction(bootedDb, null, { timeout: 20_000 });
+
+  // hasRides is false (no resolved ride), but the app must NOT show the global cold-start EmptyState —
+  // the 統計 tab reaches the 確認待ち card so the user can act on rides whose track was abolished.
+  await page.getByRole('button', { name: /統計/ }).first().click();
+  await expect(page.getByText('確認待ち').first()).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText('鉄道網データを読み込めませんでした')).toHaveCount(0);
+  await page.getByRole('button', { name: '確認する' }).click();
+  await expect(page.getByText('確認待ちの記録')).toBeVisible();
 });

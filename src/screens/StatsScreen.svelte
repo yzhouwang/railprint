@@ -14,7 +14,7 @@
   import Diorama from '../components/Diorama.svelte';
   import QuarantineCard from '../components/QuarantineCard.svelte';
   import QuarantineSheet from '../components/QuarantineSheet.svelte';
-  import { headline, coverages, geo, events, closedLineKm, closedLineCount } from '../lib/store';
+  import { headline, coverages, geo, events, orphanCount, closedLineKm, closedLineCount } from '../lib/store';
 
   // Phase 4 — the quarantine review sheet opens from the QuarantineCard below the coverage cards.
   let quarantineOpen = $state(false);
@@ -123,39 +123,49 @@
 <div class="stats">
   <h1 class="title">統計</h1>
 
-  {#if $headline.hasRides}
-    <CountryStatCards />
+  <!-- Phase 4: the quarantine entry must survive an all-orphaned log (riddenKm 0 → !hasRides), so the
+       stats body renders whenever there are rides OR orphans OR kept closed-line rides. The coverage
+       cards, diary, and Wrapped still need real resolved rides, so they stay behind hasRides. -->
+  {#if $headline.hasRides || $orphanCount > 0 || $closedLineCount > 0}
+    {#if $headline.hasRides}
+      <CountryStatCards />
+    {/if}
 
     <QuarantineCard onopen={() => (quarantineOpen = true)} />
 
-    <FolderTabCard label="記録">
-      <div class="rows">
-        <div class="row">
-          <span class="u-label">都道府県・地域</span>
-          <span class="rowval"><span class="num u-display">{$headline.prefectures}</span></span>
+    {#if $headline.hasRides || $closedLineCount > 0}
+      <FolderTabCard label="記録">
+        <div class="rows">
+          {#if $headline.hasRides}
+            <div class="row">
+              <span class="u-label">都道府県・地域</span>
+              <span class="rowval"><span class="num u-display">{$headline.prefectures}</span></span>
+            </div>
+          {/if}
+          {#if $closedLineCount > 0}
+            <!-- rides on now-abolished track, kept as history — a positive 廃線 stat, never a deduction. -->
+            <div class="row">
+              <span class="u-label">廃線</span>
+              <span class="rowval">
+                <span class="sval">{$closedLineKm.toLocaleString('ja-JP')} km</span>
+                <span class="ssub u-emphasis">{$closedLineCount}区間</span>
+              </span>
+            </div>
+          {/if}
+          {#each $headline.hasRides ? wrapped.superlatives : [] as s (s.label)}
+            <div class="row">
+              <span class="u-label">{s.label}</span>
+              <span class="rowval">
+                <span class="sval">{s.value}</span>
+                {#if s.sub}<span class="ssub u-emphasis">{s.sub}</span>{/if}
+              </span>
+            </div>
+          {/each}
         </div>
-        {#if $closedLineCount > 0}
-          <!-- Phase 4: rides on now-abolished track, kept as history — a positive 廃線 stat, never a deduction. -->
-          <div class="row">
-            <span class="u-label">廃線</span>
-            <span class="rowval">
-              <span class="sval">{$closedLineKm.toLocaleString()} km</span>
-              <span class="ssub u-emphasis">{$closedLineCount}区間</span>
-            </span>
-          </div>
-        {/if}
-        {#each wrapped.superlatives as s (s.label)}
-          <div class="row">
-            <span class="u-label">{s.label}</span>
-            <span class="rowval">
-              <span class="sval">{s.value}</span>
-              {#if s.sub}<span class="ssub u-emphasis">{s.sub}</span>{/if}
-            </span>
-          </div>
-        {/each}
-      </div>
-    </FolderTabCard>
+      </FolderTabCard>
+    {/if}
 
+    {#if $headline.hasRides}
     <FolderTabCard label="旅の記録">
       {#if diaryRows.length > 0}
         <ul class="trips">
@@ -194,6 +204,7 @@
         </Button>
       </div>
     </FolderTabCard>
+    {/if}
   {:else}
     <!-- Zero state (desktop side-panel can land here; mobile routes to EmptyState). -->
     <FolderTabCard label="統計">
