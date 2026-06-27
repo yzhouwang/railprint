@@ -2,6 +2,19 @@
 
 All notable changes to RailPrint are documented here.
 
+## [0.9.3.0] - 2026-06-27
+
+Rail-geo durability, Phase 4: rides whose track was abolished in a data refresh are no longer silently dropped from coverage — they surface for review and can be kept as closed-line history.
+
+### Added
+- **Quarantine review.** When a refresh abolishes the segment a ride was recorded on, the ride becomes an "orphan" (its `segmentId` no longer resolves). Before, it silently vanished from your map. Now a calm **確認待ち** card in 統計 (not the "network failed" banner — the package loaded fine, only one segment is gone) opens a review sheet that **groups orphans by line** with a one-tap すべて廃線として残す. The honest action for abolished track is **keep as a closed line** (廃線として残す): the ride stays as real history and surfaces as a positive **廃線 km** stat, never a coverage deduction. `RideEvent` gains `km` (snapshotted at record time, since an abolished segment's km is otherwise unknowable) + `quarantine`; `orphanGroups` / `orphanCount` / `closedLineKm` are namespace-aware, so a transient package-load failure can never mass-quarantine a log.
+
+### Fixed
+- **An all-orphaned log was hidden.** A returning user whose entire log was orphaned (0 resolved km) saw the cold-start empty state instead of the review — orphans hidden exactly when every ride needed them. The stats body and `App` cold-start gate now stay live whenever there are orphans or kept closed-line rides. (Caught by a Codex↔Claude cross-review.)
+
+### How it was built
+Two-lane Codex (engine) + Claude (UI), a `/plan-design-review` that took the one-line plan to a full spec, then a Codex↔Claude cross-review (the P1 above + dialog a11y: Escape on `svelte:window`, 44px touch targets, distinct close labels) and /qa. 282 vitest + 41 geometry + 16 e2e (incl. an orphan-only review-reachability test) + svelte-check clean. This release rides on the same PR as Phases 0-3 (re-landing Phase 0 onto master). The package CDN extraction + E1 open ridelog remain, tracked in `docs/designs/rail-geo-durable-package.md`.
+
 ## [0.9.2.0] - 2026-06-27
 
 Rail-geo durability, Phases 1-3: the rail data is now integrity-verified, works fully offline, and a returning user's coverage survives multi-version data refreshes.
