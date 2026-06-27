@@ -73,6 +73,6 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     setupFiles: ['./src/test-setup.ts'],
-    include: ['src/**/*.{test,spec}.ts', 'pipeline/**/*.{test,spec}.ts'],
+    include: ['src/**/*.{test,spec}.ts'], // the rail-geo pipeline tests now live in the railnet repo
   },
 });
