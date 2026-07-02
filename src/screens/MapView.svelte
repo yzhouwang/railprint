@@ -61,13 +61,15 @@
   import { buildPopupModel, popupHtml } from '../lib/map/popup';
   import { companyFor } from '../lib/company';
 
-  // Loaded lazily so the module-eval is browser-free.
+  // maplibre types are TYPE-ONLY imports — erased at compile time (verbatimModuleSyntax +
+  // isolatedModules), so they do NOT violate the "never statically import maplibre" rule above:
+  // that rule bans a side-effectful VALUE load of the WebGL library, which still happens lazily in
+  // onMount via `await import(...)`. `Map` is aliased so it does not shadow the JS built-in Map.
+  import type { Map as MapLibreMap, Popup as MapLibrePopup, FilterSpecification } from 'maplibre-gl';
   type MapLib = typeof import('maplibre-gl');
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let map: any = null;
+  let map: MapLibreMap | null = null;
   let mapLib: MapLib | null = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let popup: any = null; // C5 reusable bilingual hover/selection popup
+  let popup: MapLibrePopup | null = null; // C5 reusable bilingual hover/selection popup
 
   let container: HTMLDivElement;
   let status = $state<'loading' | 'ready' | 'error'>('loading');
@@ -434,8 +436,8 @@
     const pkgs = get(packages);
     const selSeg = selectedLine ? selectedLineSegmentIds(selectedLine, pkgs) : [];
     const selSt = selectedLine ? selectedLineStationIds(selectedLine, pkgs) : [];
-    map.setFilter(SEGMENTS_LAYER, lodFilter('segmentId', lit, selSeg));
-    map.setFilter(STATIONS_LAYER, lodFilter('stationId', litStations, selSt));
+    map.setFilter(SEGMENTS_LAYER, lodFilter('segmentId', lit, selSeg) as FilterSpecification);
+    map.setFilter(STATIONS_LAYER, lodFilter('stationId', litStations, selSt) as FilterSpecification);
   }
 
   // React to litSegmentIds changes: small/equal → snap; big grow → D5 flood wave.
@@ -469,8 +471,8 @@
     if (!map || !styleLoaded) return;
     const segIds = selectedLineSegmentIds(line, get(packages));
     const stIds = selectedLineStationIds(line, get(packages));
-    map.setFilter(SELECTION_CASING_LAYER, inFilter('segmentId', segIds));
-    map.setFilter(HIGHLIGHT_STATION_LAYER, inFilter('stationId', stIds));
+    map.setFilter(SELECTION_CASING_LAYER, inFilter('segmentId', segIds) as FilterSpecification);
+    map.setFilter(HIGHLIGHT_STATION_LAYER, inFilter('stationId', stIds) as FilterSpecification);
     // C9 LOD: re-apply visibility so the selected line shows even if its tier zoom isn't reached.
     const curLit = get(litSegmentIds);
     applyLodFilters(curLit, litStationIds(curLit, get(packages)));
