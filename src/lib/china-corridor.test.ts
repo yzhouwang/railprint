@@ -9,7 +9,8 @@ import { buildWrappedData } from './wrapped/card';
 import type { Headline } from './store';
 
 // T3/T9 — the one China corridor proves the schema is country-agnostic. Golden-file the built
-// package (read the committed artifact; regenerate with `npm run build:rail-geo:cn`).
+// package (read the committed artifact; it is produced by the railnet package and synced in via
+// `npm run sync:railnet`).
 const CN: RailGeoPackage = JSON.parse(readFileSync('public/rail/cn-jinghu-2025.json', 'utf8'));
 
 describe('京沪 China corridor package (golden)', () => {

@@ -1,6 +1,6 @@
 {
   "name": "railprint",
-  "version": "0.10.0.0",
+  "version": "0.10.0.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,17 +8,13 @@
     "build": "svelte-check --tsconfig ./tsconfig.json && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "check": "svelte-check --tsconfig ./tsconfig.json",
-    "build:rail-geo:fixture": "node pipeline/cli.ts --input rail-geo/fixtures/jp-toy-input.json --out rail-geo/generated",
-    "build:rail-geo:jp": "node pipeline/build-jp.ts --out public/rail/jp-2025.json && node pipeline/build-manifest.ts",
-    "build:manifest": "node pipeline/build-manifest.ts",
-    "verify:rail-geo:jp": "node pipeline/verify-jp.ts",
-    "test": "node --test tests/geometry/*.test.ts && node pipeline/verify-jp.ts && vitest run",
-    "test:geometry": "node --test tests/geometry/*.test.ts",
+    "sync:railnet": "node scripts/sync-railnet.mjs",
+    "sync:railnet:check": "node scripts/sync-railnet.mjs --check",
+    "verify:rail": "node scripts/verify-rail.mjs",
+    "test": "npm run check && vitest run",
     "test:app": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test",
-    "build:rail-geo:cn": "node pipeline/build-cn.ts --out public/rail/cn-jinghu-2025.json",
-    "build:rail-geo": "npm run build:rail-geo:jp && npm run build:rail-geo:cn && npm run build:manifest"
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "dexie": "^4.0.11",
@@ -31,6 +27,7 @@
     "@sveltejs/vite-plugin-svelte": "^5.0.3",
     "@tsconfig/svelte": "^5.0.4",
     "@types/geojson": "^7946.0.14",
+    "@types/node": "^24.13.2",
     "fake-indexeddb": "^6.0.0",
     "jsdom": "^25.0.1",
     "svelte": "^5.19.0",

@@ -1,6 +1,0 @@
-{
-  "schemaVersion": 1,
-  "description": "Manual overrides for N02 line geometry and station romaji readings. Station reading keys are raw N02_005g values and win after OSM/Wikidata joins.",
-  "lines": [],
-  "stationReadings": {}
-}

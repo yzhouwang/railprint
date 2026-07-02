@@ -1,0 +1,11 @@
+{
+  "_comment": "RailPrint pins the railnet rail-geo data package here. public/rail/* and src/contract/rail-package.ts are GENERATED from railnet@version by `npm run sync:railnet` — do not hand-edit them; edit in railnet and re-sync. See RAILNET.md.",
+  "name": "railnet",
+  "version": "0.10.0.0",
+  "source": "../railnet",
+  "data": {
+    "JP": "2025.2.0",
+    "CN": "2025.1.0"
+  },
+  "manifestSchemaVersion": 2
+}

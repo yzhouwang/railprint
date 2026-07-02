@@ -2,6 +2,18 @@
 
 All notable changes to RailPrint are documented here.
 
+## [0.10.0.1] - 2026-06-27
+
+Extracted the rail-geo data + build into a standalone package, **railnet**. No runtime change.
+
+### Changed
+- **rail-geo is now its own package.** The build pipeline, the MLIT N02 / OSM / Wikimedia sources, and the released artifacts moved out of this repo into a standalone, independently-versioned **railnet** repo. RailPrint is now a consumer: it pins a railnet version (`railnet.json`), vendors the built artifacts (`public/rail/` stays committed), and the contract is shared via `src/contract/rail-package.ts` (synced from railnet). Runtime is **unchanged** — same-origin, so offline + SHA-256 + the service worker all keep working; the boundary is now versioned + compile-checkable instead of a runtime skew. `npm run sync:railnet` re-vendors + re-verifies; `npm run verify:rail` (in CI) checks the vendored artifacts against their own manifest SHA-256.
+
+### Fixed (de-risk, from a readiness audit + a 6-agent verification workflow)
+- The integrity **manifest is now a typed, shared contract** (`RailManifest`) with explicit `MANIFEST_SCHEMA_VERSION`; the store **rejects a manifest whose schema is newer than it understands** (was hand-duplicated producer/consumer — a silent-skew trap). The split's boundary was independently verified skew-safe: coverage math ignores `railGeoVersion`, the old/new segment IDs are 100% disjoint, and every drop-out surfaces as a warning, never silent.
+- The map's rail attribution is single-sourced from the contract (it had drifted from the pipeline's).
+- **Declared `@types/node` as a devDependency.** Two test files read the vendored `public/rail/*.json` fixtures via `node:fs`; the type was only ever resolved transitively, so the new CI's clean `npm ci` + `svelte-check` failed to find `node:fs`. Now explicit — a latent gap the CI (added in this release) exposed.
+
 ## [0.10.0.0] - 2026-06-27
 
 Rail-geo durability program complete (Phases 0-4): deterministic content-addressed IDs, SHA-256 package integrity, an offline service worker (installable PWA), a chained N→N+2 migration engine, and the quarantine review below. The 0.9.1.0–0.9.2.0 entries are the development increments folded into this milestone.

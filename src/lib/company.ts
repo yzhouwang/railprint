@@ -28,7 +28,7 @@ const COMPANY_LABELS: Record<string, string> = {
   鹿児島市: '鹿児島市電',
   函館市: '函館市電',
   一般社団法人札幌市交通事業振興公社: '札幌市電',
-  // Major private — brand short forms (mirror pipeline/line-style.ts LINE_PREFIX_BY_OPERATOR)
+  // Major private — brand short forms (display-only; a known duplicate of railnet's LINE_PREFIX_BY_OPERATOR)
   東急電鉄: '東急',
   京王電鉄: '京王',
   京成電鉄: '京成',

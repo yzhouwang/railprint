@@ -6,73 +6,24 @@
 // NEITHER lane mutates this file. A change requires a steering-control bump.
 // See docs/agents/ORCHESTRATION.md.
 
-export type Country = 'JP' | 'CN';
-
-// ───────────────────────────── RAIL-GEO PACKAGE ─────────────────────────────
-// Produced by GPT-5.5/engine (T2 stitch, T3 Shinkansen, T9 China corridor) as a
-// frozen, versioned artifact. Consumed by Opus 4.8 (T5 resolver + T6 map). This is
-// the single cross-lane boundary; T7 golden tests (engine) gate it on drift.
-export interface RailGeoPackage {
-  version: string;       // semver, pinned in every RideEvent
-  generatedAt: string;   // ISO 8601
-  crs: 'WGS84';          // always — never GCJ-02
-  country: Country;
-  lines: RailLine[];
-  segments: RailSegment[];
-  stations: RailStation[];
-}
-
-export interface RailLine {
-  lineId: string;
-  name: string;
-  operator?: string;     // operating company (N02_004 formal name, e.g. 東日本旅客鉄道); shown as a muted label. [steering bump]
-  nameRoma?: string;     // romaji line name (山手線 → "Yamanote Line"); OSM/Wikidata-sourced [steering bump]
-  color?: string;        // official line color (hex); ALWAYS set — sourced or operator-default [steering bump]
-  logo?: string;         // path under /rail/logos/ to the line's logo, only when sourced [steering bump]
-  rank?: 0 | 1 | 2 | 3 | 4; // map LOD tier: 0 Shinkansen … 4 minor. Drives per-segment minz (zoom reveal). [steering bump]
-  country: Country;
-  isHSR: boolean;        // JP: keyed off 事業者種別 N02_002==1
-  isLoop: boolean;
-  stationOrder: string[]; // ordered stationIds along the stitched line
-  geometry: GeoJSON.LineString; // stitched, ordered, direction-consistent, WGS84
-}
-
-// The coverage PRIMITIVE: one inter-station segment with precomputed km.
-export interface RailSegment {
-  // canonical id = `${lineId}:${discriminator}`, a BUILD-STABLE key for the inter-station segment.
-  //  • JP (v2 scheme): the endpoints' raw N02_005g group codes `${fromGroup}-${toGroup}` —
-  //    content-addressed, stable across data refreshes (revisit lines: `${fromGroup}@${k}-${toGroup}@${k}`).
-  //  • Generic/CN builds still emit positional `${fromSeq}-${toSeq}` until a per-namespace station
-  //    identity scheme lands (CN has no group codes yet — deferred to E2 broad-China).
-  // positional fromSeq/toSeq stay on the struct as metadata regardless. [JP v2 — steering bump 2026-06-27]
-  segmentId: string;
-  lineId: string;
-  fromStationId: string;
-  toStationId: string;
-  fromSeq: number;
-  toSeq: number;
-  km: number;            // precomputed at BUILD time (turf), runtime only sums
-  isHSR: boolean;
-  arcDirection?: 'cw' | 'ccw'; // REQUIRED for loop lines (two arcs between A,B)
-  geometry: GeoJSON.LineString;
-}
-
-export interface RailStation {
-  stationId: string;     // UNIQUE per (line, station). For N02: `${lineId}:${N02_005g}`.
-  name: string;
-  nameRoma?: string;     // romaji reading (新宿 → "Shinjuku"); keyed by stationGroupId at build time,
-  //                        so transfer stations share one reading. ~97% coverage. [steering bump]
-  romaSource?: 'osm' | 'wikidata' | 'manual'; // provenance for ODbL attribution + accuracy audit
-  lineId: string;
-  seq: number;
-  lon: number;
-  lat: number;
-  // The cross-line station-group code (N02_005g): SHARED by the same physical station
-  // across lines (新宿 on 7 lines → same stationGroupId, different stationId). Optional;
-  // present for N02-sourced packages. Enables future transfer detection without colliding
-  // stationId (which MUST stay line-unique, or geo.stationById collapses). [steering bump]
-  stationGroupId?: string;
-}
+// ───────────────────────── THE RAILNET DATA CONTRACT ────────────────────────
+// The rail-geo data shape now lives in ./rail-package — OWNED BY railnet (the standalone
+// rail-geo data package), synced into the app + pinned via railnet.json. Re-exported here
+// so the existing ~30 `from '../contract/types'` import sites keep working unchanged. A
+// change to the data shape happens in railnet, not here. (RailManifest typing the integrity
+// manifest + the schema-version constants close the old producer/consumer silent-skew trap.)
+import type { RailGeoPackage } from './rail-package';
+export type {
+  Country,
+  RailGeoPackage,
+  RailLine,
+  RailSegment,
+  RailStation,
+  RailManifest,
+  RailManifestPackage,
+  RailMigrationStep,
+} from './rail-package';
+export { PACKAGE_SCHEMA_VERSION, MANIFEST_SCHEMA_VERSION, RAIL_ATTRIBUTION_JP } from './rail-package';
 
 // ─────────────────────────── COVERAGE + RIDE EVENTS ──────────────────────────
 // Opus 4.8 (T5) owns the Dexie store + resolver. The store reads the geometry

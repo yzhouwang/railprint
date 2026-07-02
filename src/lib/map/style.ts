@@ -14,6 +14,7 @@
 // segment and never re-set.
 
 import type { RailGeoPackage, RailLine, RailSegment } from '../../contract/types';
+import { RAIL_ATTRIBUTION_JP } from '../../contract/types';
 import { tokens, stroke } from '../../design/tokens';
 
 /**
@@ -24,11 +25,11 @@ import { tokens, stroke } from '../../design/tokens';
 export const DEFAULT_LINE_COLOR = '#7C8A82';
 
 /**
- * CC BY 4.0 credit for the rail network data (MLIT N02). REQUIRED to be visible — surfaced
- * via the map's attribution control. Mirrors `N02_ATTRIBUTION` in pipeline/n02-ingest.ts.
+ * CC BY 4.0 credit for the rail network data (MLIT N02). REQUIRED to be visible — surfaced via the
+ * map's attribution control. Sourced from the SHARED railnet contract (RAIL_ATTRIBUTION_JP) so the
+ * app credit and the pipeline can never drift again (they had, before the contract owned this string).
  */
-export const RAIL_ATTRIBUTION =
-  '鉄道データ: 国土数値情報（N02）2025年度版（国土交通省）を加工して作成（CC BY 4.0）';
+export const RAIL_ATTRIBUTION = RAIL_ATTRIBUTION_JP;
 
 /**
  * Romanized station/line readings (nameRoma) are sourced from OpenStreetMap by the engine

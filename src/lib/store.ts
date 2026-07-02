@@ -8,12 +8,15 @@ import type {
   CoverageResult,
   RailGeoPackage,
   RailLine,
+  RailManifest,
+  RailMigrationStep,
   RailSegment,
   RailStation,
   RideEvent,
   RideSource,
   RouteCandidate,
 } from '../contract/types';
+import { MANIFEST_SCHEMA_VERSION } from '../contract/types';
 import { coverageWarnings, resolveCoverage, segmentsBetween, type CoverageWarning } from './resolver';
 import * as db from './db';
 import { JP_PACKAGE } from '../fixtures/stubPackage';
@@ -366,9 +369,15 @@ async function fetchOne(relPath: string, expectedCountry: Country, expectedSha?:
 async function fetchPackages(): Promise<{ ok: boolean; complete: boolean; pkgs: RailGeoPackage[] }> {
   let manifest: Manifest | null = null;
   try {
-    manifest = await withTimeout(`${RAIL_PRIMARY}rail/manifest.json`, MANIFEST_TIMEOUT_MS, async (res) =>
-      res.ok ? ((await res.json()) as Manifest) : null,
-    );
+    manifest = await withTimeout(`${RAIL_PRIMARY}rail/manifest.json`, MANIFEST_TIMEOUT_MS, async (res) => {
+      if (!res.ok) return null;
+      const m = (await res.json()) as Manifest;
+      if (!manifestSchemaSupported(m)) {
+        console.warn(`[store] manifest schemaVersion ${m.schemaVersion} > supported ${MANIFEST_SCHEMA_VERSION}; ignoring (last-good paths)`);
+        return null;
+      }
+      return m;
+    });
   } catch { /* no manifest → path fallback below (no sha) */ }
   const jpEntry = manifest?.packages?.JP;
   const cnEntry = manifest?.packages?.CN;
@@ -438,12 +447,16 @@ function bindFallbackRetry(): void {
 // load (offline / 404) leaves events untouched (the degraded banner covers it) and retries online.
 const MANIFEST_URL = `${import.meta.env.BASE_URL}rail/manifest.json`;
 
-interface MigrationStep { fromVersion: string; toVersion: string; path: string }
-interface Manifest {
-  schemaVersion?: number;
-  generatedAt?: string;
-  // sha256 is present from manifest schema v2 on (Phase 1); absent → integrity check is skipped.
-  packages: Record<string, { version: string; path: string; sha256?: string; migrations: MigrationStep[] }>;
+// Manifest + migration shapes are the SHARED railnet contract (rail-package.ts) — one definition,
+// so a producer/consumer skew can't silently mis-read a returning user's coverage. (Before the split
+// these were hand-duplicated here AND in the build, with the schema version hardcoded in both.)
+type MigrationStep = RailMigrationStep;
+type Manifest = RailManifest;
+
+/** Reject a manifest whose schema is NEWER than this consumer understands — fail-safe to the last-good
+ *  paths rather than mis-reading a future producer's shape. An older/absent schemaVersion still loads. */
+function manifestSchemaSupported(m: Manifest): boolean {
+  return m.schemaVersion === undefined || m.schemaVersion <= MANIFEST_SCHEMA_VERSION;
 }
 
 /** Ordered migration steps WITHIN one package that carry `fromVersion` up to its current version. */
@@ -516,7 +529,9 @@ async function migrateEventsIfNeeded(pkgs: RailGeoPackage[]): Promise<void> {
   try {
     const res = await fetch(MANIFEST_URL);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    manifest = (await res.json()) as Manifest;
+    const parsed = (await res.json()) as Manifest;
+    if (!manifestSchemaSupported(parsed)) throw new Error(`manifest schemaVersion ${parsed.schemaVersion} > supported ${MANIFEST_SCHEMA_VERSION}`);
+    manifest = parsed;
   } catch (err) {
     console.warn(`[store] migration manifest unavailable (${String(err)}); retrying on reconnect`);
     bindMigrationRetry(pkgs);
