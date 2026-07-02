@@ -18,7 +18,7 @@ import type {
 import { MANIFEST_SCHEMA_VERSION } from '../contract/types';
 import { coverageWarnings, resolveCoverage, segmentsBetween, type CoverageWarning } from './resolver';
 import * as db from './db';
-import { JP_PACKAGE } from '../fixtures/stubPackage';
+import { JP_PACKAGE } from './fallback-package';
 import { canonicalizeTrainModel } from './train-models';
 
 // ───────────────────────────────── state ────────────────────────────────────

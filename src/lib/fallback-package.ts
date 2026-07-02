@@ -1,12 +1,12 @@
-// STUB RailGeoPackage — lets the experience lane (resolver, store, map, importer)
-// run in PARALLEL with the engine before its real, golden-gated package lands
-// (ORCHESTRATION step 2). It is shaped EXACTLY like the contract's RailGeoPackage and
-// is swapped out 1:1 for the engine artifact once T2/T3/T7 are green — no app code
-// downstream of `loadPackage()` should know whether it got the stub or the real thing.
+// FALLBACK RailGeoPackage — a small, contract-shaped RailGeoPackage with two live roles:
+//   1. PRODUCTION FALLBACK. When the real vendored package fails to fetch, store.ts loads this so
+//      the app still renders (in degraded mode — `usingFallback`); it SHIPS in the bundle. This is
+//      why it lives in lib/, not a test-only fixtures dir.
+//   2. SHARED TEST FIXTURE. Every unit test resolves coverage/search/route against it, so the app
+//      code stays identical whether it got this or the real thing.
 //
-// Coordinates are real-ish station points; segment `km` is a build-time haversine over
-// consecutive stations (the real package uses turf over full polylines). The stub never
-// runs at app runtime in production — it is a dev/test fixture behind loadPackage().
+// Coordinates are real-ish station points; segment `km` is a build-time haversine over consecutive
+// stations (the real package uses turf over full polylines). Kept deliberately small.
 
 import type {
   Country,

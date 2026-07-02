@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { JP_PACKAGE, CN_PACKAGE, STUB_PACKAGES } from './stubPackage';
+import { JP_PACKAGE, CN_PACKAGE, STUB_PACKAGES } from './fallback-package';
 import type { RailGeoPackage } from '../contract/types';
 
 function checkPackage(pkg: RailGeoPackage): void {

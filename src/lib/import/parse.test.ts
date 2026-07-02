@@ -4,7 +4,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { buildGeoIndex } from '../store';
-import { JP_PACKAGE, STUB_PACKAGES } from '../../fixtures/stubPackage';
+import { JP_PACKAGE, STUB_PACKAGES } from '../fallback-package';
 import { EXPORT_CSV_COLUMNS } from '../../contract/types';
 import { parseImport, isOurExport } from './parse';
 

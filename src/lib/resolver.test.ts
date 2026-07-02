@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { resolveCoverage, segmentsBetween, coverageWarnings } from './resolver';
-import { JP_PACKAGE, CN_PACKAGE, stationByName } from '../fixtures/stubPackage';
+import { JP_PACKAGE, CN_PACKAGE, stationByName } from './fallback-package';
 import type { RideEvent } from '../contract/types';
 
 let counter = 0;
