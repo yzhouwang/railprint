@@ -14,7 +14,7 @@
   import { onMount, tick } from 'svelte';
   import { get } from 'svelte/store';
   import { packages, litSegmentIds, geo, events, markRide, markRoute, removeTrip } from '../lib/store';
-  import { findRoutes } from '../lib/route';
+  import { SearchSeq, sameStation, classifyRoutes, type RouteOutcome } from '../lib/marking';
   import Pill from '../components/Pill.svelte';
   import { KNOWN_TRAIN_MODELS } from '../lib/train-models';
   import { markMode, toast } from '../lib/ui';
@@ -50,14 +50,7 @@
     runFlood,
     type SegPoint,
   } from '../lib/map/flood';
-  import {
-    buildSearchIndex,
-    resolveQuery,
-    groupKeyForHit,
-    preferPickedLine,
-    bilingualLabel,
-    type StationHit,
-  } from '../lib/search';
+  import { buildSearchIndex, resolveQuery, bilingualLabel, type StationHit } from '../lib/search';
   import { buildPopupModel, popupHtml } from '../lib/map/popup';
   import { companyFor } from '../lib/company';
   import { exposeE2EHandle, clearE2EHandle } from '../lib/map/e2e';
@@ -97,7 +90,7 @@
   let routeChoices = $state<RouteCandidate[]>([]); // cross-line route picker (search-mode)
   let noRoute = $state(false); // the two stations have no rail path between them
   let searching = $state(false); // route-finding in flight (paints "探索中" before the sync call)
-  let searchSeq = 0; // guards out-of-order async resolves (latest query wins)
+  const searchSeq = new SearchSeq(); // guards out-of-order async resolves (latest query wins)
 
   // The bilingual search index — rebuilt only when the geo index changes (i.e. packages swap).
   const searchIndex = $derived(buildSearchIndex($geo));
@@ -523,9 +516,9 @@
   }
 
   async function resolveInto(which: 'A' | 'B', raw: string): Promise<void> {
-    const seq = ++searchSeq;
+    const seq = searchSeq.next();
     const hits = await resolveQuery(raw, searchIndex);
-    if (seq !== searchSeq) return; // a newer keystroke superseded this resolve
+    if (!searchSeq.isCurrent(seq)) return; // a newer keystroke superseded this resolve
     if (which === 'A') {
       pickedA = null;
       routeChoices = [];
@@ -604,7 +597,7 @@
     if (!pickedA || !pickedB) return;
     const a = pickedA;
     const b = pickedB;
-    if (a.station.stationId === b.station.stationId) {
+    if (sameStation(a, b)) {
       toast('出発駅と到着駅が同じです', 'info');
       return;
     }
@@ -617,26 +610,22 @@
     await new Promise((r) => requestAnimationFrame(() => r(null))); // let the 探索中 state paint
     if (pickedA !== a || pickedB !== b) {
       searching = false;
-      return; // a newer pick superseded this one
+      return; // a newer pick superseded this one (object-identity guard; e2e-covered)
     }
-    let routes: RouteCandidate[];
+    let outcome: RouteOutcome;
     try {
-      routes = findRoutes(pkg, groupKeyForHit(a), groupKeyForHit(b));
+      // classifyRoutes wraps findRoutes + preferPickedLine + the length branching (pure, unit-tested).
+      outcome = classifyRoutes(pkg, a, b);
     } finally {
       searching = false;
     }
-    // Surface a route on the line the user actually picked first — never float a parallel Shinkansen
-    // above the local line they rode (which would tempt a one-tap phantom HSR mark).
-    routes = preferPickedLine(routes, new Set([a.line.lineId, b.line.lineId]));
-    if (routes.length === 0) {
+    if (outcome.kind === 'no-route') {
       noRoute = true; // warm no-route state with a leg-by-leg fallback
-      return;
+    } else if (outcome.kind === 'single') {
+      void commitRoute(outcome.route);
+    } else {
+      routeChoices = outcome.routes; // ≥2 candidates — show the route-picker
     }
-    if (routes.length === 1) {
-      void commitRoute(routes[0]);
-      return;
-    }
-    routeChoices = routes; // ≥2 candidates — show the route-picker
   }
 
   function pickRoute(r: RouteCandidate): void {
