@@ -103,7 +103,29 @@ Path: `src/screens/MapView.svelte`.
 **Do not touch** the flood animation (`midpoints`, `cancelFlood`, the two big `$effect`s ~:442–477), `showPopup`, tap-marking (`doMark`, `wireStationClicks`), LOD filters, or the `<style>` block. **Commit 3.**
 **Accept:** e2e 16/16 with ZERO spec edits; new marking tests green (vitest ≥ 287); check 0. **Behavior is the ONLY size gate** — the file will realistically land ~1150–1250 lines (~507 immovable `<style>`); there is NO ≤900 target, and chasing one by moving forbidden code is a failure.
 
-## Phase 4 — self-host Noto Sans JP (closes D7)
+## Phase 4 — self-host Noto Sans JP (closes D7) — **DESCOPED (2026-07-02), deferred to a focused follow-up**
+
+**Outcome: reverted.** The implementation worked (fonts self-hosted via `@fontsource/noto-sans-jp`,
+family unchanged, `document.fonts.check("16px 'Noto Sans JP'", "東京")` → true, zero third-party
+requests), BUT it broke the two `offline.spec.ts` e2e tests, and the fix would require either editing
+the spec (forbidden — the offline guarantee is the baseline) or reworking the service-worker
+first-load registration (too risky for this pass).
+
+**Root cause (proven by bisection + a headless SW-state diagnostic):** `offline.spec`'s
+`waitForPrecache` waits for `navigator.serviceWorker.controller` + the rail package cached, then cuts
+the network and reloads, expecting the SW to serve the shell. There is a narrow window where the SW
+has not yet *stably* taken control after its first-load claim; adding ANY font loading (eager,
+after-mount, or even gated on `serviceWorker.ready`) delays the SW settling enough that the test cuts
+the network mid-window → `page.reload()` fails with `ERR_INTERNET_DISCONNECTED`. A diagnostic with a
+3 s settle wait made it pass, confirming it's a settle-timing race, not a font-correctness bug. No
+user-facing offline regression (the shell precaches; fonts degrade to system fallback offline), but
+the test — correctly — does not tolerate the widened window.
+
+**Follow-up to land fonts:** eliminate the first-load SW *control gap* (so the SW controls stably from
+the first load without the post-claim window) — e.g. adjust the `registerType`/registration so
+`waitForPrecache`'s guarantee holds — THEN re-apply the self-host. Tracked; not in this PR.
+
+<details><summary>Original Phase 4 spec (for the follow-up)</summary>
 
 - Add `@fontsource/noto-sans-jp` (regular `dependencies`); import weights 400/500/700 in `app.css` or `main.ts`. Remove the three font `<link>`s from `index.html`; remove the `google-fonts` `runtimeCaching` block from `vite.config.ts` (:59–70).
 - **PWA (decided):** fontsource emits content-hashed woff2 under `/assets/`. Remove `woff2` from `globPatterns` (it is a no-op today) and add a same-origin runtime route — using a **predicate, not a glob string** (a bare `'/assets/*.woff2'` matches nothing in Workbox):
@@ -120,11 +142,13 @@ Path: `src/screens/MapView.svelte`.
   - Eyeball: DOM UI + the exported Wrapped card render real Japanese glyphs (not system fallback), both online and after going offline.
   - offline e2e + card.draw tests still green (regression guard, not font validation).
 
+</details>
+
 ## Phase 5 — hygiene + ship
 
 - `README.md:33`: drop "offline/PWA" from Deferred (shipped v0.9.2.0); scan the rest for staleness.
 - Remove `pmtiles` from `package.json` dependencies + `assetsInclude` + its comment in `vite.config.ts`; `npm install` to refresh the lockfile. Git history re-adds it when the tiles work lands.
-- Bump to `0.10.1.0` in `package.json` + `VERSION` + `README.md:13`; CHANGELOG entry summarizing: CI e2e gate, geo-index extraction, fallback-package rename, MapView decomposition + marking unit tests, self-hosted fonts, dead-dep removal. Keep the 4-part scheme (a change is a user decision, out of scope).
+- Bump to `0.10.1.0` in `package.json` + `VERSION` + `README.md:13`; CHANGELOG entry summarizing: CI e2e gate, geo-index extraction, fallback-package rename, MapView decomposition + marking unit tests, dead-dep removal. (Self-hosted fonts DESCOPED — see Phase 4.) Keep the 4-part scheme (a change is a user decision, out of scope).
 - Full gate set once more, then `/ship` (the draft PR promotes to ready).
 
 ## Explicit non-goals (settled — do not do)

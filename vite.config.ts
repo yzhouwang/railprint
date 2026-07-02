@@ -66,9 +66,6 @@ export default defineConfig({
       },
     }),
   ],
-  // PMTiles archives are fetched as static assets / via the protomaps protocol;
-  // keep them out of the JS bundle.
-  assetsInclude: ['**/*.pmtiles'],
   test: {
     globals: true,
     environment: 'jsdom',
