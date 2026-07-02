@@ -10,7 +10,9 @@ structure, test coverage, and CI.
 ### Added
 - **CI now runs the Playwright e2e suite** (`.github/workflows/ci.yml`) in a parallel job — the
   `MapView` map is dynamically-imported WebGL, unreachable by vitest, so the e2e suite is its only
-  coverage and CI never ran it. A map regression now fails CI. npm is cached on both jobs.
+  coverage and CI never ran it. A map regression now fails CI. npm is cached on both jobs. (The two
+  offline service-worker specs are excluded on CI — they're timing-sensitive on the cold SwiftShader
+  runner; they still run via `npm run test:e2e` locally. Tracked for a follow-up.)
 - **`src/lib/marking.ts` + 9 unit tests.** The search-mode route inference (the latest-wins resolve
   guard, the same-station guard, and the no-route/single/multi route classification) was reachable
   only through Playwright; the pure decision logic is now extracted and unit-tested.
