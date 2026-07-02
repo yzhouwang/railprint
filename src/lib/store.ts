@@ -541,11 +541,17 @@ async function migrateEventsIfNeeded(pkgs: RailGeoPackage[]): Promise<void> {
 export async function init(): Promise<void> {
   if (initialized) return;
   initialized = true;
+  // Open the durable store + load saved rides FIRST, before the slow, network-bound package fetch.
+  // refresh() is the first Dexie op, so it creates the object stores; doing it up front means the DB
+  // is ready independent of fetch speed. Otherwise a slow environment (CI's cold 8.8 MB fetch) creates
+  // the stores only AFTER the fetch, and anything that opens the DB in that window — e.g. an e2e seed
+  // that waits only for the DB name to appear — finds no rideEvents store. Also just better: coverage
+  // resolves the instant packages arrive, and saved rides are never gated on the network.
+  await refresh();
   const { ok, complete, pkgs } = await fetchPackages();
   packages.set(pkgs);
   usingFallback.set(!ok);
   if (!complete) bindFallbackRetry(); // retry until EVERY package is in (JP stub OR a missed CN corridor)
-  await refresh();
   if (typeof window !== 'undefined') {
     const sync = (): void => offline.set(!navigator.onLine);
     window.addEventListener('online', sync);

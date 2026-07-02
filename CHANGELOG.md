@@ -27,6 +27,13 @@ structure, test coverage, and CI.
   hook moved to `src/lib/map/e2e.ts` (the `window.__map`/`__mapReady` contract is byte-for-byte
   preserved — all e2e specs pass unchanged).
 
+### Fixed
+- **Boot opens the durable IndexedDB store before the network package fetch.** `init()` ran the slow
+  8.8 MB package fetch first and only opened Dexie afterward, so in a cold/slow environment the object
+  stores were created late — anything reading the DB in that window found no `rideEvents` store. It
+  now opens the store first, so it's ready independent of network speed (surfaced by the new CI e2e
+  job, whose cold fetch reproduced the race the fast local server hid).
+
 ### Removed
 - Dropped the unused `pmtiles` dependency (+ its `assetsInclude` entry) — it was never imported.
   Git history re-adds it when the vector-tile geometry work lands.
