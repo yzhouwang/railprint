@@ -13,6 +13,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+          cache: 'npm'
       - run: npm ci
       # The rail-geo data is produced by the railnet package and vendored here (public/rail). Verify
       # the vendored artifacts match their own manifest SHA-256 — a corrupted or partial sync fails
@@ -21,3 +22,18 @@ jobs:
       - run: npm run check        # svelte-check (typecheck)
       - run: npm run test:app     # vitest
       - run: npm run build
+
+  # The Playwright suite is MapView's only coverage — the map is dynamically imported + WebGL, so no
+  # vitest reaches it. Chromium's bundled SwiftShader gives headless WebGL2 (flags live in
+  # playwright.config.ts); its own webServer builds + previews on :4173. Runs in parallel with `app`.
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+      - run: npm ci
+      - run: npx playwright install chromium --with-deps
+      - run: npm run test:e2e
