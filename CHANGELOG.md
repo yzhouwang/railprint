@@ -12,6 +12,7 @@ Extracted the rail-geo data + build into a standalone package, **railnet**. No r
 ### Fixed (de-risk, from a readiness audit + a 6-agent verification workflow)
 - The integrity **manifest is now a typed, shared contract** (`RailManifest`) with explicit `MANIFEST_SCHEMA_VERSION`; the store **rejects a manifest whose schema is newer than it understands** (was hand-duplicated producer/consumer — a silent-skew trap). The split's boundary was independently verified skew-safe: coverage math ignores `railGeoVersion`, the old/new segment IDs are 100% disjoint, and every drop-out surfaces as a warning, never silent.
 - The map's rail attribution is single-sourced from the contract (it had drifted from the pipeline's).
+- **Declared `@types/node` as a devDependency.** Two test files read the vendored `public/rail/*.json` fixtures via `node:fs`; the type was only ever resolved transitively, so the new CI's clean `npm ci` + `svelte-check` failed to find `node:fs`. Now explicit — a latent gap the CI (added in this release) exposed.
 
 ## [0.10.0.0] - 2026-06-27
 
