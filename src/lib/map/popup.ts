@@ -3,8 +3,8 @@
 // its physical cross-line group, each as `[logo <img> | color swatch] 線名 (Romaji)`. Missing
 // logo → the color swatch. Extracted from MapView so it is unit-testable (no Svelte mount).
 
-import type { GeoIndex } from '../store';
-import { groupKeyOf } from '../store';
+import type { GeoIndex } from '../geo-index';
+import { groupKeyOf } from '../geo-index';
 import { bilingualLabel } from '../search';
 import { companyFor } from '../company';
 import { DEFAULT_LINE_COLOR } from './style';

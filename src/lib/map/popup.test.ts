@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildPopupModel, popupHtml, lineBadgeHtml, escapeHtml } from './popup';
 import { buildGeoIndex } from '../store';
-import { STUB_PACKAGES, JP_PACKAGE } from '../../fixtures/stubPackage';
+import { STUB_PACKAGES, JP_PACKAGE } from '../fallback-package';
 import { DEFAULT_LINE_COLOR } from './style';
 
 const geo = buildGeoIndex(STUB_PACKAGES);

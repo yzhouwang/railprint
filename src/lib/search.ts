@@ -10,8 +10,8 @@
 // needs kana↔romaji folding) so it never costs the map's first paint.
 
 import type { RailGeoPackage, RailLine, RailStation, RouteCandidate } from '../contract/types';
-import type { GeoIndex, StationGroupMember } from './store';
-import { groupKeyOf } from './store';
+import type { GeoIndex, StationGroupMember } from './geo-index';
+import { groupKeyOf } from './geo-index';
 import { normStation, diceSimilarity } from './import/crosswalk';
 import { segmentsBetween } from './resolver';
 

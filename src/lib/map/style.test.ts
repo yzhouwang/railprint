@@ -26,7 +26,7 @@ import {
   litStationIds,
 } from './style';
 import { tokens } from '../../design/tokens';
-import { STUB_PACKAGES, JP_PACKAGE } from '../../fixtures/stubPackage';
+import { STUB_PACKAGES, JP_PACKAGE } from '../fallback-package';
 
 describe('buildBaseStyle', () => {
   it('does NOT carry a glyphs:undefined key (MapLibre rejects it and blanks the map)', () => {

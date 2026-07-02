@@ -6,7 +6,7 @@ import {
   litAtFrame,
   diffNewlyLit,
 } from './flood';
-import { JP_PACKAGE } from '../../fixtures/stubPackage';
+import { JP_PACKAGE } from '../fallback-package';
 
 describe('segmentMidpoints', () => {
   it('computes a midpoint per segment from its endpoint stations', () => {

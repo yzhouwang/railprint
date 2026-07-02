@@ -2,6 +2,44 @@
 
 All notable changes to RailPrint are documented here.
 
+## [0.10.1.0] - 2026-07-02
+
+Architecture hardening (post-railnet-split review). No user-facing feature change; internal
+structure, test coverage, and CI.
+
+### Added
+- **CI now runs the Playwright e2e suite** (`.github/workflows/ci.yml`) in a parallel job — the
+  `MapView` map is dynamically-imported WebGL, unreachable by vitest, so the e2e suite is its only
+  coverage and CI never ran it. A map regression now fails CI. npm is cached on both jobs. (The two
+  offline service-worker specs are excluded on CI — they're timing-sensitive on the cold SwiftShader
+  runner; they still run via `npm run test:e2e` locally. Tracked for a follow-up.)
+- **`src/lib/marking.ts` + 9 unit tests.** The search-mode route inference (the latest-wins resolve
+  guard, the same-station guard, and the no-route/single/multi route classification) was reachable
+  only through Playwright; the pure decision logic is now extracted and unit-tested.
+
+### Changed
+- **`src/lib/geo-index.ts` extracted from the store.** `GeoIndex`/`buildGeoIndex`/`groupKeyOf` lived
+  in the stateful `store.ts`, so pure consumers (search, map/popup, export, wrapped/card)
+  value-imported the whole fetch/Dexie/fallback module graph. They now import a framework-free
+  module; `store.ts` re-exports the symbols so nothing else changed.
+- **`src/fixtures/stubPackage.ts` → `src/lib/fallback-package.ts`.** It ships in the production bundle
+  as the degraded-mode fallback, so it now lives in `lib/` with a header that says so (its old header
+  claimed it "never runs at app runtime").
+- **`MapView.svelte` decomposed:** the maplibre handles are typed (no more `any`), and the `?e2e` QA
+  hook moved to `src/lib/map/e2e.ts` (the `window.__map`/`__mapReady` contract is byte-for-byte
+  preserved — all e2e specs pass unchanged).
+
+### Fixed
+- **Boot opens the durable IndexedDB store before the network package fetch.** `init()` ran the slow
+  8.8 MB package fetch first and only opened Dexie afterward, so in a cold/slow environment the object
+  stores were created late — anything reading the DB in that window found no `rideEvents` store. It
+  now opens the store first, so it's ready independent of network speed (surfaced by the new CI e2e
+  job, whose cold fetch reproduced the race the fast local server hid).
+
+### Removed
+- Dropped the unused `pmtiles` dependency (+ its `assetsInclude` entry) — it was never imported.
+  Git history re-adds it when the vector-tile geometry work lands.
+
 ## [0.10.0.1] - 2026-06-27
 
 Extracted the rail-geo data + build into a standalone package, **railnet**. No runtime change.

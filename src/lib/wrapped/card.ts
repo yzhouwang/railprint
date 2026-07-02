@@ -12,7 +12,7 @@
 
 import type { CoverageResult } from '../../contract/types';
 import { tokens } from '../../design/tokens';
-import type { GeoIndex } from '../store';
+import type { GeoIndex } from '../geo-index';
 import type { Headline } from '../store';
 import { CANVAS_FONT_FAMILY, ensureWrappedFonts } from './font';
 

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { summarizeTrips, summarizeDiary, tripEndpoints } from './trips';
-import { JP_PACKAGE, stationByName } from '../fixtures/stubPackage';
+import { JP_PACKAGE, stationByName } from './fallback-package';
 import { segmentsBetween } from './resolver';
 import type { RideEvent } from '../contract/types';
 

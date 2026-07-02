@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, beforeEach } from 'vitest';
 import type { RailGeoPackage, RailLine, RailSegment, RailStation } from '../contract/types';
-import { JP_PACKAGE, STUB_PACKAGES, stationByName } from '../fixtures/stubPackage';
+import { JP_PACKAGE, STUB_PACKAGES, stationByName } from './fallback-package';
 import { segmentsBetween } from './resolver';
 import { __routeTest, findRoutes, MAX_ROUTE_STATIONS, MAX_SPURS } from './route';
 

@@ -3,7 +3,7 @@ import { get } from 'svelte/store';
 import { buildWrappedData } from './card';
 import { resolveCoverage } from '../resolver';
 import { headline as headlineStore, coverages as coveragesStore, geo as geoStore, loadPackages, replaceEvents, clearAllRides } from '../store';
-import { JP_PACKAGE, STUB_PACKAGES } from '../../fixtures/stubPackage';
+import { JP_PACKAGE, STUB_PACKAGES } from '../fallback-package';
 import type { RideEvent } from '../../contract/types';
 
 // Build the inputs the screen passes by snapshotting the live store after seeding events.

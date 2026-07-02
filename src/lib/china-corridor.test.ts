@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import { get } from 'svelte/store';
 import type { RailGeoPackage } from '../contract/types';
-import { JP_PACKAGE } from '../fixtures/stubPackage';
+import { JP_PACKAGE } from './fallback-package';
 import { buildGeoIndex, loadPackages, events as eventsStore, usingFallback, dataDegraded } from './store';
 import { resolveCoverage } from './resolver';
 import { buildWrappedData } from './wrapped/card';

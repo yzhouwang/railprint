@@ -2,7 +2,7 @@
 // The stub carries nameRoma + stationGroupId on the transfer stations (新宿/渋谷/東京/品川/…),
 // added by the experience lane so these run before the real engine package lands.
 import { describe, it, expect } from 'vitest';
-import { STUB_PACKAGES, JP_PACKAGE } from '../fixtures/stubPackage';
+import { STUB_PACKAGES, JP_PACKAGE } from './fallback-package';
 import { buildGeoIndex } from './store';
 import {
   buildSearchIndex,

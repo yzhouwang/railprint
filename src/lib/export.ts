@@ -12,7 +12,7 @@
 //   export omits id by design; importBatchId is a per-import grouping, not user data).
 
 import { EXPORT_CSV_COLUMNS, type RailGeoPackage, type RideEvent } from '../contract/types';
-import type { GeoIndex } from './store';
+import type { GeoIndex } from './geo-index';
 import { stringifyCsv } from './import/csv';
 
 const COLUMNS = EXPORT_CSV_COLUMNS.split(',') as [

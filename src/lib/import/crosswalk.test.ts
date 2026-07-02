@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { JP_PACKAGE, STUB_PACKAGES } from '../../fixtures/stubPackage';
+import { JP_PACKAGE, STUB_PACKAGES } from '../fallback-package';
 import { buildGeoIndex } from '../store';
 import {
   diceSimilarity,

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { ImportResolution, RideEvent } from '../../contract/types';
 import { buildGeoIndex } from '../store';
-import { JP_PACKAGE, STUB_PACKAGES } from '../../fixtures/stubPackage';
+import { JP_PACKAGE, STUB_PACKAGES } from '../fallback-package';
 import { parseImport, type ResolvedRow } from './parse';
 import { buildImportEvents, commitImport, eventId } from './commit';
 import * as db from '../db';

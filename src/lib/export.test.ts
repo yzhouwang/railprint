@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { RideEvent, ImportResolution } from '../contract/types';
 import { EXPORT_CSV_COLUMNS } from '../contract/types';
 import { buildGeoIndex } from './store';
-import { JP_PACKAGE, STUB_PACKAGES } from '../fixtures/stubPackage';
+import { JP_PACKAGE, STUB_PACKAGES } from './fallback-package';
 import { exportEventsToCsv, lineNameLookup } from './export';
 import { parseImport } from './import/parse';
 import { buildImportEvents } from './import/commit';

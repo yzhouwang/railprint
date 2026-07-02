@@ -11,7 +11,6 @@ import type {
   RailManifest,
   RailMigrationStep,
   RailSegment,
-  RailStation,
   RideEvent,
   RideSource,
   RouteCandidate,
@@ -19,7 +18,7 @@ import type {
 import { MANIFEST_SCHEMA_VERSION } from '../contract/types';
 import { coverageWarnings, resolveCoverage, segmentsBetween, type CoverageWarning } from './resolver';
 import * as db from './db';
-import { JP_PACKAGE } from '../fixtures/stubPackage';
+import { JP_PACKAGE } from './fallback-package';
 import { canonicalizeTrainModel } from './train-models';
 
 // ───────────────────────────────── state ────────────────────────────────────
@@ -41,63 +40,13 @@ export const offline = writable<boolean>(typeof navigator !== 'undefined' && !na
 export const usingFallback = writable<boolean>(false);
 
 // ─────────────────────────────── geo index ──────────────────────────────────
+// The index itself lives in ./geo-index (framework-free, so pure consumers don't pull in this
+// stateful module). store imports buildGeoIndex for the reactive `geo` derived below AND re-exports
+// the types + fns so existing importers keep resolving them from './store' unchanged.
 
-/** One physical-station instance on a particular line (a transfer station has many). */
-export interface StationGroupMember {
-  lineId: string;
-  stationId: string;
-}
-
-export interface GeoIndex {
-  lineById: Map<string, RailLine>;
-  stationById: Map<string, RailStation>;
-  segmentById: Map<string, RailSegment>;
-  linesByCountry: Map<Country, RailLine[]>;
-  stationsByLine: Map<string, RailStation[]>;
-  /**
-   * The cross-line station group (N02_005g) → every (line, station) instance that shares it.
-   * 新宿 on 7 lines collapses to ONE group with 7 members; line inference (search.ts) intersects
-   * two stations' groups across the lines they appear on. Stations lacking a stationGroupId fall
-   * back to a synthetic per-station group keyed `solo:<stationId>` so inference still works 1:1.
-   */
-  stationGroupById: Map<string, StationGroupMember[]>;
-}
-
-/** The group key for a station: its cross-line stationGroupId, or a synthetic solo key. */
-export function groupKeyOf(station: RailStation): string {
-  return station.stationGroupId ?? `solo:${station.stationId}`;
-}
-
-/**
- * Pure builder for the geo index over a set of packages. The reactive `geo` store derives
- * from this; tests reuse it directly (no Svelte subscription) so there is ONE indexer, no drift.
- */
-export function buildGeoIndex(pkgs: RailGeoPackage[]): GeoIndex {
-  const lineById = new Map<string, RailLine>();
-  const stationById = new Map<string, RailStation>();
-  const segmentById = new Map<string, RailSegment>();
-  const linesByCountry = new Map<Country, RailLine[]>();
-  const stationsByLine = new Map<string, RailStation[]>();
-  const stationGroupById = new Map<string, StationGroupMember[]>();
-  for (const pkg of pkgs) {
-    for (const l of pkg.lines) {
-      lineById.set(l.lineId, l);
-      (linesByCountry.get(pkg.country) ?? linesByCountry.set(pkg.country, []).get(pkg.country)!).push(l);
-    }
-    for (const s of pkg.stations) {
-      stationById.set(s.stationId, s);
-      (stationsByLine.get(s.lineId) ?? stationsByLine.set(s.lineId, []).get(s.lineId)!).push(s);
-      const gk = groupKeyOf(s);
-      (stationGroupById.get(gk) ?? stationGroupById.set(gk, []).get(gk)!).push({
-        lineId: s.lineId,
-        stationId: s.stationId,
-      });
-    }
-    for (const seg of pkg.segments) segmentById.set(seg.segmentId, seg);
-  }
-  for (const list of stationsByLine.values()) list.sort((a, b) => a.seq - b.seq);
-  return { lineById, stationById, segmentById, linesByCountry, stationsByLine, stationGroupById };
-}
+import { buildGeoIndex, type GeoIndex } from './geo-index';
+export { buildGeoIndex, groupKeyOf } from './geo-index';
+export type { GeoIndex, StationGroupMember } from './geo-index';
 
 export const geo: Readable<GeoIndex> = derived(packages, ($packages) => buildGeoIndex($packages));
 
@@ -592,11 +541,17 @@ async function migrateEventsIfNeeded(pkgs: RailGeoPackage[]): Promise<void> {
 export async function init(): Promise<void> {
   if (initialized) return;
   initialized = true;
+  // Open the durable store + load saved rides FIRST, before the slow, network-bound package fetch.
+  // refresh() is the first Dexie op, so it creates the object stores; doing it up front means the DB
+  // is ready independent of fetch speed. Otherwise a slow environment (CI's cold 8.8 MB fetch) creates
+  // the stores only AFTER the fetch, and anything that opens the DB in that window — e.g. an e2e seed
+  // that waits only for the DB name to appear — finds no rideEvents store. Also just better: coverage
+  // resolves the instant packages arrive, and saved rides are never gated on the network.
+  await refresh();
   const { ok, complete, pkgs } = await fetchPackages();
   packages.set(pkgs);
   usingFallback.set(!ok);
   if (!complete) bindFallbackRetry(); // retry until EVERY package is in (JP stub OR a missed CN corridor)
-  await refresh();
   if (typeof window !== 'undefined') {
     const sync = (): void => offline.set(!navigator.onLine);
     window.addEventListener('online', sync);

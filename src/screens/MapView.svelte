@@ -14,7 +14,7 @@
   import { onMount, tick } from 'svelte';
   import { get } from 'svelte/store';
   import { packages, litSegmentIds, geo, events, markRide, markRoute, removeTrip } from '../lib/store';
-  import { findRoutes } from '../lib/route';
+  import { SearchSeq, sameStation, classifyRoutes, type RouteOutcome } from '../lib/marking';
   import Pill from '../components/Pill.svelte';
   import { KNOWN_TRAIN_MODELS } from '../lib/train-models';
   import { markMode, toast } from '../lib/ui';
@@ -50,24 +50,20 @@
     runFlood,
     type SegPoint,
   } from '../lib/map/flood';
-  import {
-    buildSearchIndex,
-    resolveQuery,
-    groupKeyForHit,
-    preferPickedLine,
-    bilingualLabel,
-    type StationHit,
-  } from '../lib/search';
+  import { buildSearchIndex, resolveQuery, bilingualLabel, type StationHit } from '../lib/search';
   import { buildPopupModel, popupHtml } from '../lib/map/popup';
   import { companyFor } from '../lib/company';
+  import { exposeE2EHandle, clearE2EHandle } from '../lib/map/e2e';
 
-  // Loaded lazily so the module-eval is browser-free.
+  // maplibre types are TYPE-ONLY imports — erased at compile time (verbatimModuleSyntax +
+  // isolatedModules), so they do NOT violate the "never statically import maplibre" rule above:
+  // that rule bans a side-effectful VALUE load of the WebGL library, which still happens lazily in
+  // onMount via `await import(...)`. `Map` is aliased so it does not shadow the JS built-in Map.
+  import type { Map as MapLibreMap, Popup as MapLibrePopup, FilterSpecification } from 'maplibre-gl';
   type MapLib = typeof import('maplibre-gl');
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let map: any = null;
+  let map: MapLibreMap | null = null;
   let mapLib: MapLib | null = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let popup: any = null; // C5 reusable bilingual hover/selection popup
+  let popup: MapLibrePopup | null = null; // C5 reusable bilingual hover/selection popup
 
   let container: HTMLDivElement;
   let status = $state<'loading' | 'ready' | 'error'>('loading');
@@ -94,7 +90,7 @@
   let routeChoices = $state<RouteCandidate[]>([]); // cross-line route picker (search-mode)
   let noRoute = $state(false); // the two stations have no rail path between them
   let searching = $state(false); // route-finding in flight (paints "探索中" before the sync call)
-  let searchSeq = 0; // guards out-of-order async resolves (latest query wins)
+  const searchSeq = new SearchSeq(); // guards out-of-order async resolves (latest query wins)
 
   // The bilingual search index — rebuilt only when the geo index changes (i.e. packages swap).
   const searchIndex = $derived(buildSearchIndex($geo));
@@ -211,7 +207,7 @@
           fadeDuration: prefersReducedMotion() ? 0 : 200,
         });
         map.touchZoomRotate?.disableRotation?.();
-        exposeE2EHandle();
+        exposeE2EHandle(map);
 
         map.on('load', () => {
           if (disposed) return;
@@ -245,69 +241,7 @@
     };
   });
 
-  // ── QA hook (E2E only) ──────────────────────────────────────────────────────
-  // Headless `$B` browse has no WebGL and CDP can't drive zoom, so the zoom-tiered
-  // LOD has been un-QA-able. When the page is opened with ?e2e=1 we expose the live
-  // maplibre map + a ready flag on window so a Playwright/SwiftShader run can call
-  // setZoom + queryRenderedFeatures and assert which line tiers are visible. The hook
-  // code ships in the bundle but stays inert without ?e2e, so a normal user never
-  // receives the handle. See tests/e2e/map-lod.spec.ts.
-  interface E2EWindow {
-    __map?: unknown;
-    __mapReady?: boolean;
-  }
-  const E2E_READY_POLL_MS = 100;
-  const E2E_READY_MAX_TICKS = 100; // ≤10s — bounded so the poll can't spin forever
-  let e2eReadyTimer: ReturnType<typeof setTimeout> | null = null;
-  function e2eEnabled(): boolean {
-    return (
-      typeof window !== 'undefined' &&
-      new URLSearchParams(window.location.search).has('e2e')
-    );
-  }
-  function exposeE2EHandle(): void {
-    if (!e2eEnabled() || !map) return;
-    // Cancel any poll chain still running from a prior mount/HMR before starting a new one,
-    // so an earlier chain can't keep ticking against a stale map.
-    if (e2eReadyTimer !== null) {
-      clearTimeout(e2eReadyTimer);
-      e2eReadyTimer = null;
-    }
-    const w = window as unknown as E2EWindow;
-    w.__map = map;
-    w.__mapReady = false;
-    // Readiness polls map.loaded() rather than the 'load'/'idle' events: under a flaky or
-    // offline basemap (e.g. CI with no internet) the raster source retries forever so those
-    // events never fire, but loaded() still flips true once the local rail layers are
-    // rendered and queryable — which is all the LOD assertions need. Bounded + cancellable:
-    // if loaded() never settles within the cap, we stop and leave __mapReady false so the
-    // test's readiness wait fails loudly instead of the poll spinning against a dead map.
-    const m = map;
-    let ticks = 0;
-    const markReady = (): void => {
-      if (m.loaded()) {
-        w.__mapReady = true;
-        e2eReadyTimer = null;
-        return;
-      }
-      if (++ticks >= E2E_READY_MAX_TICKS) {
-        e2eReadyTimer = null;
-        return;
-      }
-      e2eReadyTimer = setTimeout(markReady, E2E_READY_POLL_MS);
-    };
-    markReady();
-  }
-  function clearE2EHandle(): void {
-    if (typeof window === 'undefined') return;
-    if (e2eReadyTimer !== null) {
-      clearTimeout(e2eReadyTimer);
-      e2eReadyTimer = null;
-    }
-    const w = window as unknown as E2EWindow;
-    delete w.__map;
-    delete w.__mapReady;
-  }
+  // The QA-only ?e2e window hook (window.__map / __mapReady) lives in lib/map/e2e.ts.
 
   function fitToNetwork(): void {
     const pkgs = get(packages);
@@ -434,8 +368,8 @@
     const pkgs = get(packages);
     const selSeg = selectedLine ? selectedLineSegmentIds(selectedLine, pkgs) : [];
     const selSt = selectedLine ? selectedLineStationIds(selectedLine, pkgs) : [];
-    map.setFilter(SEGMENTS_LAYER, lodFilter('segmentId', lit, selSeg));
-    map.setFilter(STATIONS_LAYER, lodFilter('stationId', litStations, selSt));
+    map.setFilter(SEGMENTS_LAYER, lodFilter('segmentId', lit, selSeg) as FilterSpecification);
+    map.setFilter(STATIONS_LAYER, lodFilter('stationId', litStations, selSt) as FilterSpecification);
   }
 
   // React to litSegmentIds changes: small/equal → snap; big grow → D5 flood wave.
@@ -469,8 +403,8 @@
     if (!map || !styleLoaded) return;
     const segIds = selectedLineSegmentIds(line, get(packages));
     const stIds = selectedLineStationIds(line, get(packages));
-    map.setFilter(SELECTION_CASING_LAYER, inFilter('segmentId', segIds));
-    map.setFilter(HIGHLIGHT_STATION_LAYER, inFilter('stationId', stIds));
+    map.setFilter(SELECTION_CASING_LAYER, inFilter('segmentId', segIds) as FilterSpecification);
+    map.setFilter(HIGHLIGHT_STATION_LAYER, inFilter('stationId', stIds) as FilterSpecification);
     // C9 LOD: re-apply visibility so the selected line shows even if its tier zoom isn't reached.
     const curLit = get(litSegmentIds);
     applyLodFilters(curLit, litStationIds(curLit, get(packages)));
@@ -582,9 +516,9 @@
   }
 
   async function resolveInto(which: 'A' | 'B', raw: string): Promise<void> {
-    const seq = ++searchSeq;
+    const seq = searchSeq.next();
     const hits = await resolveQuery(raw, searchIndex);
-    if (seq !== searchSeq) return; // a newer keystroke superseded this resolve
+    if (!searchSeq.isCurrent(seq)) return; // a newer keystroke superseded this resolve
     if (which === 'A') {
       pickedA = null;
       routeChoices = [];
@@ -663,7 +597,7 @@
     if (!pickedA || !pickedB) return;
     const a = pickedA;
     const b = pickedB;
-    if (a.station.stationId === b.station.stationId) {
+    if (sameStation(a, b)) {
       toast('出発駅と到着駅が同じです', 'info');
       return;
     }
@@ -676,26 +610,22 @@
     await new Promise((r) => requestAnimationFrame(() => r(null))); // let the 探索中 state paint
     if (pickedA !== a || pickedB !== b) {
       searching = false;
-      return; // a newer pick superseded this one
+      return; // a newer pick superseded this one (object-identity guard; e2e-covered)
     }
-    let routes: RouteCandidate[];
+    let outcome: RouteOutcome;
     try {
-      routes = findRoutes(pkg, groupKeyForHit(a), groupKeyForHit(b));
+      // classifyRoutes wraps findRoutes + preferPickedLine + the length branching (pure, unit-tested).
+      outcome = classifyRoutes(pkg, a, b);
     } finally {
       searching = false;
     }
-    // Surface a route on the line the user actually picked first — never float a parallel Shinkansen
-    // above the local line they rode (which would tempt a one-tap phantom HSR mark).
-    routes = preferPickedLine(routes, new Set([a.line.lineId, b.line.lineId]));
-    if (routes.length === 0) {
+    if (outcome.kind === 'no-route') {
       noRoute = true; // warm no-route state with a leg-by-leg fallback
-      return;
+    } else if (outcome.kind === 'single') {
+      void commitRoute(outcome.route);
+    } else {
+      routeChoices = outcome.routes; // ≥2 candidates — show the route-picker
     }
-    if (routes.length === 1) {
-      void commitRoute(routes[0]);
-      return;
-    }
-    routeChoices = routes; // ≥2 candidates — show the route-picker
   }
 
   function pickRoute(r: RouteCandidate): void {

@@ -14,7 +14,7 @@ import {
   litSegmentIds,
 } from './store';
 import { resolveCoverage } from './resolver';
-import { JP_PACKAGE, STUB_PACKAGES, stationByName } from '../fixtures/stubPackage';
+import { JP_PACKAGE, STUB_PACKAGES, stationByName } from './fallback-package';
 import type { RideEvent, RouteCandidate } from '../contract/types';
 
 const route = (segmentIds: string[]): RouteCandidate => ({
