@@ -36,11 +36,14 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - run: npx playwright install chromium --with-deps
-      # Exclude the OFFLINE service-worker specs on CI: they cut the network and reload, expecting the
-      # SW to serve the cached shell, but on the cold ubuntu/SwiftShader runner the SW hasn't STABLY
-      # taken control by the time the test goes offline (the reload then hits the network →
-      # ERR_INTERNET_DISCONNECTED). This is a test-timing gap, not an app regression — the app serves
-      # offline for real users, and `npm run test:e2e` runs these specs locally. Making them CI-stable
-      # needs a sturdier SW-control wait; tracked as a follow-up. Everything else (LOD, marking,
-      # route-picker, quarantine, import, diary, china) runs here and guards MapView.
-      - run: npm run test:e2e -- --grep-invert "OFFLINE"
+      # --workers=1: each map spec spins a SwiftShader WebGL2 context; on the 2-core CI runner, the
+      # config's 3 parallel workers saturate software-GL and the map can't become interactive within
+      # the click timeouts (flaky). Serializing gives each spec the full runner — reliable, a bit
+      # slower. (Locally, workers=3 in playwright.config.ts is fine on a faster machine.)
+      # --grep-invert "OFFLINE": the offline SW specs cut the network + reload expecting the SW to
+      # serve the cached shell, but on the cold runner the SW hasn't STABLY taken control by then (the
+      # reload hits the network → ERR_INTERNET_DISCONNECTED). A test-timing gap, not an app regression
+      # (offline works for real users; `npm run test:e2e` runs them locally). Sturdier SW-control wait
+      # is a tracked follow-up. Everything else (LOD, marking, route-picker, quarantine, import, diary,
+      # china) runs here and guards MapView.
+      - run: npm run test:e2e -- --grep-invert "OFFLINE" --workers=1
