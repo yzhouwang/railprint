@@ -23,7 +23,7 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       injectRegister: null, // registered manually in main.ts for control
-      includeAssets: ['icon.svg'],
+      includeAssets: ['icon.svg', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png', 'apple-touch-icon.png'],
       manifest: {
         name: 'RailPrint — 乗りつぶしマップ',
         short_name: 'RailPrint',
@@ -33,7 +33,15 @@ export default defineConfig({
         background_color: '#0b0b0c',
         display: 'standalone',
         start_url: '.',
-        icons: [{ src: 'icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' }],
+        // Separate `any` and `maskable` entries — a combined 'any maskable' SVG fails maskable
+        // audits; Android's install prompt wants the 192/512 PNGs, iOS uses apple-touch-icon
+        // (linked in index.html; SVG unsupported there).
+        icons: [
+          { src: 'icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
+          { src: 'icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+          { src: 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+          { src: 'icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+        ],
       },
       workbox: {
         // Precache the shell + the rail data. jp-2025.json is ~8.8 MB, so raise the per-file cap.

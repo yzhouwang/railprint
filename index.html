@@ -9,6 +9,31 @@
       name="description"
       content="An open-source map of every train you've ridden. Japan-first, China-ready."
     />
+    <!-- Icons: relative hrefs so they resolve under both root and /railprint/ (GitHub Pages). -->
+    <link rel="icon" href="icon.svg" type="image/svg+xml" />
+    <link rel="icon" href="icon-192.png" type="image/png" sizes="192x192" />
+    <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+    <!-- Social cards. og:image/og:url must be ABSOLUTE (scraper requirement) — pinned to the
+         GitHub Pages deploy URL; update on a domain move. -->
+    <link rel="canonical" href="https://yzhouwang.github.io/railprint/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="RailPrint" />
+    <meta property="og:title" content="RailPrint — 乗りつぶしマップ" />
+    <meta
+      property="og:description"
+      content="An open-source map of every train you've ridden. Japan-first, China-ready."
+    />
+    <meta property="og:url" content="https://yzhouwang.github.io/railprint/" />
+    <meta property="og:image" content="https://yzhouwang.github.io/railprint/og-image.png" />
+    <meta property="og:image:width" content="2400" />
+    <meta property="og:image:height" content="1260" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="RailPrint — 乗りつぶしマップ" />
+    <meta
+      name="twitter:description"
+      content="An open-source map of every train you've ridden. Japan-first, China-ready."
+    />
+    <meta name="twitter:image" content="https://yzhouwang.github.io/railprint/og-image.png" />
     <!-- Noto Sans JP (DESIGN.md). v0 loads from the CDN; D7 self-hosts a subset later. -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
