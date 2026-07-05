@@ -47,4 +47,7 @@ WGS-84; geometry is to be refined from OpenStreetMap ways (ODbL).
 
 ## License
 
-TBD (intended open source).
+Code: [AGPL-3.0-only](LICENSE) — run a modified copy as a service, share your source.
+Data licenses are separate: rail geometry CC BY 4.0 (MLIT N02), romanizations ODbL
+(OpenStreetMap) — see Attribution above and the per-namespace licenses in
+[railnet](../railnet).
