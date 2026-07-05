@@ -1,6 +1,6 @@
 # RailPrint
 
-An open-source map of every train you've ridden — 航旅纵横 / Flightradar, but for rail.
+An open-source map of every train you've ridden — Flightradar, but for rail.
 
 **Live: <https://yzhouwang.github.io/railprint/>** · installable PWA, works fully offline.
 
