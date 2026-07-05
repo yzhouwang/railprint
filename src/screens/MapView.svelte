@@ -54,6 +54,7 @@
   import { buildPopupModel, popupHtml } from '../lib/map/popup';
   import { companyFor } from '../lib/company';
   import { exposeE2EHandle, clearE2EHandle } from '../lib/map/e2e';
+  import { assetUrl } from '../lib/asset-url';
 
   // maplibre types are TYPE-ONLY imports — erased at compile time (verbatimModuleSyntax +
   // isolatedModules), so they do NOT violate the "never statically import maplibre" rule above:
@@ -719,7 +720,7 @@
      else a color swatch in the line's official hue. Reused in every place a line is named. -->
 {#snippet lineMark(line: RailLine)}
   {#if line.logo}
-    <img class="line-logo" src={line.logo} alt="" loading="lazy" />
+    <img class="line-logo" src={assetUrl(line.logo)} alt="" loading="lazy" />
   {:else}
     <span class="line-swatch" style={`background:${lineColor(line)}`} aria-hidden="true"></span>
   {/if}

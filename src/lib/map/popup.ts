@@ -7,6 +7,7 @@ import type { GeoIndex } from '../geo-index';
 import { groupKeyOf } from '../geo-index';
 import { bilingualLabel } from '../search';
 import { companyFor } from '../company';
+import { assetUrl } from '../asset-url';
 import { DEFAULT_LINE_COLOR } from './style';
 
 /** One line through a station, with the data the popup row needs. */
@@ -78,7 +79,9 @@ export function escapeHtml(s: string): string {
 
 /** One line's leading badge: its logo <img> (normalized in CSS to ~16px height) or a swatch. */
 export function lineBadgeHtml(row: PopupLineRow): string {
-  if (row.logo) return `<img class="rp-line-logo" src="${escapeHtml(row.logo)}" alt="" loading="lazy" />`;
+  // assetUrl: the package data's logo paths are root-absolute; resolve against BASE_URL so they
+  // survive subpath hosting (GitHub Pages project site).
+  if (row.logo) return `<img class="rp-line-logo" src="${escapeHtml(assetUrl(row.logo))}" alt="" loading="lazy" />`;
   return `<span class="rp-line-swatch" style="background:${escapeHtml(row.color)}"></span>`;
 }
 

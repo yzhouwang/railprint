@@ -6,6 +6,11 @@ import { VitePWA } from 'vite-plugin-pwa';
 // RailPrint app build (Opus 4.8 / experience lane). Static, no backend.
 // Build-time turf precompute is engine-side; the app ships zero runtime turf.
 export default defineConfig({
+  // GitHub Pages serves a PROJECT site under /railprint/ — the deploy workflow builds with
+  // PAGES_BASE=/railprint/. Local dev/preview/e2e stay at '/', so nothing local changes. Every
+  // runtime fetch already goes through import.meta.env.BASE_URL (store.ts, MapView) or the
+  // asset-url resolver (line logos, whose package data paths are root-absolute).
+  base: process.env.PAGES_BASE || '/',
   plugins: [
     svelte(),
     // Phase 2 — OFFLINE. A Workbox service worker precaches the app shell AND the rail packages
