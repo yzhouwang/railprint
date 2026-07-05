@@ -21,7 +21,12 @@ jobs:
       - run: npm run verify:rail
       - run: npm run check        # svelte-check (typecheck)
       - run: npm run test:app     # vitest
+      # Build with the Pages base so a /railprint/-breaking change fails the PR, not the
+      # post-merge deploy. (The e2e job's webServer still builds + serves at '/', so root
+      # hosting keeps coverage too.)
       - run: npm run build
+        env:
+          PAGES_BASE: /railprint/
 
   # The Playwright suite is MapView's only coverage — the map is dynamically imported + WebGL, so no
   # vitest reaches it. Chromium's bundled SwiftShader gives headless WebGL2 (flags live in

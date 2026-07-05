@@ -37,6 +37,7 @@
     lodFilter,
     DEFAULT_LINE_COLOR,
     SEGMENTS_LAYER,
+    SEGMENTS_SOURCE,
     SEGMENTS_GLOW_LAYER,
     STATIONS_LAYER,
     SELECTION_CASING_LAYER,
@@ -53,7 +54,9 @@
   import { buildSearchIndex, resolveQuery, bilingualLabel, type StationHit } from '../lib/search';
   import { buildPopupModel, popupHtml } from '../lib/map/popup';
   import { companyFor } from '../lib/company';
-  import { exposeE2EHandle, clearE2EHandle } from '../lib/map/e2e';
+  import { exposeE2EHandle, clearE2EHandle, e2eEnabled } from '../lib/map/e2e';
+  import { loadBasemap } from '../lib/map/basemap';
+  import { assetUrl } from '../lib/asset-url';
 
   // maplibre types are TYPE-ONLY imports — erased at compile time (verbatimModuleSyntax +
   // isolatedModules), so they do NOT violate the "never statically import maplibre" rule above:
@@ -68,6 +71,7 @@
   let container: HTMLDivElement;
   let status = $state<'loading' | 'ready' | 'error'>('loading');
   let styleLoaded = false;
+  let readyFallbackTimer: number | null = null; // window.setTimeout id (number, not Node's Timeout)
 
   // ── marking state (line-first: pick line → tap A → tap B) ───────────────────
   let selectedLine = $state<RailLine | null>(null);
@@ -190,7 +194,16 @@
 
         const initialLit = get(litSegmentIds);
         prevLit = initialLit;
-        const style = buildBaseStyle({ packages: pkgs, litSegmentIds: initialLit });
+        // Vendored same-origin vector basemap (OpenFreeMap positron); null offline/on failure —
+        // the style then renders rail over a plain background, exactly like the old raster's
+        // failure mode. Loaded before Map construction so the style ships complete in one shot.
+        // Under ?e2e the basemap is SKIPPED on purpose: the harness readiness gate polls
+        // map.loaded(), which stays false while third-party tiles stream — a slow tile origin
+        // would hang every spec. The suite asserts rail layers only, and the basemap-less boot
+        // is the same code path as the offline fallback, so e2e stays deterministic + offline.
+        const basemap = e2eEnabled() ? null : await loadBasemap();
+        if (disposed) return;
+        const style = buildBaseStyle({ packages: pkgs, litSegmentIds: initialLit, basemap });
 
         map = new mapLib.Map({
           container,
@@ -203,24 +216,57 @@
           // JP focus default; fitBounds overrides once style is ready.
           center: [138, 37],
           zoom: 4,
-          // self-contained: no remote glyphs/tiles requested.
           fadeDuration: prefersReducedMotion() ? 0 : 200,
         });
         map.touchZoomRotate?.disableRotation?.();
         exposeE2EHandle(map);
 
-        map.on('load', () => {
-          if (disposed) return;
+        // Readiness is idempotent: reached via maplibre's 'load' (the normal path) OR the
+        // bounded fallback below when a hanging basemap origin delays 'load' indefinitely.
+        const becomeReady = (): void => {
+          if (disposed || status === 'ready' || !map) return;
           styleLoaded = true;
           fitToNetwork();
           wireStationClicks();
           void surfaceLogoCredits();
           status = 'ready';
-        });
+        };
+        map.on('load', becomeReady);
+        // A stalled tiles.openfreemap.org (throttled/blocked routes — mainland China) keeps
+        // map.loaded() false for the whole network timeout, but the rail sources are same-origin
+        // GeoJSON and usable within moments. Poll briefly: once the rail source is loaded and
+        // 'load' still hasn't fired, become ready anyway — tiles keep streaming in behind.
+        let readyPolls = 0;
+        const pollReady = (): void => {
+          if (disposed || status === 'ready' || !map) return;
+          try {
+            if (map.getSource(SEGMENTS_SOURCE) && map.isSourceLoaded(SEGMENTS_SOURCE)) {
+              becomeReady();
+              return;
+            }
+          } catch {
+            /* style not ready yet — keep polling */
+          }
+          if (++readyPolls < 12) readyFallbackTimer = window.setTimeout(pollReady, 2000);
+        };
+        readyFallbackTimer = window.setTimeout(pollReady, 8000);
+
+        // Which sources belong to the basemap — their failures must never take the app down
+        // (rail is same-origin; the basemap is progressive decoration).
+        const basemapSourceIds = new Set(Object.keys(basemap?.sources ?? {}));
         map.on('error', (e: unknown) => {
+          const ev = e as { sourceId?: string; error?: { url?: string; message?: string } };
+          const url = ev?.error?.url ?? '';
+          const msg = String(ev?.error?.message ?? '');
+          if ((ev?.sourceId && basemapSourceIds.has(ev.sourceId)) || url.includes('openfreemap') || msg.includes('openfreemap')) {
+            // Offline/blocked basemap origin: expected degradation, log-and-continue. The style's
+            // JSON is precached, so its TileJSON/tile fetches failing offline is the NORMAL path.
+            console.warn('[MapView] basemap source unavailable (rail unaffected):', msg || url || e);
+            return;
+          }
           // GL/style errors after load shouldn't blank the map; only fail before ready.
           if (status !== 'ready') {
-            console.error('[MapView] maplibre error:', (e as { error?: Error })?.error?.message ?? (e as { error?: unknown })?.error ?? e);
+            console.error('[MapView] maplibre error:', ev?.error?.message ?? ev?.error ?? e);
             status = 'error';
           }
         });
@@ -232,6 +278,7 @@
 
     return () => {
       disposed = true;
+      if (readyFallbackTimer !== null) clearTimeout(readyFallbackTimer);
       cancelFlood?.();
       popup?.remove?.();
       popup = null;
@@ -719,7 +766,7 @@
      else a color swatch in the line's official hue. Reused in every place a line is named. -->
 {#snippet lineMark(line: RailLine)}
   {#if line.logo}
-    <img class="line-logo" src={line.logo} alt="" loading="lazy" />
+    <img class="line-logo" src={assetUrl(line.logo)} alt="" loading="lazy" />
   {:else}
     <span class="line-swatch" style={`background:${lineColor(line)}`} aria-hidden="true"></span>
   {/if}

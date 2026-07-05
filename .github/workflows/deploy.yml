@@ -1,0 +1,51 @@
+name: deploy
+
+# GitHub Pages deploy — a PROJECT site at https://yzhouwang.github.io/railprint/, so the build
+# uses PAGES_BASE=/railprint/ (vite.config.ts `base`; every runtime fetch is BASE_URL-aware and
+# the SW scopes itself to the subpath). The build job runs the FULL gate set — including the
+# Playwright e2e suite, MapView's only coverage — before anything uploads, so a red change
+# cannot ship even if it races ci.yml on the same push.
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run verify:rail
+      - run: npm run test:app
+      # `npm run build` gates on svelte-check itself (package.json), so no separate check step.
+      # e2e mirrors ci.yml exactly: OFFLINE specs excluded (SW-settle race on cold runners,
+      # tracked follow-up), workers=1 (SwiftShader GL saturation on 2-core runners).
+      - run: npx playwright install chromium --with-deps
+      - run: npm run test:e2e -- --grep-invert "OFFLINE" --workers=1
+      - run: npm run build
+        env:
+          PAGES_BASE: /railprint/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

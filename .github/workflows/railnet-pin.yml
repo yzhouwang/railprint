@@ -1,0 +1,46 @@
+name: railnet-pin
+
+# Cross-repo drift gate: verifies the vendored public/rail/* + src/contract/rail-package.ts still
+# match the railnet version pinned in railnet.json (`npm run sync:railnet:check` needs a railnet
+# checkout beside the app — see RAILNET.md). Skips gracefully while the railnet repo is still
+# unpublished (it lives only on the author's disk until `gh repo create yzhouwang/railnet --push`).
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * 1' # weekly, Monday 03:17 UTC
+
+jobs:
+  pin-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: railprint
+      - name: Clone railnet (skip ONLY if not yet published)
+        id: railnet
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # Distinguish "repo doesn't exist" (expected until railnet is published — skip with a
+        # notice) from a transient clone failure (MUST fail loudly: a drift gate that fails
+        # open would report green forever and nobody would notice).
+        run: |
+          if gh api repos/yzhouwang/railnet --silent 2>/dev/null; then
+            git clone --depth 1 https://github.com/yzhouwang/railnet ../railnet
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::railnet is not published yet — pin check skipped (publish it to arm this gate)"
+          fi
+        working-directory: railprint
+      - uses: actions/setup-node@v4
+        if: steps.railnet.outputs.available == 'true'
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: railprint/package-lock.json
+      - run: npm ci
+        if: steps.railnet.outputs.available == 'true'
+        working-directory: railprint
+      - run: npm run sync:railnet:check
+        if: steps.railnet.outputs.available == 'true'
+        working-directory: railprint
