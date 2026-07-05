@@ -2,6 +2,35 @@
 
 All notable changes to RailPrint are documented here.
 
+## [0.11.0.0] - 2026-07-05
+
+**Public launch.** The repo is public under **AGPL-3.0-only**, and the app deploys to GitHub Pages
+at <https://yzhouwang.github.io/railprint/> on every master push.
+
+### Added
+- **GitHub Pages deploy** (`.github/workflows/deploy.yml`): gated on verify:rail + typecheck +
+  vitest, builds with `PAGES_BASE=/railprint/` and publishes via `actions/deploy-pages`. Subpath
+  hosting is safe end-to-end: vite `base` from `PAGES_BASE`, every runtime fetch already rides
+  `BASE_URL`, and the package data's root-absolute logo paths resolve through a new
+  `lib/asset-url.ts` at the two consumption edges (verified with a subpath boot smoke: SW scope,
+  package, logos all correct).
+- **PWA icon set** (192/512 + dedicated maskable-512 + apple-touch-icon) rendered from `icon.svg`;
+  manifest entries split by purpose. Social/SEO surface: og/twitter cards with a live-map og-image,
+  canonical URL, `robots.txt`.
+- **`railnet-pin` workflow**: weekly + on-demand `sync:railnet:check` against the pinned railnet
+  version — skips gracefully until the railnet repo is published, then arms automatically.
+- **LICENSE (AGPL-3.0-only)** for the app; railnet's pipeline code gets the same (data licenses
+  unchanged: N02 CC BY 4.0, OSM ODbL).
+
+### Changed
+- **The basemap is now OpenFreeMap's `positron` vector style** (keyless), replacing the
+  `tile.openstreetmap.org` raster — OSMF's tile usage policy prohibits public apps on osm.org
+  tiles, which made this a launch blocker. The style JSON is vendored same-origin (SW-precached);
+  tiles/glyphs/sprite are runtime-cached; the loader stamps the required OSM attribution. Offline
+  or on fetch failure the map boots basemap-less, exactly like the old raster's failure path.
+  Under `?e2e` the basemap is skipped by design, so the e2e suite runs with zero external network
+  dependencies.
+
 ## [0.10.1.0] - 2026-07-02
 
 Architecture hardening (post-railnet-split review). No user-facing feature change; internal

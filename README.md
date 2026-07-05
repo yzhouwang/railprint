@@ -2,6 +2,8 @@
 
 An open-source map of every train you've ridden — 航旅纵横 / Flightradar, but for rail.
 
+**Live: <https://yzhouwang.github.io/railprint/>** · installable PWA, works fully offline.
+
 Log which railway line **segments** you've personally ridden, see them lit on a map in
 real track geometry, and watch your total km + % of the national network + % HSR climb.
 One tap gives you a Spotify-Wrapped-style share card. **Japan, plus one China corridor preview**
@@ -10,7 +12,7 @@ One tap gives you a Spotify-Wrapped-style share card. **Japan, plus one China co
 > **China corridor is a preview.** It's a curated WGS-84 station-sequence polyline (北京南 → 上海虹桥,
 > 13 stops), **not** full China track geometry yet — that's a tracked refinement from OpenStreetMap ways (ODbL).
 
-> Working name. Status: **v0.10.1.0** — the real MLIT N02 national network (594 lines, ~10,000 stations,
+> Working name. Status: **v0.11.0.0** — the real MLIT N02 national network (594 lines, ~10,000 stations,
 > ~26,800 km) in full official color with logos, operating-company labels, bilingual names, and a
 > zoom-tiered map; cross-line route marking; a trip diary + train-model collection; and the first
 > China corridor (京沪高速铁路). The rail data is content-addressed and SHA-256 verified, works fully
@@ -19,8 +21,8 @@ One tap gives you a Spotify-Wrapped-style share card. **Japan, plus one China co
 
 ## v0 (web-app-first)
 
-- Plain browser web app (Vite 6 + Svelte 5, static). No backend. Hosted on GitHub/Cloudflare Pages.
-- MapLibre GL JS over a muted OSM raster basemap; rail geometry stitched from MLIT 国土数値情報 N02 (CC BY 4.0).
+- Plain browser web app (Vite 6 + Svelte 5, static). No backend. Hosted on GitHub Pages.
+- MapLibre GL JS over OpenFreeMap's muted positron vector basemap; rail geometry stitched from MLIT 国土数値情報 N02 (CC BY 4.0).
 - **Every line in its official color + logo**, tagged with its operating company; **bilingual** station and line names (OpenStreetMap + Wikidata). Hover a station to see every line through it.
 - **Zoom-tiered map:** the Shinkansen spine at the national view, the full network as you zoom into a city. Station dots reveal by average spacing, so dense lines (山手線, subways) stay legible.
 - **Mark a ride:** pick a line → tap station A → tap station B, **or** search two stations by 日本語 / romaji / かな and pick from the routes the app finds between them — even across multiple lines (a 特急ひのとり 津→大阪難波 through-service records as one trip). Live km + % (national, HSR) update.
