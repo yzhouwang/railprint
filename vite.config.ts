@@ -41,7 +41,7 @@ export default defineConfig({
         // canonical package to ship in this build. When the package later moves to a CDN
         // (VITE_RAIL_CDN_SECONDARY, store.ts), this needs a revisioned/runtime-warmed entry for that
         // origin or offline breaks — tracked in docs/designs/rail-geo-durable-package.md.
-        globPatterns: ['**/*.{js,css,html,svg,woff2}', 'rail/*.json', 'rail/migrations/**/*.json'],
+        globPatterns: ['**/*.{js,css,html,svg,woff2}', 'rail/*.json', 'rail/migrations/**/*.json', 'basemap/*.json'],
         maximumFileSizeToCacheInBytes: 12 * 1024 * 1024,
         cleanupOutdatedCaches: true,
         clientsClaim: true,
@@ -55,6 +55,17 @@ export default defineConfig({
             options: {
               cacheName: 'rail-logos',
               expiration: { maxEntries: 800, maxAgeSeconds: 60 * 60 * 24 * 60 },
+            },
+          },
+          {
+            // OpenFreeMap basemap tiles/glyphs/sprite (the vendored style JSON itself is precached
+            // same-origin). Cache on first use so revisited areas render their basemap offline;
+            // the rail layers never depend on these.
+            urlPattern: ({ url }) => url.origin === 'https://tiles.openfreemap.org',
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'basemap-tiles',
+              expiration: { maxEntries: 500, maxAgeSeconds: 60 * 60 * 24 * 30 },
             },
           },
           {

@@ -53,7 +53,8 @@
   import { buildSearchIndex, resolveQuery, bilingualLabel, type StationHit } from '../lib/search';
   import { buildPopupModel, popupHtml } from '../lib/map/popup';
   import { companyFor } from '../lib/company';
-  import { exposeE2EHandle, clearE2EHandle } from '../lib/map/e2e';
+  import { exposeE2EHandle, clearE2EHandle, e2eEnabled } from '../lib/map/e2e';
+  import { loadBasemap } from '../lib/map/basemap';
   import { assetUrl } from '../lib/asset-url';
 
   // maplibre types are TYPE-ONLY imports — erased at compile time (verbatimModuleSyntax +
@@ -191,7 +192,16 @@
 
         const initialLit = get(litSegmentIds);
         prevLit = initialLit;
-        const style = buildBaseStyle({ packages: pkgs, litSegmentIds: initialLit });
+        // Vendored same-origin vector basemap (OpenFreeMap positron); null offline/on failure —
+        // the style then renders rail over a plain background, exactly like the old raster's
+        // failure mode. Loaded before Map construction so the style ships complete in one shot.
+        // Under ?e2e the basemap is SKIPPED on purpose: the harness readiness gate polls
+        // map.loaded(), which stays false while third-party tiles stream — a slow tile origin
+        // would hang every spec. The suite asserts rail layers only, and the basemap-less boot
+        // is the same code path as the offline fallback, so e2e stays deterministic + offline.
+        const basemap = e2eEnabled() ? null : await loadBasemap();
+        if (disposed) return;
+        const style = buildBaseStyle({ packages: pkgs, litSegmentIds: initialLit, basemap });
 
         map = new mapLib.Map({
           container,
@@ -204,7 +214,6 @@
           // JP focus default; fitBounds overrides once style is ready.
           center: [138, 37],
           zoom: 4,
-          // self-contained: no remote glyphs/tiles requested.
           fadeDuration: prefersReducedMotion() ? 0 : 200,
         });
         map.touchZoomRotate?.disableRotation?.();

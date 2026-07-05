@@ -38,14 +38,40 @@ describe('buildBaseStyle', () => {
     expect('sprite' in style).toBe(false);
   });
 
-  it('is a v8 style: rail data as geojson + a muted raster basemap, with layers', () => {
+  it('is a v8 style: rail data as geojson, basemap-less by default (offline fallback shape)', () => {
     const style = buildBaseStyle({ packages: STUB_PACKAGES, litSegmentIds: [] });
     expect(style.version).toBe(8);
     const sources = style.sources as Record<string, { type: string }>;
     expect(sources['rp-segments'].type).toBe('geojson');
     expect(sources['rp-stations'].type).toBe('geojson');
-    expect(sources['basemap'].type).toBe('raster'); // v0 OSM basemap under the rail
+    // No basemap given ⇒ rail over the plain rp-bg background, and NO external tile dependency
+    // (the OSMF-policy-violating tile.openstreetmap.org raster is gone).
+    expect(JSON.stringify(style)).not.toContain('tile.openstreetmap.org');
+    expect((style.layers as { id: string }[])[0].id).toBe('rp-bg');
     expect((style.layers as unknown[]).length).toBeGreaterThan(0);
+  });
+
+  it('merges an external basemap: its sources/layers under the rail, glyphs+sprite adopted', () => {
+    const basemap = {
+      sources: { openmaptiles: { type: 'vector', url: 'https://tiles.openfreemap.org/planet' } },
+      layers: [
+        { id: 'background', type: 'background' },
+        { id: 'water', type: 'fill', source: 'openmaptiles' },
+      ],
+      glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
+      sprite: 'https://tiles.openfreemap.org/sprites/ofm_f384/ofm',
+    };
+    const style = buildBaseStyle({ packages: STUB_PACKAGES, litSegmentIds: [], basemap });
+    expect(style.glyphs).toBe(basemap.glyphs);
+    expect(style.sprite).toBe(basemap.sprite);
+    const sources = style.sources as Record<string, { type: string }>;
+    expect(sources['openmaptiles'].type).toBe('vector');
+    expect(sources['rp-segments'].type).toBe('geojson'); // rail sources never clobbered
+    const ids = (style.layers as { id: string }[]).map((l) => l.id);
+    // order: rp-bg first, then the WHOLE basemap stack, then every rail layer above it.
+    expect(ids[0]).toBe('rp-bg');
+    expect(ids.indexOf('water')).toBeGreaterThan(ids.indexOf('background'));
+    expect(ids.indexOf(SEGMENTS_LAYER)).toBeGreaterThan(ids.indexOf('water'));
   });
 
   it('carries the OSM/ODbL romaji credit on the rail source attribution', () => {

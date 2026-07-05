@@ -15,6 +15,7 @@
 
 import type { RailGeoPackage, RailLine, RailSegment } from '../../contract/types';
 import { RAIL_ATTRIBUTION_JP } from '../../contract/types';
+import type { ExternalBasemap } from './basemap';
 import { tokens, stroke } from '../../design/tokens';
 
 /**
@@ -353,11 +354,13 @@ export function stationRadiusExpression(litStationArray: string[]): unknown[] {
 }
 
 // ─────────────────────────────── the base style ─────────────────────────────────
-// A muted OSM raster basemap (so the network reads against real geography) under our
-// GeoJSON rail layers. No glyphs/sprite/text. The shape is `maplibregl.StyleSpecification`
-// but kept untyped here so style.ts imports nothing from maplibre.
-// NOTE: the raster basemap reintroduces an external tile dependency the eng review
-// flagged for offline/iOS — fine for this online-first v0; revisit for the PWA/offline tier.
+// The OpenFreeMap `positron` vector basemap (vendored JSON, loaded by lib/map/basemap.ts) under
+// our GeoJSON rail layers — its whole layer stack slots in below every rp-* layer, and its
+// glyphs/sprite ride along for its label layers (our own layers still render no symbol text).
+// positron is a muted light-grey data-overlay style, so the old raster-muting paint hack is gone
+// with the raster. When `basemap` is null (offline first-boot, fetch failure) the rail renders
+// over the plain rp-bg background — the same graceful degradation the raster had. The shape is
+// `maplibregl.StyleSpecification` but kept untyped here so style.ts imports nothing from maplibre.
 
 export interface BaseStyleInput {
   packages: RailGeoPackage[];
@@ -365,6 +368,8 @@ export interface BaseStyleInput {
   /** Initial selection highlight (usually empty at boot; MapView drives it via setFilter). */
   selectedSegmentIds?: string[];
   selectedStationIds?: string[];
+  /** The vendored vector basemap, or null to render rail over a plain background. */
+  basemap?: ExternalBasemap | null;
 }
 
 export function buildBaseStyle({
@@ -372,22 +377,19 @@ export function buildBaseStyle({
   litSegmentIds: lit,
   selectedSegmentIds: selected = [],
   selectedStationIds: selectedStations = [],
+  basemap = null,
 }: BaseStyleInput): Record<string, unknown> {
   const litStations = litStationIds(lit, packages);
   return {
     version: 8,
-    // No glyphs/sprite: we render no symbol text in v0. The `glyphs` key is OMITTED
-    // entirely — MapLibre's validator rejects `glyphs: undefined` ("string expected,
-    // undefined found"), which fired map 'error' before 'load' and blanked the map.
+    // glyphs/sprite come from the basemap (its label layers need them); our layers use neither.
+    // The keys are OMITTED entirely when absent — MapLibre's validator rejects
+    // `glyphs: undefined` ("string expected, undefined found"), which fired map 'error'
+    // before 'load' and blanked the map.
+    ...(basemap?.glyphs ? { glyphs: basemap.glyphs } : {}),
+    ...(basemap?.sprite ? { sprite: basemap.sprite } : {}),
     sources: {
-      // v0 raster basemap (muted) so the rail network reads against real geography.
-      basemap: {
-        type: 'raster',
-        tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
-        tileSize: 256,
-        attribution: '© OpenStreetMap contributors',
-        maxzoom: 19,
-      },
+      ...(basemap?.sources ?? {}),
       // The rail data CC BY credit rides on its own source so the attribution control shows
       // it alongside the OSM basemap credit (CC BY requires it to be visible). The OSM/ODbL
       // romaji credit is appended here too — it is the source of the nameRoma readings we surface.
@@ -400,18 +402,8 @@ export function buildBaseStyle({
     },
     layers: [
       { id: 'rp-bg', type: 'background', paint: { 'background-color': tokens.white } },
-      {
-        id: 'rp-basemap',
-        type: 'raster',
-        source: 'basemap',
-        // Mute toward soft grey so the emerald rail pops (JR-East aesthetic).
-        paint: {
-          'raster-saturation': -0.9,
-          'raster-opacity': 0.55,
-          'raster-contrast': -0.12,
-          'raster-brightness-max': 0.98,
-        },
-      },
+      // The whole positron layer stack (its background → its labels) between rp-bg and the rail.
+      ...(basemap?.layers ?? []),
       // C3 — DARK SELECTION CASING, UNDERLAY: a wide dark line BELOW everything rail so the
       // picked line's dark halo peeks out around its own hue (white would vanish on the light
       // basemap). Empty filter ⇒ paints nothing until a line is selected; MapView swaps the
