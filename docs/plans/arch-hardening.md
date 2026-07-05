@@ -125,6 +125,20 @@ the test — correctly — does not tolerate the widened window.
 the first load without the post-claim window) — e.g. adjust the `registerType`/registration so
 `waitForPrecache`'s guarantee holds — THEN re-apply the self-host. Tracked; not in this PR.
 
+**2026-07-05 update (launch-cluster findings — start the follow-up from here):** the fetch-timing
+theory is FALSIFIED. During the launch work, two more font configurations were tested against the
+offline specs: (a) JS-injected stylesheet after window `load`, and (b) `rel=preload` + onload
+rel-swap — the latter starts the fetch at head-parse, identical to the blocking link. BOTH fail the
+offline specs identically (suite time drops 4.9m → 47s, offline reload → `ERR_INTERNET_DISCONNECTED`).
+The surviving mechanism: the blocking `<link>` *delays the document load event*, which pads the
+timeline so the SW settles before `waitForPrecache` completes and the spec cuts the network — the
+same reason the specs pass on slow local networks and fail on fast CI. So the fix is NOT about how
+fonts load; it is entirely about closing the post-claim control gap (or making `waitForPrecache`'s
+contract real in the app). Also relevant since v0.11.0.0: boot performs a same-origin
+`basemap/positron.json` fetch (precached) before Map construction — account for it when reasoning
+about first-load timing. Verified in the built bundle: workbox-window auto-reloads on `activated`
+only when `isUpdate || isExternal`, so a first-install self-reload is NOT the mechanism.
+
 <details><summary>Original Phase 4 spec (for the follow-up)</summary>
 
 - Add `@fontsource/noto-sans-jp` (regular `dependencies`); import weights 400/500/700 in `app.css` or `main.ts`. Remove the three font `<link>`s from `index.html`; remove the `google-fonts` `runtimeCaching` block from `vite.config.ts` (:59–70).

@@ -37,6 +37,7 @@
     lodFilter,
     DEFAULT_LINE_COLOR,
     SEGMENTS_LAYER,
+    SEGMENTS_SOURCE,
     SEGMENTS_GLOW_LAYER,
     STATIONS_LAYER,
     SELECTION_CASING_LAYER,
@@ -70,6 +71,7 @@
   let container: HTMLDivElement;
   let status = $state<'loading' | 'ready' | 'error'>('loading');
   let styleLoaded = false;
+  let readyFallbackTimer: number | null = null; // window.setTimeout id (number, not Node's Timeout)
 
   // ── marking state (line-first: pick line → tap A → tap B) ───────────────────
   let selectedLine = $state<RailLine | null>(null);
@@ -219,18 +221,52 @@
         map.touchZoomRotate?.disableRotation?.();
         exposeE2EHandle(map);
 
-        map.on('load', () => {
-          if (disposed) return;
+        // Readiness is idempotent: reached via maplibre's 'load' (the normal path) OR the
+        // bounded fallback below when a hanging basemap origin delays 'load' indefinitely.
+        const becomeReady = (): void => {
+          if (disposed || status === 'ready' || !map) return;
           styleLoaded = true;
           fitToNetwork();
           wireStationClicks();
           void surfaceLogoCredits();
           status = 'ready';
-        });
+        };
+        map.on('load', becomeReady);
+        // A stalled tiles.openfreemap.org (throttled/blocked routes — mainland China) keeps
+        // map.loaded() false for the whole network timeout, but the rail sources are same-origin
+        // GeoJSON and usable within moments. Poll briefly: once the rail source is loaded and
+        // 'load' still hasn't fired, become ready anyway — tiles keep streaming in behind.
+        let readyPolls = 0;
+        const pollReady = (): void => {
+          if (disposed || status === 'ready' || !map) return;
+          try {
+            if (map.getSource(SEGMENTS_SOURCE) && map.isSourceLoaded(SEGMENTS_SOURCE)) {
+              becomeReady();
+              return;
+            }
+          } catch {
+            /* style not ready yet — keep polling */
+          }
+          if (++readyPolls < 12) readyFallbackTimer = window.setTimeout(pollReady, 2000);
+        };
+        readyFallbackTimer = window.setTimeout(pollReady, 8000);
+
+        // Which sources belong to the basemap — their failures must never take the app down
+        // (rail is same-origin; the basemap is progressive decoration).
+        const basemapSourceIds = new Set(Object.keys(basemap?.sources ?? {}));
         map.on('error', (e: unknown) => {
+          const ev = e as { sourceId?: string; error?: { url?: string; message?: string } };
+          const url = ev?.error?.url ?? '';
+          const msg = String(ev?.error?.message ?? '');
+          if ((ev?.sourceId && basemapSourceIds.has(ev.sourceId)) || url.includes('openfreemap') || msg.includes('openfreemap')) {
+            // Offline/blocked basemap origin: expected degradation, log-and-continue. The style's
+            // JSON is precached, so its TileJSON/tile fetches failing offline is the NORMAL path.
+            console.warn('[MapView] basemap source unavailable (rail unaffected):', msg || url || e);
+            return;
+          }
           // GL/style errors after load shouldn't blank the map; only fail before ready.
           if (status !== 'ready') {
-            console.error('[MapView] maplibre error:', (e as { error?: Error })?.error?.message ?? (e as { error?: unknown })?.error ?? e);
+            console.error('[MapView] maplibre error:', ev?.error?.message ?? ev?.error ?? e);
             status = 'error';
           }
         });
@@ -242,6 +278,7 @@
 
     return () => {
       disposed = true;
+      if (readyFallbackTimer !== null) clearTimeout(readyFallbackTimer);
       cancelFlood?.();
       popup?.remove?.();
       popup = null;

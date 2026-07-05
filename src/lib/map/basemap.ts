@@ -28,6 +28,10 @@ const LOAD_TIMEOUT_MS = 8000;
  * failure — timeout, offline, bad JSON, unexpected shape — the map then boots basemap-less.
  */
 export async function loadBasemap(): Promise<ExternalBasemap | null> {
+  // Offline ⇒ basemap-less on purpose. The style JSON is PRECACHED, so offline it would load
+  // fine — and then every tiles.openfreemap.org fetch inside it fails, spraying pre-ready map
+  // 'error' events. Skipping here keeps the offline boot on the clean plain-background path.
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return null;
   const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
   const timer = ctl && typeof window !== 'undefined' ? window.setTimeout(() => ctl.abort(), LOAD_TIMEOUT_MS) : null;
   try {

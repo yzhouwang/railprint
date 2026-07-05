@@ -1,2 +1,4 @@
+# NOTE: on a GitHub Pages PROJECT site this file serves at /railprint/robots.txt, which
+# crawlers never fetch (they read the DOMAIN root only) — kept for a future custom domain.
 User-agent: *
 Allow: /

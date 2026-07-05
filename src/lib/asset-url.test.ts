@@ -15,6 +15,10 @@ describe('assetUrl — package asset paths survive subpath hosting', () => {
     expect(assetUrl('https://example.com/x.png', '/railprint/')).toBe('https://example.com/x.png');
   });
 
+  it('treats protocol-relative URLs as absolute (future CDN paths must not be mangled)', () => {
+    expect(assetUrl('//cdn.example.com/x.png', '/railprint/')).toBe('//cdn.example.com/x.png');
+  });
+
   it('defaults to import.meta.env.BASE_URL', () => {
     // vitest runs with BASE_URL '/', so the default matches the explicit-root case.
     expect(assetUrl('/rail/logos/x.png')).toBe('/rail/logos/x.png');

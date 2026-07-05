@@ -5,7 +5,9 @@
 // display concern), resolve at the consumption edge: a leading '/' means "app root", so prefix
 // Vite's BASE_URL. Non-absolute paths (or full URLs) pass through untouched.
 
-/** `base` is injectable for tests; BASE_URL always ends with '/'. */
+/** `base` is injectable for tests; BASE_URL always ends with '/'. A protocol-relative
+ *  URL ('//cdn…') is an absolute URL, not an app-root path — pass it through untouched
+ *  (the rail-geo program plans CDN-hosted assets; mangling those would 404 silently). */
 export function assetUrl(path: string, base: string = import.meta.env.BASE_URL): string {
-  return path.startsWith('/') ? `${base}${path.slice(1)}` : path;
+  return path.startsWith('/') && !path.startsWith('//') ? `${base}${path.slice(1)}` : path;
 }

@@ -16,10 +16,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: railprint
-      - name: Clone railnet (skip if not yet published)
+      - name: Clone railnet (skip ONLY if not yet published)
         id: railnet
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # Distinguish "repo doesn't exist" (expected until railnet is published — skip with a
+        # notice) from a transient clone failure (MUST fail loudly: a drift gate that fails
+        # open would report green forever and nobody would notice).
         run: |
-          if git clone --depth 1 https://github.com/yzhouwang/railnet ../railnet 2>/dev/null; then
+          if gh api repos/yzhouwang/railnet --silent 2>/dev/null; then
+            git clone --depth 1 https://github.com/yzhouwang/railnet ../railnet
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
