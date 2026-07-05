@@ -1,0 +1,48 @@
+name: deploy
+
+# GitHub Pages deploy — a PROJECT site at https://yzhouwang.github.io/railprint/, so the build
+# uses PAGES_BASE=/railprint/ (vite.config.ts `base`; every runtime fetch is BASE_URL-aware and
+# the SW scopes itself to the subpath). Deploys only after the same gates ci.yml runs — a red
+# build can never ship.
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run verify:rail
+      - run: npm run check
+      - run: npm run test:app
+      - run: npm run build
+        env:
+          PAGES_BASE: /railprint/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
