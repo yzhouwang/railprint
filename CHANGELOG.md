@@ -9,7 +9,7 @@ instead of stacking invisibly on top of each other.
 
 ### Added
 - **Shared-corridor braiding**: corridors like the 青函トンネル (北海道新幹線↔海峡線),
-  成田空港線↔北総線, and 三田線↔南北線の共用区間 — 160 shared stretches nationwide —
+  成田空港線↔北総線, and 三田線↔南北線の共用区間 — ~155 shared stretches nationwide —
   draw each line as its own strand, so you can finally see (and show off) WHICH of the
   two lines you rode. Same-color pairs (both JR北海道 green) become distinguishable for
   the first time. The faster line takes the same side of every corridor nationwide.
