@@ -76,11 +76,15 @@ export type OverlapPlan = Map<string, OverlapPiece[]>;
 export const QUANTIZE_DEG = 1e-4;
 /** A run must span ≥3 consecutive shared vertices — plain crossings (1-2) never braid. */
 export const MIN_RUN_VERTICES = 3;
-/** ≤2 unmatched vertices inside a run are bridged (mismatched vertex cadence tolerance). */
-export const RUN_GAP_TOLERANCE = 2;
-/** A bridged vertex must sit within this distance of the previous one — bridging is a cadence
- *  tolerance, not a license to span kilometers of genuinely unshared sparse track (red-team). */
-export const RUN_GAP_MAX_M = 350;
+/** ≤4 unmatched vertices inside a run are bridged — with vertex→edge matching an unmatched
+ *  vertex means the track genuinely diverges >~16m there; brief divergences are sub-pixel at
+ *  braid zooms and splitting on them shreds the corridor into misaligned fragments. */
+export const RUN_GAP_TOLERANCE = 4;
+/** Bridging budget: a single bridged hop may span up to HOP m (sparse tunnels digitize vertices
+ *  >1km apart — 青函), but the TOTAL bridged distance per run is capped so bridging never spans
+ *  kilometers of genuinely unshared track (red-team) beyond one bounded divergence. */
+export const RUN_GAP_HOP_M = 2500;
+export const RUN_GAP_TOTAL_M = 6000;
 /** Taper step length target, meters (~3 steps ≈ 240 m per 12A). */
 export const TAPER_STEP_M = 80;
 
@@ -234,15 +238,57 @@ function buildPlan(packages: RailGeoPackage[]): OverlapPlan {
     }
   }
 
-  /** Partner lines (≠ self, surviving candidates) within the 3×3 fine neighborhood of a vertex.
-   *  Gated by one hot-cell Set peek — non-corridor vertices exit in a single lookup. */
+  // EDGE grid — the shipped v0.12.0.0 vertex↔vertex matching shredded real corridors into
+  // misaligned fragments: the 青函 pair digitizes the SAME tunnel at different cadences (68 vs
+  // 88 vertices), so intermediate vertices sit ON the shared track but >16m from any partner
+  // VERTEX — runs fragmented per line at DIFFERENT places, rendering half-braided fat lines
+  // (design-review regression). Shared track is a vertex-to-POLYLINE relation: rasterize the
+  // EDGES of candidate lines into the fine grid (sampled at ~cell size), but only edges near the
+  // hot region (coarse 1.1km gate) so the whole-network cost stays trivial.
+  const COARSE = 1e-2; // ≈1.1km gate cells
+  const coarseKey = (lon: number, lat: number): number =>
+    (Math.round(lon / COARSE) + KEY_OFFSET) * KEY_STRIDE + (Math.round(lat / COARSE) + KEY_OFFSET);
+  const hotCoarse = new Set<number>();
+  for (const k of hotCells) {
+    const cx = Math.floor(k / KEY_STRIDE) - KEY_OFFSET;
+    const cy = (k % KEY_STRIDE) - KEY_OFFSET;
+    const lon = cx * QUANTIZE_DEG;
+    const lat = cy * QUANTIZE_DEG;
+    for (const dx of [-COARSE, 0, COARSE]) {
+      for (const dy of [-COARSE, 0, COARSE]) hotCoarse.add(coarseKey(lon + dx, lat + dy));
+    }
+  }
+  const edgeGrid = new Map<number, Map<string, string>>();
+  const stamp = (lon: number, lat: number, lid: string, segId: string): void => {
+    const key = fineKey(lon, lat);
+    let cell = edgeGrid.get(key);
+    if (!cell) edgeGrid.set(key, (cell = new Map()));
+    if (!cell.has(lid)) cell.set(lid, segId);
+  };
+  for (const [lineId, info] of byLine) {
+    if (!candidates.has(lineId)) continue;
+    for (const seg of info.segments) {
+      const cs = seg.geometry.coordinates;
+      for (let i = 0; i < cs.length - 1; i++) {
+        const [ax, ay] = cs[i];
+        const [bx, by] = cs[i + 1];
+        if (!hotCoarse.has(coarseKey(ax, ay)) && !hotCoarse.has(coarseKey(bx, by))) continue;
+        const n = Math.min(10000, Math.max(1, Math.ceil(Math.max(Math.abs(bx - ax), Math.abs(by - ay)) / (QUANTIZE_DEG * 2))));
+        for (let t = 0; t <= n; t++) stamp(ax + ((bx - ax) * t) / n, ay + ((by - ay) * t) / n, lineId, seg.segmentId);
+      }
+    }
+  }
+
+  /** Partner lines (≠ self, surviving candidates) whose POLYLINE passes within the 3×3 fine
+   *  neighborhood of a vertex — vertex→edge, cadence-proof. Gated by one hot-cell peek at the
+   *  coarse tier (the fine hot set no longer covers edge-only cells). */
   function partnersAt(c: number[], self: string, eligible: Set<string>): Map<string, string> {
     const out = new Map<string, string>();
+    if (!hotCoarse.has(coarseKey(c[0], c[1]))) return out;
     const base = fineKey(c[0], c[1]);
-    if (!hotCells.has(base)) return out;
     for (const dx of [-KEY_STRIDE, 0, KEY_STRIDE]) {
       for (let dy = -1; dy <= 1; dy++) {
-        const cell = grid.get(base + dx + dy);
+        const cell = edgeGrid.get(base + dx + dy);
         if (!cell) continue;
         for (const [lid, segId] of cell) {
           if (lid !== self && eligible.has(lid) && !out.has(lid)) out.set(lid, segId);
@@ -272,6 +318,9 @@ function buildPlan(packages: RailGeoPackage[]): OverlapPlan {
       // Maximal runs of a CONSTANT non-empty partner set, bridging ≤RUN_GAP_TOLERANCE mismatched
       // vertices (mismatched vertex cadence between the two polylines — Codex #6).
       const runs: { a: number; b: number; partners: string[]; reps: Map<string, string> }[] = [];
+      const firstMatch = vertexPartners.findIndex((v) => v.length > 0);
+      let lastMatch = vertexPartners.length - 1;
+      while (lastMatch > 0 && vertexPartners[lastMatch].length === 0) lastMatch--;
       let i = 0;
       while (i < coords.length) {
         if (vertexPartners[i].length === 0) {
@@ -281,14 +330,20 @@ function buildPlan(packages: RailGeoPackage[]): OverlapPlan {
         const setKey = vertexPartners[i].join('|');
         let end = i;
         let gap = 0;
+        let bridged = 0;
         for (let j = i + 1; j < coords.length; j++) {
           if (vertexPartners[j].join('|') === setKey) {
             end = j;
             gap = 0;
-          } else if (gap < RUN_GAP_TOLERANCE && metersBetween(coords[j - 1], coords[j]) <= RUN_GAP_MAX_M) {
-            gap++;
+            bridged = 0;
           } else {
-            break;
+            const hop = metersBetween(coords[j - 1], coords[j]);
+            if (gap < RUN_GAP_TOLERANCE && hop <= RUN_GAP_HOP_M && bridged + hop <= RUN_GAP_TOTAL_M) {
+              gap++;
+              bridged += hop;
+            } else {
+              break;
+            }
           }
         }
         if (end - i + 1 >= MIN_RUN_VERTICES) {
@@ -306,7 +361,13 @@ function buildPlan(packages: RailGeoPackage[]): OverlapPlan {
       }
       if (runs.length === 0) continue;
 
-      const pieces = splitSegment(coords, runs, info.line, byLine);
+      // 2A parity — ONE verdict per segment's whole matched extent (not per run): per-run
+      // verdicts flip when a curve changes the dominant axis between fragments, drawing an
+      // X-cross mid-corridor (design-review regression). Both partners' extents span the same
+      // corridor stretch, so their dominant-axis verdicts agree; each line's own traversal
+      // order then yields the side-separating parity.
+      const forward = canonicalForward(coords[firstMatch], coords[lastMatch]);
+      const pieces = splitSegment(coords, runs, info.line, byLine, forward);
       if (pieces) plan.set(seg.segmentId, pieces);
     }
   }
@@ -351,6 +412,7 @@ function splitSegment(
   runs: { a: number; b: number; partners: string[]; reps: Map<string, string> }[],
   selfLine: RailLine,
   byLine: Map<string, LineInfo>,
+  forward: boolean | null,
 ): OverlapPiece[] | null {
   const pieces: OverlapPiece[] = [];
   let cursor = 0;
@@ -371,13 +433,12 @@ function splitSegment(
     const partnerLines = run.partners.map((lid) => byLine.get(lid)?.line).filter((l): l is RailLine => !!l);
     if (partnerLines.length === 0) continue;
 
-    // 2A parity on the MATCHED RUN's endpoints: canonical direction = quantized dominant-axis
-    // forward. line-offset renders right-of-travel, so slot × parity puts every member of the
+    // 2A parity from the segment-level canonical verdict (computed once over the full matched
+    // extent). line-offset renders right-of-travel, so slot × parity puts every member of the
     // corridor on its consistent geographic side regardless of each line's traversal direction
     // (青函 verified opposite, 成田 verified same — both separate under this rule).
-    const forward = canonicalForward(coords[run.a], coords[run.b]);
     if (forward === null) {
-      // degenerate ring run — orientation undecidable; render unbraided rather than risk a
+      // degenerate ring extent — orientation undecidable; render unbraided rather than risk a
       // same-side collision (fail-safe, DD3 spirit).
       pushPlain(cursor, run.b);
       cursor = run.b;

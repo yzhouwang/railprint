@@ -305,14 +305,41 @@ describe('computeOverlapPlan — review-hardening edges (gap boundary, multi-run
     expect(seamOk(coords, pieces)).toBe(true);
   });
 
-  it('gap boundary: 3 unmatched vertices SPLIT the run (two offset runs, seams hold)', () => {
-    const coords = chain(14);
+  it('gap boundary: 5 unmatched vertices SPLIT the run; 4 still bridge (edge-matching semantics)', () => {
+    // With vertex→edge matching an unmatched vertex means genuine divergence; brief (≤4-vertex,
+    // budget-capped) divergences bridge so cadence noise can't shred a corridor (design-review).
+    const mk = (n: number, bad: number[]): ReturnType<typeof computeOverlapPlan> => {
+      const coords = chain(n);
+      const partner = [...coords];
+      for (const i of bad) partner[i] = [coords[i][0], coords[i][1] + 30 * QUANTIZE_DEG];
+      return computeOverlapPlan([pkgFromLines([
+        { lineId: `g${bad.length}-main`, coords },
+        { lineId: `g${bad.length}-off`, coords: partner },
+      ])]);
+    };
+    const bridged = mk(16, [5, 6, 7, 8]).get('g4-main:0-1')!;
+    expect(bridged.filter((p) => p.slot !== 0)).toHaveLength(1);
+    expect(seamOk(chain(16), bridged)).toBe(true);
+    const split = mk(18, [5, 6, 7, 8, 9]).get('g5-main:0-1')!;
+    expect(split.filter((p) => p.slot !== 0).length).toBeGreaterThanOrEqual(2);
+    expect(seamOk(chain(18), split)).toBe(true);
+  });
+
+  it('hop cap: a single >2.5km unmatched hop is never bridged (sparse-track runaway guard)', () => {
+    // 3e-3 lon step ≈ 273m; build a sparse chain whose gap hop is ~3km.
+    const coords: [number, number][] = [
+      ...Array.from({ length: 5 }, (_, i) => [139 + i * 3e-3, 35] as [number, number]),
+      [139 + 4 * 3e-3 + 0.033, 35], // ~3km hop
+      ...Array.from({ length: 5 }, (_, i) => [139 + 4 * 3e-3 + 0.033 + (i + 1) * 3e-3, 35] as [number, number]),
+    ];
     const partner = [...coords];
-    for (const i of [5, 6, 7]) partner[i] = [coords[i][0], coords[i][1] + 30 * QUANTIZE_DEG];
-    const pieces = computeOverlapPlan([pkgFromLines([
-      { lineId: 'g3-main', coords },
-      { lineId: 'g3-off', coords: partner },
-    ])]).get('g3-main:0-1')!;
+    partner[5] = [coords[5][0], coords[5][1] + 30 * QUANTIZE_DEG]; // the far vertex diverges
+    const plan = computeOverlapPlan([pkgFromLines([
+      { lineId: 'hop-main', coords },
+      { lineId: 'hop-off', coords: partner },
+    ])]);
+    const pieces = plan.get('hop-main:0-1')!;
+    // the divergent far hop must terminate the first run, not bridge across ~3km
     expect(pieces.filter((p) => p.slot !== 0).length).toBeGreaterThanOrEqual(2);
     expect(seamOk(coords, pieces)).toBe(true);
   });

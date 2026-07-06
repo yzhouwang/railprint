@@ -344,14 +344,19 @@ export function glowWidthExpression(litArray: string[]): unknown[] {
 // zoom arithmetic; instead the offset is an interpolate over INTEGER zoom stops whose OUTPUTS
 // run the clamp with each stop's LITERAL zoom — piecewise-linear ≈ the glide, monotone, cheap.
 
-/** Adjacent-strand separation in px at a given zoom ≈ ridden body width + 1.5px (5A). */
+/**
+ * Adjacent-strand separation in px at a given zoom ≈ 2 × (ridden body width + 1.5px). The design
+ * review's approved prototype ladder offset EACH strand by k=6px at z9 — 12px separation — and the
+ * first implementation halved that (slot ±0.5 × single-width spacing) into a barely-visible seam
+ * (design-review regression). Two strands at ±0.5 slots now sit a full body-width-plus-gap apart
+ * on EACH side of the true geometry, matching the approved look.
+ */
 export function slotSpacingPx(zoom: number): number {
-  // anchored to the ridden width curve (stroke.ridden × RIDDEN_WIDTH_SCALE × zoom multiplier) + 1.5
   const w = stroke.ridden * RIDDEN_WIDTH_SCALE;
-  if (zoom <= 4) return w * 0.6 + 1.5;
-  if (zoom >= 14) return w * 1.6 + 2;
-  if (zoom <= 9) return w * (0.6 + ((zoom - 4) / 5) * 0.4) + 1.5;
-  return w * (1 + ((zoom - 9) / 5) * 0.6) + 1.5 + ((zoom - 9) / 5) * 0.5;
+  if (zoom <= 4) return 2 * (w * 0.6 + 1.5);
+  if (zoom >= 14) return 2 * (w * 1.6 + 2);
+  if (zoom <= 9) return 2 * (w * (0.6 + ((zoom - 4) / 5) * 0.4) + 1.5);
+  return 2 * (w * (1 + ((zoom - 9) / 5) * 0.6) + 1.5 + ((zoom - 9) / 5) * 0.5);
 }
 
 // Integer zooms PLUS a fractional stop 0.4 above each RANK_MINZOOM value: partnersMinz is always

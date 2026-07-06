@@ -498,9 +498,9 @@ describe('共用区間 braid — review-hardening regressions (3-line CRITICAL, 
     expect(inner[3]).toBe(GLOW_OPACITY);
   });
 
-  it('slotSpacingPx tracks the ridden width curve: ≈6.2px at z9, ≈9.6px at z14, monotone', () => {
-    expect(slotSpacingPx(9)).toBeCloseTo(stroke.ridden * RIDDEN_WIDTH_SCALE + 1.5, 5);
-    expect(slotSpacingPx(14)).toBeCloseTo(stroke.ridden * 1.6 * RIDDEN_WIDTH_SCALE + 2, 5);
+  it('slotSpacingPx = the APPROVED separation (2× body+gap): ≈12.4px at z9, ≈19.1px at z14, monotone', () => {
+    expect(slotSpacingPx(9)).toBeCloseTo(2 * (stroke.ridden * RIDDEN_WIDTH_SCALE + 1.5), 5);
+    expect(slotSpacingPx(14)).toBeCloseTo(2 * (stroke.ridden * 1.6 * RIDDEN_WIDTH_SCALE + 2), 5);
     let prev = 0;
     for (let z = 3; z <= 16; z += 0.5) {
       const v = slotSpacingPx(z);
