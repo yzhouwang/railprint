@@ -230,33 +230,40 @@ export function lineColorExpression(): unknown[] {
 }
 
 /**
- * Ridden = full official color (opacity 1, 4px, glow); unridden = the official color at 0.7
- * so the lines READ as their colors even before you ride them (the whole point of the feature)
- * while ridden still pops via thickness + glow + the last bit of opacity. 0.35 washed the
- * colors out to invisible pastels on the light basemap (browser-verified). Opacity is one of
- * the two lit-keyed channels `repaint()` updates.
+ * Ridden = full official color (opacity 1, thick, glow); unridden = the official color at 0.48
+ * so the not-yet-ridden network recedes to a delicate reference lattice while still reading in
+ * its real colors (the "colorful network even at 0%" identity). Ridden then commands the view via
+ * thickness + a richer glow + full opacity. 0.35 washed the colors out to invisible pastels on the
+ * light basemap (browser-verified); 0.48 is the floor that keeps the field legible while letting
+ * ridden dominate. Opacity is one of the two lit-keyed channels `repaint()` updates.
  */
-export const UNRIDDEN_OPACITY = 0.7;
+export const UNRIDDEN_OPACITY = 0.48;
 export function lineOpacityExpression(litArray: string[]): unknown[] {
   return ['case', isLit(litArray), 1, UNRIDDEN_OPACITY];
 }
 
 /**
- * Ridden = 4px, unridden = 2px (DESIGN.md stroke tokens). THICKNESS is the colorblind-safe
- * differentiator (opacity alone is not). Width also scales gently with zoom so the network
- * reads at JP-fit zoom and stays legible zoomed-in.
+ * Ridden lines command the view; unridden recede. Base tokens are 4px / 2px (DESIGN.md), then
+ * scaled so ridden ≈ 4.7px and unridden ≈ 1.3px at z9 — a ~3.6× width ratio (up from 2×) so the
+ * network you've ridden reads as the foreground and the rest as a backdrop. THICKNESS is the
+ * colorblind-safe differentiator (opacity alone is not); width scales gently with zoom so the
+ * network reads at JP-fit and stays legible zoomed-in.
  */
+export const RIDDEN_WIDTH_SCALE = 1.18; // ridden wider than the 4px base
+export const UNRIDDEN_WIDTH_SCALE = 0.65; // unridden narrower than the 2px base — recede the field
 export function lineWidthExpression(litArray: string[]): unknown[] {
+  const rid = (zoomMul: number): number => stroke.ridden * zoomMul * RIDDEN_WIDTH_SCALE;
+  const unrid = (zoomMul: number): number => stroke.unridden * zoomMul * UNRIDDEN_WIDTH_SCALE;
   return [
     'interpolate',
     ['linear'],
     ['zoom'],
     4,
-    ['case', isLit(litArray), stroke.ridden * 0.6, stroke.unridden * 0.6],
+    ['case', isLit(litArray), rid(0.6), unrid(0.6)],
     9,
-    ['case', isLit(litArray), stroke.ridden, stroke.unridden],
+    ['case', isLit(litArray), rid(1), unrid(1)],
     14,
-    ['case', isLit(litArray), stroke.ridden * 1.6, stroke.unridden * 1.25],
+    ['case', isLit(litArray), rid(1.6), unrid(1.25)],
   ];
 }
 
@@ -267,11 +274,16 @@ export function lineWidthExpression(litArray: string[]): unknown[] {
 export function glowColorExpression(): unknown[] {
   return ['coalesce', ['get', 'color'], DEFAULT_LINE_COLOR];
 }
+// Wider + a touch stronger than before (was 11 / 0.18) so a ridden line reads as luminous
+// foreground against the receded field — without tipping into a highlighter (that was the
+// 'Maximum' variant at 16 / 0.34, browser-compared).
+export const GLOW_WIDTH = 14;
+export const GLOW_OPACITY = 0.28;
 export function glowWidthExpression(litArray: string[]): unknown[] {
-  return ['case', isLit(litArray), 11, 0];
+  return ['case', isLit(litArray), GLOW_WIDTH, 0];
 }
 export function glowOpacityExpression(litArray: string[]): unknown[] {
-  return ['case', isLit(litArray), 0.18, 0];
+  return ['case', isLit(litArray), GLOW_OPACITY, 0];
 }
 
 /**
