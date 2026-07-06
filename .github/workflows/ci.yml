@@ -51,4 +51,15 @@ jobs:
       # (offline works for real users; `npm run test:e2e` runs them locally). Sturdier SW-control wait
       # is a tracked follow-up. Everything else (LOD, marking, route-picker, quarantine, import, diary,
       # china) runs here and guards MapView.
-      - run: npm run test:e2e -- --grep-invert "OFFLINE" --workers=1
+      #
+      # RETRY ONCE: even at workers=1 the SwiftShader map occasionally loses a single boot-timeout
+      # race (13/14 pass, 1 flakes; a fresh run of the SAME commit passes). Playwright's per-test
+      # retries can't cover a whole-run boot cascade, so wrap the run: attempt 1, then one clean
+      # retry. A genuine break fails both; a lone flake is absorbed. This is why a README-only push
+      # was able to fail CI — a flake, not a regression.
+      - name: e2e (retry once to absorb a SwiftShader flake)
+        run: |
+          npm run test:e2e -- --grep-invert "OFFLINE" --workers=1 && exit 0
+          echo "::warning::e2e attempt 1 failed (likely a SwiftShader flake) — retrying once"
+          pkill -f "vite preview" 2>/dev/null || true
+          npm run test:e2e -- --grep-invert "OFFLINE" --workers=1
