@@ -16,6 +16,8 @@
 import type { RailGeoPackage, RailLine, RailSegment } from '../../contract/types';
 import { RAIL_ATTRIBUTION_JP } from '../../contract/types';
 import type { ExternalBasemap } from './basemap';
+import { computeOverlapPlan, type OverlapPlan } from './overlap';
+import { minzForRank } from './lod';
 import { tokens, stroke } from '../../design/tokens';
 
 /**
@@ -49,6 +51,19 @@ export interface SegmentFeatureProps {
   color: string;
   /** C9 LOD: the zoom this segment's line appears at (from RailLine.rank). 0 ⇒ always visible. */
   minz: number;
+  // 共用区間 braid props — present ONLY on corridor pieces (lib/map/overlap.ts); every braid
+  // expression coalesces their absence to the unbraided default, so zero-overlap packages emit
+  // byte-identical features to the pre-braid renderer (regression-tested).
+  /** Braid strand slot (±0.5 pair strands; ±⅓·slot taper fractions). Absent ⇒ 0. */
+  slot?: number;
+  /** Corridor partner's LOD reveal zoom — the DD2 glide gate input. */
+  partnersMinz?: number;
+  /** Representative partner segmentId — the DD4 all-ridden glow check key. */
+  partnerSeg?: string;
+  /** Second representative partner (3-line corridors) — '' / absent on pairs. */
+  partnerSeg2?: string;
+  /** DD4 centered-glow opacity share (1/n). */
+  glowShare?: number;
 }
 export interface StationFeatureProps {
   stationId: string;
@@ -71,10 +86,9 @@ export interface StationFeatureProps {
 // spacing (C9b), so a line showing early is just a clean stroke, not a cluttered dot-mess, which
 // lets us be aggressive here: z3 Shinkansen, z4 trunk (both at the national view), urban/local/
 // minor at z5/6/7 → the whole network is up by region/metro zoom. Was [4,6,7,8,9] (still too high).
-export const RANK_MINZOOM = [3, 4, 5, 6, 7] as const;
-export function minzForRank(rank: number | undefined): number {
-  return rank == null ? 0 : (RANK_MINZOOM[rank] ?? 0);
-}
+// The table itself lives in lod.ts (overlap.ts needs it too); re-exported here for existing importers.
+export { RANK_MINZOOM } from './lod';
+export { minzForRank };
 
 // C9b — STATION dot LOD by AVERAGE SPACING. A line is readable well before its dots are: a dense
 // line (山手線, subways ~1 km apart) crams ~30 dots into a tiny on-screen loop. So a dot reveals
@@ -140,6 +154,16 @@ export function lodFilter(idProp: 'segmentId' | 'stationId', ...alwaysVisible: s
  * DEFAULT_LINE_COLOR.
  */
 export function buildSegmentCollection(packages: RailGeoPackage[]): SegmentCollection {
+  // 共用区間 braid plan — DD3 FAIL-SAFE: the braid is decoration; on ANY detector exception the
+  // map must still render, so a failure degrades to the pre-braid look (empty plan) with a warn.
+  let overlapPlan: OverlapPlan;
+  try {
+    overlapPlan = computeOverlapPlan(packages);
+  } catch (err) {
+    console.warn('[style] overlap detector failed — rendering unbraided:', err);
+    overlapPlan = new Map();
+  }
+
   const features: GeoJSON.Feature<GeoJSON.LineString, SegmentFeatureProps>[] = [];
   for (const pkg of packages) {
     const colorByLine = new Map<string, string>();
@@ -149,18 +173,43 @@ export function buildSegmentCollection(packages: RailGeoPackage[]): SegmentColle
       minzByLine.set(l.lineId, minzForRank(l.rank));
     }
     for (const seg of pkg.segments) {
-      features.push({
-        type: 'Feature',
-        id: seg.segmentId,
-        geometry: seg.geometry,
-        properties: {
-          segmentId: seg.segmentId,
-          lineId: seg.lineId,
-          isHSR: seg.isHSR,
-          color: colorByLine.get(seg.lineId) ?? DEFAULT_LINE_COLOR,
-          minz: minzByLine.get(seg.lineId) ?? 0,
-        },
-      });
+      const base: SegmentFeatureProps = {
+        segmentId: seg.segmentId,
+        lineId: seg.lineId,
+        isHSR: seg.isHSR,
+        color: colorByLine.get(seg.lineId) ?? DEFAULT_LINE_COLOR,
+        minz: minzByLine.get(seg.lineId) ?? 0,
+      };
+      const pieces = overlapPlan.get(seg.segmentId);
+      if (!pieces) {
+        // The pre-braid path — byte-identical output for every non-corridor segment.
+        features.push({ type: 'Feature', id: seg.segmentId, geometry: seg.geometry, properties: base });
+        continue;
+      }
+      // Corridor segment: one feature per piece, ALL sharing the segmentId (lit expressions, LOD
+      // filters and tap handling key on segmentId membership and are duplicate-tolerant — T6
+      // audit). The shared feature `id` is deliberate: setFeatureState is banned by design rule,
+      // and queryRenderedFeatures does not dedupe by id. Braid props only on CORRIDOR pieces
+      // (#11) — discriminated by partnerSeg, NOT slot: a 3-line corridor's CENTER strand is a
+      // real braid member with slot 0 and must keep glowShare/partnerSeg (review CRITICAL).
+      for (const piece of pieces) {
+        features.push({
+          type: 'Feature',
+          id: seg.segmentId,
+          geometry: { type: 'LineString', coordinates: piece.coords },
+          properties:
+            piece.partnerSeg === ''
+              ? base
+              : {
+                  ...base,
+                  slot: piece.slot,
+                  partnersMinz: piece.partnersMinz,
+                  partnerSeg: piece.partnerSeg,
+                  ...(piece.partnerSeg2 ? { partnerSeg2: piece.partnerSeg2 } : {}),
+                  glowShare: piece.glowShare,
+                },
+        });
+      }
     }
   }
   return { type: 'FeatureCollection', features };
@@ -282,8 +331,151 @@ export const GLOW_OPACITY = 0.28;
 export function glowWidthExpression(litArray: string[]): unknown[] {
   return ['case', isLit(litArray), GLOW_WIDTH, 0];
 }
-export function glowOpacityExpression(litArray: string[]): unknown[] {
-  return ['case', isLit(litArray), GLOW_OPACITY, 0];
+
+// ───────────────────────── 共用区間 braid expressions ─────────────────────────
+// Corridor pieces (lib/map/overlap.ts) carry `slot` (±0.5 strand units, taper fractions),
+// `partnersMinz` (the partner's LOD reveal zoom), `partnerSeg` (a representative partner
+// segmentId) and `glowShare` (1/n). Non-corridor features carry NONE of these — every
+// expression coalesces to the unbraided default, so a zero-overlap package renders
+// byte-identically to today (regression test #16).
+//
+// MapLibre restriction: ['zoom'] is legal only as the INPUT of a top-level interpolate/step.
+// The DD2 glide factor clamp((zoom − partnersMinz)/0.4, 0..1) therefore cannot be written as
+// zoom arithmetic; instead the offset is an interpolate over INTEGER zoom stops whose OUTPUTS
+// run the clamp with each stop's LITERAL zoom — piecewise-linear ≈ the glide, monotone, cheap.
+
+/** Adjacent-strand separation in px at a given zoom ≈ ridden body width + 1.5px (5A). */
+export function slotSpacingPx(zoom: number): number {
+  // anchored to the ridden width curve (stroke.ridden × RIDDEN_WIDTH_SCALE × zoom multiplier) + 1.5
+  const w = stroke.ridden * RIDDEN_WIDTH_SCALE;
+  if (zoom <= 4) return w * 0.6 + 1.5;
+  if (zoom >= 14) return w * 1.6 + 2;
+  if (zoom <= 9) return w * (0.6 + ((zoom - 4) / 5) * 0.4) + 1.5;
+  return w * (1 + ((zoom - 9) / 5) * 0.6) + 1.5 + ((zoom - 9) / 5) * 0.5;
+}
+
+// Integer zooms PLUS a fractional stop 0.4 above each RANK_MINZOOM value: partnersMinz is always
+// one of those integers, and interpolation between stops is linear — without the .4 stops the
+// designed [minz, minz+0.4] glide would silently stretch to a full zoom level (red-team).
+const BRAID_ZOOM_STOPS = [3, 3.4, 4, 4.4, 5, 5.4, 6, 6.4, 7, 7.4, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+
+/** The DD2 glide factor at a LITERAL zoom stop: clamp((z − partnersMinz)/0.4, 0, 1). */
+function glideFactorAt(z: number): unknown[] {
+  return ['min', 1, ['max', 0, ['/', ['-', z, ['coalesce', ['get', 'partnersMinz'], 0]], 0.4]]];
+}
+
+/** slot × spacing(z) × glide(z) at a literal stop — the per-feature offset output. The glide is
+ *  OVERRIDDEN to fully open when any partner is ridden: lodFilter shows ridden segments at EVERY
+ *  zoom, so a corridor whose partner is lit would otherwise render stacked below partnersMinz —
+ *  in the core "your ridden network at every zoom" workflow (adversarial review). A SELECTED
+ *  (but unridden) partner below its minz still stacks — transient, accepted. */
+function offsetAt(z: number, corridorLit: string[]): unknown[] {
+  const glide =
+    corridorLit.length === 0
+      ? glideFactorAt(z)
+      : ['case', anyPartnerLit(corridorLit), 1, glideFactorAt(z)];
+  return ['*', ['coalesce', ['get', 'slot'], 0], slotSpacingPx(z), glide];
+}
+
+/** True iff ANY of this piece's corridor partners is ridden (they render at every zoom). */
+function anyPartnerLit(corridorLit: string[]): unknown[] {
+  return [
+    'any',
+    ['in', ['coalesce', ['get', 'partnerSeg'], ''], ['literal', corridorLit]],
+    ['in', ['coalesce', ['get', 'partnerSeg2'], ''], ['literal', corridorLit]],
+  ];
+}
+
+/**
+ * The braid offset for the BODY + SELECTION CASING layers (4A: identical on both so halos track
+ * their line). Non-corridor features (no `slot`) get 0 everywhere — today's rendering. Lit-keyed
+ * (ridden partners hold the braid open at all zooms), so repaint() re-sets it per lit change.
+ */
+export function lineOffsetExpression(corridorLit: string[]): unknown[] {
+  const stops: unknown[] = [];
+  for (const z of BRAID_ZOOM_STOPS) stops.push(z, offsetAt(z, corridorLit));
+  return ['interpolate', ['linear'], ['zoom'], ...stops];
+}
+
+/**
+ * The lit ids that are CORRIDOR PARTNER representatives — the only ids the DD4 partner checks
+ * can ever match. Filtering the live lit array down to this closed small set (~2× corridor
+ * count) before embedding it keeps the per-feature membership scans O(corridors), not O(|lit|),
+ * across the 14 glow-offset stops × 9,442 features per repaint frame (review: performance).
+ * Memoized by packages identity; fail-safe like DD3 (empty set ⇒ glow simply never re-centers).
+ */
+const partnerIdCache = new WeakMap<RailGeoPackage[], Set<string>>();
+export function corridorPartnerLit(litArray: string[], packages: RailGeoPackage[]): string[] {
+  let ids = partnerIdCache.get(packages);
+  if (!ids) {
+    ids = new Set<string>();
+    try {
+      for (const pieces of computeOverlapPlan(packages).values()) {
+        for (const p of pieces) {
+          if (p.partnerSeg) ids.add(p.partnerSeg);
+          if (p.partnerSeg2) ids.add(p.partnerSeg2);
+        }
+      }
+    } catch (err) {
+      // detector failure already degraded the render to unbraided (DD3) — match it, loudly.
+      console.warn('[style] corridor partner ids unavailable — glow never re-centers:', err);
+    }
+    partnerIdCache.set(packages, ids);
+  }
+  return litArray.filter((id) => ids!.has(id));
+}
+
+/**
+ * True iff ALL of this piece's corridor partners are ridden. partnerSeg is always set on
+ * corridor pieces; partnerSeg2 exists only on 3-line corridors and must not block pairs —
+ * an absent/empty partnerSeg2 passes vacuously. `corridorLit` is the pre-filtered array from
+ * corridorPartnerLit (small), NOT the full lit array.
+ */
+function allPartnersLit(corridorLit: string[]): unknown[] {
+  return [
+    'all',
+    ['in', ['coalesce', ['get', 'partnerSeg'], ''], ['literal', corridorLit]],
+    [
+      'any',
+      ['==', ['coalesce', ['get', 'partnerSeg2'], ''], ''],
+      ['in', ['coalesce', ['get', 'partnerSeg2'], ''], ['literal', corridorLit]],
+    ],
+  ];
+}
+
+/**
+ * DD4 — the GLOW layer's offset: when this strand AND all its partners are ridden, the glow
+ * renders CENTERED on the true geometry (offset 0 → the n glows merge into one corridor halo);
+ * otherwise it follows the strand like the body does.
+ */
+export function glowOffsetExpression(corridorLit: string[]): unknown[] {
+  const stops: unknown[] = [];
+  for (const z of BRAID_ZOOM_STOPS)
+    stops.push(z, ['case', allPartnersLit(corridorLit), 0, offsetAt(z, corridorLit)]);
+  return ['interpolate', ['linear'], ['zoom'], ...stops];
+}
+
+/**
+ * DD4 — the GLOW layer's opacity: all-ridden corridor pieces glow at glowShare (1/n) each so the
+ * centered halos SUM to the network-standard GLOW_OPACITY; everything else keeps the standard
+ * value. Unridden stays 0 (the outer case mirrors the plain lit-keyed glow).
+ */
+export function braidGlowOpacityExpression(litArray: string[], corridorLit: string[]): unknown[] {
+  return [
+    'case',
+    isLit(litArray),
+    ['case', allPartnersLit(corridorLit), ['*', GLOW_OPACITY, ['coalesce', ['get', 'glowShare'], 1]], GLOW_OPACITY],
+    0,
+  ];
+}
+
+/**
+ * 1A — ridden lines always paint above unridden within the body layer. LAYOUT property: MapView
+ * applies it at build + re-applies (regenerated with the current lit set) at flood SETTLE only,
+ * never per animation frame (layout changes re-tile).
+ */
+export function lineSortKeyExpression(litArray: string[]): unknown[] {
+  return ['case', isLit(litArray), 1, 0];
 }
 
 /**
@@ -436,33 +628,50 @@ export function buildBaseStyle({
             14, stroke.ridden * 2.6,
           ],
           'line-opacity': 0.9,
+          // 4A: the casing tracks its strand's braid offset, or a selected corridor line's halo
+          // would sit detached from the offset body.
+          'line-offset': lineOffsetExpression(corridorPartnerLit(lit, packages)),
         },
       },
       // The "glow" — a soft halo under the RIDDEN lines, in each line's OWN official color.
+      // DD4: on corridor pieces the glow re-centers to the true geometry when ALL partners are
+      // ridden (glowOffset → 0) at glowShare opacity — n centered glows merge into ONE corridor
+      // halo summing to the standard GLOW_OPACITY, while the crisp bodies stay separated above.
+      // 15A/#3: the glow shares the body's sort-key so glow stacking can never drift from bodies.
       {
         id: SEGMENTS_GLOW_LAYER,
         type: 'line',
         source: SEGMENTS_SOURCE,
-        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        layout: {
+          'line-cap': 'round',
+          'line-join': 'round',
+          'line-sort-key': lineSortKeyExpression(lit),
+        },
         paint: {
           'line-color': glowColorExpression(),
           'line-width': glowWidthExpression(lit),
-          'line-opacity': glowOpacityExpression(lit),
+          'line-opacity': braidGlowOpacityExpression(lit, corridorPartnerLit(lit, packages)),
           'line-blur': 4,
+          'line-offset': glowOffsetExpression(corridorPartnerLit(lit, packages)),
         },
       },
       // The base rail line — STATIC official color (C1) + lit-keyed opacity + width (C2).
       // C9 LOD: only draw once zoom reaches the line's tier (minz) OR it's ridden/selected.
+      // 1A: line-sort-key (LAYOUT) keeps ridden lines painting ABOVE unridden within the layer;
+      // MapView re-applies it with the fresh lit set at flood SETTLE only (layout re-tiles).
       {
         id: SEGMENTS_LAYER,
         type: 'line',
         source: SEGMENTS_SOURCE,
         filter: lodFilter('segmentId', lit, selected),
-        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        layout: { 'line-cap': 'round', 'line-join': 'round', 'line-sort-key': lineSortKeyExpression(lit) },
         paint: {
           'line-color': lineColorExpression(),
           'line-opacity': lineOpacityExpression(lit),
           'line-width': lineWidthExpression(lit),
+          // 4A: the braid offset (slot × zoom-scaled spacing × DD2 glide, held open by ridden
+          // partners) — 0 on every non-corridor feature via coalesce.
+          'line-offset': lineOffsetExpression(corridorPartnerLit(lit, packages)),
         },
       },
       {

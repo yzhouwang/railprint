@@ -28,7 +28,11 @@
     lineOpacityExpression,
     lineWidthExpression,
     glowWidthExpression,
-    glowOpacityExpression,
+    braidGlowOpacityExpression,
+    glowOffsetExpression,
+    corridorPartnerLit,
+    lineSortKeyExpression,
+    lineOffsetExpression,
     stationColorExpression,
     stationRadiusExpression,
     selectedLineSegmentIds,
@@ -179,6 +183,7 @@
   let midpoints = new Map<string, SegPoint>();
   let prevLit: string[] = [];
   let cancelFlood: (() => void) | null = null;
+  let floodInFlight = false; // a live wave — its cancel must never be followed by a paint skip
 
   onMount(() => {
     let disposed = false;
@@ -400,7 +405,17 @@
     map.setPaintProperty(SEGMENTS_LAYER, 'line-opacity', lineOpacityExpression(lit));
     map.setPaintProperty(SEGMENTS_LAYER, 'line-width', lineWidthExpression(lit));
     map.setPaintProperty(SEGMENTS_GLOW_LAYER, 'line-width', glowWidthExpression(lit));
-    map.setPaintProperty(SEGMENTS_GLOW_LAYER, 'line-opacity', glowOpacityExpression(lit));
+    // DD4: both braid-aware — opacity carries the glowShare split, offset re-centers a corridor
+    // strand's glow onto the true geometry once ALL its partners are ridden (merged corridor
+    // halo). The partner checks embed only the CORRIDOR-partner subset of the lit set — a closed
+    // small set — so per-feature membership scans stay O(corridors), not O(|lit|), per frame.
+    const corridorLit = corridorPartnerLit(lit, get(packages));
+    map.setPaintProperty(SEGMENTS_GLOW_LAYER, 'line-opacity', braidGlowOpacityExpression(lit, corridorLit));
+    map.setPaintProperty(SEGMENTS_GLOW_LAYER, 'line-offset', glowOffsetExpression(corridorLit));
+    // A RIDDEN partner renders at every zoom (lodFilter always-on), so it must hold the braid
+    // OPEN below partnersMinz — the offset is lit-keyed and re-set alongside the other channels.
+    map.setPaintProperty(SEGMENTS_LAYER, 'line-offset', lineOffsetExpression(corridorLit));
+    map.setPaintProperty(SELECTION_CASING_LAYER, 'line-offset', lineOffsetExpression(corridorLit));
     map.setPaintProperty(STATIONS_LAYER, 'circle-color', stationColorExpression(litStations));
     map.setPaintProperty(STATIONS_LAYER, 'circle-radius', stationRadiusExpression(litStations));
     applyLodFilters(lit, litStations);
@@ -419,6 +434,19 @@
     map.setFilter(STATIONS_LAYER, lodFilter('stationId', litStations, selSt) as FilterSpecification);
   }
 
+  // 1A SETTLE-ONLY stacking order. `line-sort-key` is a MapLibre LAYOUT property, so re-setting it
+  // re-tiles ALL 9,442 segments — orders of magnitude costlier than the paint/filter updates in
+  // repaint(). The flood wave calls repaint() up to 48× per mark, so this MUST NEVER run per frame:
+  // we re-apply it exactly ONCE, when the lit set has SETTLED to its final truth (the plain-repaint
+  // path, and the flood's LAST frame only). It keeps ridden lines painted above unridden as the lit
+  // set changes. Guards mirror repaint()'s so a call before the style is live is a harmless no-op.
+  function applySortKey(lit: string[]): void {
+    if (!map || !styleLoaded) return;
+    map.setLayoutProperty(SEGMENTS_LAYER, 'line-sort-key', lineSortKeyExpression(lit));
+    // 15A/#3: the glow layer carries the same sort-key so glow stacking never drifts from bodies.
+    map.setLayoutProperty(SEGMENTS_GLOW_LAYER, 'line-sort-key', lineSortKeyExpression(lit));
+  }
+
   // React to litSegmentIds changes: small/equal → snap; big grow → D5 flood wave.
   $effect(() => {
     const lit = $litSegmentIds;
@@ -427,15 +455,40 @@
       return;
     }
     const added = diffNewlyLit(prevLit, lit);
+    const interruptedFlood = floodInFlight;
     cancelFlood?.();
+    floodInFlight = false;
     if (added.length === 0) {
-      // a removal or no-op — just repaint to the new truth.
+      // added empty ⇒ lit ⊆ prevLit, so equal length ⇔ the set didn't change (repeat mark,
+      // removal of a still-covered trip). Skip the repaint AND the layout re-tile entirely —
+      // applySortKey re-tiles all 9,442 segments and must not run on a designed no-op. BUT only
+      // when this emission did not just CANCEL a live flood: prevLit already tracks the flood's
+      // TARGET, so skipping after a mid-wave cancel would strand paint at an intermediate frame
+      // (adversarial review) — fall through and settle instead.
+      if (lit.length === prevLit.length && !interruptedFlood) {
+        prevLit = lit;
+        return;
+      }
+      // a removal (or an interrupted flood) — repaint to the final truth. This IS the settle:
+      // the lit set is already final, so re-tile the stacking order once, right after the paint.
       repaint(lit);
+      applySortKey(lit);
     } else {
       const plan = buildFloodPlan(prevLit, added, midpoints, {
         reducedMotion: prefersReducedMotion(),
       });
-      cancelFlood = runFlood(plan, (frameLit) => repaint(frameLit));
+      // Re-tile the sort-key ONLY on the flood's last frame (isLast) — layout re-tiles all
+      // segments, so it must not run on any of the ≤48 intermediate repaint() frames. runFlood
+      // fires isLast=true on its final tick (and once, synchronously, for a snap/reduced-motion
+      // plan), so `frameLit` there is already the settled lit set.
+      floodInFlight = true;
+      cancelFlood = runFlood(plan, (frameLit, _frame, isLast) => {
+        repaint(frameLit);
+        if (isLast) {
+          applySortKey(frameLit);
+          floodInFlight = false;
+        }
+      });
     }
     prevLit = lit;
   });
@@ -721,7 +774,8 @@
   function pulse(ids: string[]): void {
     if (!map || !styleLoaded || prefersReducedMotion() || ids.length === 0) return;
     const pulsed = ['in', ['get', 'segmentId'], ['literal', ids]];
-    const steady = glowOpacityExpression(get(litSegmentIds));
+    const steadyLit = get(litSegmentIds);
+    const steady = braidGlowOpacityExpression(steadyLit, corridorPartnerLit(steadyLit, get(packages)));
     let t = 0;
     const steps = 6;
     const beat = (): void => {

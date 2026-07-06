@@ -2,6 +2,31 @@
 
 All notable changes to RailPrint are documented here.
 
+## [0.12.0.0] - 2026-07-06
+
+**共用区間 braid.** Lines that share physical track now render as side-by-side strands
+instead of stacking invisibly on top of each other.
+
+### Added
+- **Shared-corridor braiding**: corridors like the 青函トンネル (北海道新幹線↔海峡線),
+  成田空港線↔北総線, and 三田線↔南北線の共用区間 — ~155 shared stretches nationwide —
+  draw each line as its own strand, so you can finally see (and show off) WHICH of the
+  two lines you rode. Same-color pairs (both JR北海道 green) become distinguishable for
+  the first time. The faster line takes the same side of every corridor nationwide.
+- **Corridor completion glow**: ride ALL the lines of a shared corridor and their glows
+  merge into a single halo around the pair — the corridor reads as fully yours. Ride just
+  one and only your strand glows.
+- Strands ease apart with smooth tapers where a corridor begins mid-line, and the braid
+  glides open as you zoom in (or stays open at every zoom once you've ridden a line in it).
+
+### Changed
+- Your ridden lines now always paint **above** unridden ones where they cross or overlap.
+- Repeat-marking an already-ridden section no longer triggers a full map repaint.
+
+### Fixed
+- Overlapping lines no longer hide one another — previously the last-drawn line simply
+  covered its twin, making 共用区間 rides impossible to see.
+
 ## [0.11.0.0] - 2026-07-05
 
 **Public launch.** The repo is public under **AGPL-3.0-only**, and the app deploys to GitHub Pages
