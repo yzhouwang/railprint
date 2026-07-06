@@ -30,7 +30,16 @@ jobs:
       # e2e mirrors ci.yml exactly: OFFLINE specs excluded (SW-settle race on cold runners,
       # tracked follow-up), workers=1 (SwiftShader GL saturation on 2-core runners).
       - run: npx playwright install chromium --with-deps
-      - run: npm run test:e2e -- --grep-invert "OFFLINE" --workers=1
+      # RETRY ONCE (see ci.yml): the SwiftShader map suite loses a single boot race often enough
+      # that, un-retried, it strands legit deploys — a README push AND #17's line-visibility change
+      # both flaked here while ci.yml passed the SAME commit. Absorb one flake; a real break fails
+      # both attempts and (correctly) blocks the deploy.
+      - name: e2e (retry once to absorb a SwiftShader flake)
+        run: |
+          npm run test:e2e -- --grep-invert "OFFLINE" --workers=1 && exit 0
+          echo "::warning::e2e attempt 1 failed (likely a SwiftShader flake) — retrying once"
+          pkill -f "vite preview" 2>/dev/null || true
+          npm run test:e2e -- --grep-invert "OFFLINE" --workers=1
       - run: npm run build
         env:
           PAGES_BASE: /railprint/
