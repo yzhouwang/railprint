@@ -5,6 +5,9 @@ import {
   buildStationCollection,
   lineColorExpression,
   lineOpacityExpression,
+  lineWidthExpression,
+  RIDDEN_WIDTH_SCALE,
+  UNRIDDEN_WIDTH_SCALE,
   glowColorExpression,
   stationColorExpression,
   selectedLineSegmentIds,
@@ -139,6 +142,22 @@ describe('C2 ridden-state rides opacity + width (color stays static)', () => {
     const style = buildBaseStyle({ packages: STUB_PACKAGES, litSegmentIds: lit });
     const base = (style.layers as Layer[]).find((l) => l.id === SEGMENTS_LAYER)!;
     expect(base.paint?.['line-opacity']).toEqual(lineOpacityExpression(lit));
+  });
+
+  it('ridden lines dominate: wider than unridden by a clear margin at every zoom stop', () => {
+    // Evaluate the interpolate expr's per-zoom `case` branches: [interp, [linear], [zoom], z, case, …].
+    const expr = lineWidthExpression(['x']) as unknown[];
+    const stops = expr.slice(3); // z, caseExpr, z, caseExpr, …
+    let checked = 0;
+    for (let i = 0; i < stops.length; i += 2) {
+      const c = stops[i + 1] as [string, unknown, number, number]; // ['case', isLit, riddenW, unriddenW]
+      const [ridden, unridden] = [c[2], c[3]];
+      expect(ridden).toBeGreaterThan(unridden * 2.5); // the "you've ridden this" line clearly foreground
+      checked++;
+    }
+    expect(checked).toBe(3);
+    // Guard the design intent (a flatten regression would trip here, not just the numbers above).
+    expect(RIDDEN_WIDTH_SCALE).toBeGreaterThan(UNRIDDEN_WIDTH_SCALE);
   });
 
   it('the glow paints in the LINE’S OWN color (not a hard-coded emerald)', () => {
