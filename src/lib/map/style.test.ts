@@ -472,7 +472,7 @@ describe('共用区間 braid — review-hardening regressions (3-line CRITICAL, 
     // The offset is interpolate stops whose OUTPUTS clamp against each stop's LITERAL zoom.
     // Evaluate the clamp arithmetic for a feature with partnersMinz=7 at stops z=7 and z=8:
     // z7 → (7−7)/0.4 = 0 (closed); z8 → clamp((8−7)/0.4)=1 (fully open).
-    const expr = lineOffsetExpression() as unknown[];
+    const expr = lineOffsetExpression([]) as unknown[];
     expect(expr.slice(0, 3)).toEqual(['interpolate', ['linear'], ['zoom']]);
     const stops = expr.slice(3);
     const outputAt = (z: number): unknown => stops[stops.indexOf(z) + 1];

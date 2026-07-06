@@ -32,6 +32,7 @@
     glowOffsetExpression,
     corridorPartnerLit,
     lineSortKeyExpression,
+    lineOffsetExpression,
     stationColorExpression,
     stationRadiusExpression,
     selectedLineSegmentIds,
@@ -182,6 +183,7 @@
   let midpoints = new Map<string, SegPoint>();
   let prevLit: string[] = [];
   let cancelFlood: (() => void) | null = null;
+  let floodInFlight = false; // a live wave — its cancel must never be followed by a paint skip
 
   onMount(() => {
     let disposed = false;
@@ -410,6 +412,10 @@
     const corridorLit = corridorPartnerLit(lit, get(packages));
     map.setPaintProperty(SEGMENTS_GLOW_LAYER, 'line-opacity', braidGlowOpacityExpression(lit, corridorLit));
     map.setPaintProperty(SEGMENTS_GLOW_LAYER, 'line-offset', glowOffsetExpression(corridorLit));
+    // A RIDDEN partner renders at every zoom (lodFilter always-on), so it must hold the braid
+    // OPEN below partnersMinz — the offset is lit-keyed and re-set alongside the other channels.
+    map.setPaintProperty(SEGMENTS_LAYER, 'line-offset', lineOffsetExpression(corridorLit));
+    map.setPaintProperty(SELECTION_CASING_LAYER, 'line-offset', lineOffsetExpression(corridorLit));
     map.setPaintProperty(STATIONS_LAYER, 'circle-color', stationColorExpression(litStations));
     map.setPaintProperty(STATIONS_LAYER, 'circle-radius', stationRadiusExpression(litStations));
     applyLodFilters(lit, litStations);
@@ -449,17 +455,22 @@
       return;
     }
     const added = diffNewlyLit(prevLit, lit);
+    const interruptedFlood = floodInFlight;
     cancelFlood?.();
+    floodInFlight = false;
     if (added.length === 0) {
       // added empty ⇒ lit ⊆ prevLit, so equal length ⇔ the set didn't change (repeat mark,
       // removal of a still-covered trip). Skip the repaint AND the layout re-tile entirely —
-      // applySortKey re-tiles all 9,442 segments and must not run on a designed no-op.
-      if (lit.length === prevLit.length) {
+      // applySortKey re-tiles all 9,442 segments and must not run on a designed no-op. BUT only
+      // when this emission did not just CANCEL a live flood: prevLit already tracks the flood's
+      // TARGET, so skipping after a mid-wave cancel would strand paint at an intermediate frame
+      // (adversarial review) — fall through and settle instead.
+      if (lit.length === prevLit.length && !interruptedFlood) {
         prevLit = lit;
         return;
       }
-      // a removal — just repaint to the new truth. This IS the settle: the lit set is already
-      // final, so re-tile the stacking order once, immediately after the paint update.
+      // a removal (or an interrupted flood) — repaint to the final truth. This IS the settle:
+      // the lit set is already final, so re-tile the stacking order once, right after the paint.
       repaint(lit);
       applySortKey(lit);
     } else {
@@ -470,9 +481,13 @@
       // segments, so it must not run on any of the ≤48 intermediate repaint() frames. runFlood
       // fires isLast=true on its final tick (and once, synchronously, for a snap/reduced-motion
       // plan), so `frameLit` there is already the settled lit set.
+      floodInFlight = true;
       cancelFlood = runFlood(plan, (frameLit, _frame, isLast) => {
         repaint(frameLit);
-        if (isLast) applySortKey(frameLit);
+        if (isLast) {
+          applySortKey(frameLit);
+          floodInFlight = false;
+        }
       });
     }
     prevLit = lit;

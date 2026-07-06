@@ -56,7 +56,11 @@ export interface OverlapPiece {
    * opacity. '' on plain (non-corridor) pieces — the discriminator style.ts keys on.
    */
   partnerSeg: string;
-  /** Second representative partner for 3-line corridors; '' on pairs and plain pieces. */
+  /**
+   * Second representative partner for 3-line corridors; '' on pairs and plain pieces. Corridors
+   * of 4+ lines (none known in the data) still braid correctly — slots handle any n — but the
+   * all-partners glow check tops out at two ids, so their centered halo can fire early.
+   */
   partnerSeg2: string;
   /**
    * DD4 opacity share for the centered corridor glow: 1/n for an n-line corridor (0.5 for a pair,
@@ -74,13 +78,18 @@ export const QUANTIZE_DEG = 1e-4;
 export const MIN_RUN_VERTICES = 3;
 /** ≤2 unmatched vertices inside a run are bridged (mismatched vertex cadence tolerance). */
 export const RUN_GAP_TOLERANCE = 2;
+/** A bridged vertex must sit within this distance of the previous one — bridging is a cadence
+ *  tolerance, not a license to span kilometers of genuinely unshared sparse track (red-team). */
+export const RUN_GAP_MAX_M = 350;
 /** Taper step length target, meters (~3 steps ≈ 240 m per 12A). */
 export const TAPER_STEP_M = 80;
 
 /**
  * Compute the braid render plan for a package set. Pure; memoized by `packages` ARRAY IDENTITY
- * (same WeakMap idiom as style.ts segmentIndexCache — a fallback-retry self-heal that swaps the
- * array recomputes automatically). Returns an empty Map when nothing overlaps (e.g. the CN-only package set).
+ * (the style.ts segmentIndexCache WeakMap idiom). NOTE: today the map style is built ONCE at
+ * mount, so a post-boot package self-heal does not re-run this — that pre-existing gap (and the
+ * braid props it now also affects) is tracked in TODOS.md "Map doesn't rebuild after a late
+ * package self-heal". Returns an empty Map when nothing overlaps (e.g. the CN-only package set).
  */
 export function computeOverlapPlan(packages: RailGeoPackage[]): OverlapPlan {
   let plan = planCache.get(packages);
@@ -276,17 +285,22 @@ function buildPlan(packages: RailGeoPackage[]): OverlapPlan {
           if (vertexPartners[j].join('|') === setKey) {
             end = j;
             gap = 0;
-          } else if (gap < RUN_GAP_TOLERANCE) {
+          } else if (gap < RUN_GAP_TOLERANCE && metersBetween(coords[j - 1], coords[j]) <= RUN_GAP_MAX_M) {
             gap++;
           } else {
             break;
           }
         }
         if (end - i + 1 >= MIN_RUN_VERTICES) {
-          // Representative partner segIds resolved AT THE RUN's start vertex, so partnerSeg names
-          // the partner segment actually shared by THIS run (review: a per-segment first-seen rep
-          // could name a partner segment from a different stretch of the line).
-          runs.push({ a: i, b: end, partners: vertexPartners[i], reps: partnersAt(coords[i], lineId, eligible) });
+          // Representative partner segIds resolved at the run's MIDDLE vertex: an INTERIOR vertex
+          // belongs to exactly one partner segment, whereas the run's start often sits on a
+          // station boundary where two adjacent partner segments share the cell and first-seen
+          // could name the neighbor (adversarial review: 326 such cells in jp-2025). The middle
+          // can be a gap-BRIDGED vertex with no partner match — fall back to the start (always a
+          // matched vertex) rather than demote the run to plain (second adversarial pass).
+          const midReps = partnersAt(coords[(i + end) >> 1], lineId, eligible);
+          const reps = midReps.has(vertexPartners[i][0]) ? midReps : partnersAt(coords[i], lineId, eligible);
+          runs.push({ a: i, b: end, partners: vertexPartners[i], reps });
         }
         i = end + 1;
       }
@@ -316,9 +330,20 @@ function slotFor(self: RailLine, partners: RailLine[]): number {
   return (n - 1) / 2 - idx;
 }
 
-/** Lexicographic [lon,lat] compare — the canonical-run-orientation primitive (2A). */
-function lexLess(a: Coord, b: Coord): boolean {
-  return a[0] !== b[0] ? a[0] < b[0] : a[1] < b[1];
+/**
+ * 2A canonical-run orientation, jitter-proof: compare the run's QUANTIZED endpoint cells on the
+ * run's DOMINANT axis. Raw lon-first lex comparison could disagree between the two partners on a
+ * near-north-south corridor whose endpoint lons differ by sub-cell digitization jitter — both
+ * strands would then take the SAME side and render coincident (red-team, synthetic repro; the
+ * shipped package is clean, 52/52 pairs opposite-side). Quantizing kills sub-cell jitter; the
+ * dominant axis makes N-S corridors orient by latitude. Returns null for a degenerate ring
+ * (endpoints in the same cell) — the caller renders that run unbraided rather than guess.
+ */
+function canonicalForward(a: Coord, b: Coord): boolean | null {
+  const dLon = Math.round(b[0] / QUANTIZE_DEG) - Math.round(a[0] / QUANTIZE_DEG);
+  const dLat = Math.round(b[1] / QUANTIZE_DEG) - Math.round(a[1] / QUANTIZE_DEG);
+  if (dLon === 0 && dLat === 0) return null;
+  return Math.abs(dLat) > Math.abs(dLon) ? dLat > 0 : dLon > 0;
 }
 
 function splitSegment(
@@ -346,11 +371,19 @@ function splitSegment(
     const partnerLines = run.partners.map((lid) => byLine.get(lid)?.line).filter((l): l is RailLine => !!l);
     if (partnerLines.length === 0) continue;
 
-    // 2A parity on the MATCHED RUN's endpoints: canonical direction = lex-smaller endpoint first.
-    // line-offset renders right-of-travel, so slot × parity puts every member of the corridor on
-    // its consistent geographic side regardless of each line's traversal direction (青函 verified
-    // opposite, 成田 verified same — both separate under this rule).
-    const parity = lexLess(coords[run.a], coords[run.b]) ? 1 : -1;
+    // 2A parity on the MATCHED RUN's endpoints: canonical direction = quantized dominant-axis
+    // forward. line-offset renders right-of-travel, so slot × parity puts every member of the
+    // corridor on its consistent geographic side regardless of each line's traversal direction
+    // (青函 verified opposite, 成田 verified same — both separate under this rule).
+    const forward = canonicalForward(coords[run.a], coords[run.b]);
+    if (forward === null) {
+      // degenerate ring run — orientation undecidable; render unbraided rather than risk a
+      // same-side collision (fail-safe, DD3 spirit).
+      pushPlain(cursor, run.b);
+      cursor = run.b;
+      continue;
+    }
+    const parity = forward ? 1 : -1;
     const slot = slotFor(selfLine, partnerLines) * parity;
     const partnersMinz = Math.max(...partnerLines.map((l) => minzForRank(l.rank)));
     const partnerSeg = run.reps.get(run.partners[0]) ?? '';

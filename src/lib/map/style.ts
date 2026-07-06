@@ -354,25 +354,46 @@ export function slotSpacingPx(zoom: number): number {
   return w * (1 + ((zoom - 9) / 5) * 0.6) + 1.5 + ((zoom - 9) / 5) * 0.5;
 }
 
-const BRAID_ZOOM_STOPS = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+// Integer zooms PLUS a fractional stop 0.4 above each RANK_MINZOOM value: partnersMinz is always
+// one of those integers, and interpolation between stops is linear — without the .4 stops the
+// designed [minz, minz+0.4] glide would silently stretch to a full zoom level (red-team).
+const BRAID_ZOOM_STOPS = [3, 3.4, 4, 4.4, 5, 5.4, 6, 6.4, 7, 7.4, 8, 9, 10, 11, 12, 13, 14, 15, 16];
 
 /** The DD2 glide factor at a LITERAL zoom stop: clamp((z − partnersMinz)/0.4, 0, 1). */
 function glideFactorAt(z: number): unknown[] {
   return ['min', 1, ['max', 0, ['/', ['-', z, ['coalesce', ['get', 'partnersMinz'], 0]], 0.4]]];
 }
 
-/** slot × spacing(z) × glide(z) at a literal stop — the per-feature offset output. */
-function offsetAt(z: number): unknown[] {
-  return ['*', ['coalesce', ['get', 'slot'], 0], slotSpacingPx(z), glideFactorAt(z)];
+/** slot × spacing(z) × glide(z) at a literal stop — the per-feature offset output. The glide is
+ *  OVERRIDDEN to fully open when any partner is ridden: lodFilter shows ridden segments at EVERY
+ *  zoom, so a corridor whose partner is lit would otherwise render stacked below partnersMinz —
+ *  in the core "your ridden network at every zoom" workflow (adversarial review). A SELECTED
+ *  (but unridden) partner below its minz still stacks — transient, accepted. */
+function offsetAt(z: number, corridorLit: string[]): unknown[] {
+  const glide =
+    corridorLit.length === 0
+      ? glideFactorAt(z)
+      : ['case', anyPartnerLit(corridorLit), 1, glideFactorAt(z)];
+  return ['*', ['coalesce', ['get', 'slot'], 0], slotSpacingPx(z), glide];
+}
+
+/** True iff ANY of this piece's corridor partners is ridden (they render at every zoom). */
+function anyPartnerLit(corridorLit: string[]): unknown[] {
+  return [
+    'any',
+    ['in', ['coalesce', ['get', 'partnerSeg'], ''], ['literal', corridorLit]],
+    ['in', ['coalesce', ['get', 'partnerSeg2'], ''], ['literal', corridorLit]],
+  ];
 }
 
 /**
  * The braid offset for the BODY + SELECTION CASING layers (4A: identical on both so halos track
- * their line). Non-corridor features (no `slot`) get 0 everywhere — today's rendering.
+ * their line). Non-corridor features (no `slot`) get 0 everywhere — today's rendering. Lit-keyed
+ * (ridden partners hold the braid open at all zooms), so repaint() re-sets it per lit change.
  */
-export function lineOffsetExpression(): unknown[] {
+export function lineOffsetExpression(corridorLit: string[]): unknown[] {
   const stops: unknown[] = [];
-  for (const z of BRAID_ZOOM_STOPS) stops.push(z, offsetAt(z));
+  for (const z of BRAID_ZOOM_STOPS) stops.push(z, offsetAt(z, corridorLit));
   return ['interpolate', ['linear'], ['zoom'], ...stops];
 }
 
@@ -395,8 +416,9 @@ export function corridorPartnerLit(litArray: string[], packages: RailGeoPackage[
           if (p.partnerSeg2) ids.add(p.partnerSeg2);
         }
       }
-    } catch {
-      // detector failure already degraded the render to unbraided — match it here.
+    } catch (err) {
+      // detector failure already degraded the render to unbraided (DD3) — match it, loudly.
+      console.warn('[style] corridor partner ids unavailable — glow never re-centers:', err);
     }
     partnerIdCache.set(packages, ids);
   }
@@ -428,7 +450,8 @@ function allPartnersLit(corridorLit: string[]): unknown[] {
  */
 export function glowOffsetExpression(corridorLit: string[]): unknown[] {
   const stops: unknown[] = [];
-  for (const z of BRAID_ZOOM_STOPS) stops.push(z, ['case', allPartnersLit(corridorLit), 0, offsetAt(z)]);
+  for (const z of BRAID_ZOOM_STOPS)
+    stops.push(z, ['case', allPartnersLit(corridorLit), 0, offsetAt(z, corridorLit)]);
   return ['interpolate', ['linear'], ['zoom'], ...stops];
 }
 
@@ -607,7 +630,7 @@ export function buildBaseStyle({
           'line-opacity': 0.9,
           // 4A: the casing tracks its strand's braid offset, or a selected corridor line's halo
           // would sit detached from the offset body.
-          'line-offset': lineOffsetExpression(),
+          'line-offset': lineOffsetExpression(corridorPartnerLit(lit, packages)),
         },
       },
       // The "glow" — a soft halo under the RIDDEN lines, in each line's OWN official color.
@@ -646,9 +669,9 @@ export function buildBaseStyle({
           'line-color': lineColorExpression(),
           'line-opacity': lineOpacityExpression(lit),
           'line-width': lineWidthExpression(lit),
-          // 4A: the braid offset (slot × zoom-scaled spacing × DD2 glide) — 0 on every
-          // non-corridor feature via coalesce.
-          'line-offset': lineOffsetExpression(),
+          // 4A: the braid offset (slot × zoom-scaled spacing × DD2 glide, held open by ridden
+          // partners) — 0 on every non-corridor feature via coalesce.
+          'line-offset': lineOffsetExpression(corridorPartnerLit(lit, packages)),
         },
       },
       {

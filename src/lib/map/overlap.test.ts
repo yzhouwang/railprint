@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import {
   computeOverlapPlan,
@@ -380,5 +381,57 @@ describe('computeOverlapPlan — review-hardening edges (gap boundary, multi-run
       { lineId: 'pp-b', coords: [...coords] },
     ])]).get('pp-a:0-1')![0];
     expect(pair.partnerSeg2).toBe('');
+  });
+});
+
+describe('computeOverlapPlan — red-team regressions (parity jitter, rings, real-package pins)', () => {
+  it('N-S corridor with sub-cell endpoint lon jitter: partners still take OPPOSITE sides', () => {
+    // A north-south chain whose endpoint lons differ by less than a quantize cell in OPPOSITE
+    // orders per line — raw lon-first lex orientation would disagree between the partners and
+    // collide both strands on one side; dominant-axis quantized orientation must not.
+    const ns = (jitter: number): [number, number][] =>
+      Array.from({ length: 8 }, (_, i) => [139 + (i === 7 ? jitter : 0), 35 + i * 3e-3]);
+    const plan = computeOverlapPlan([pkgFromLines([
+      { lineId: 'ns-a', rank: 0, coords: ns(QUANTIZE_DEG * 0.3) },
+      { lineId: 'ns-b', rank: 3, coords: ns(-QUANTIZE_DEG * 0.3) },
+    ])]);
+    const a = plan.get('ns-a:0-1')![0];
+    const b = plan.get('ns-b:0-1')![0];
+    // same traversal direction ⇒ opposite slot signs (the separation condition)
+    expect(a.slot * b.slot).toBeLessThan(0);
+  });
+
+  it('degenerate ring run (endpoints in one cell) renders UNBRAIDED, never a same-side guess', () => {
+    const ring: [number, number][] = [
+      [139, 35], [139.003, 35], [139.003, 35.003], [139, 35.003], [139, 35],
+    ];
+    const plan = computeOverlapPlan([pkgFromLines([
+      { lineId: 'ring-a', coords: ring },
+      { lineId: 'ring-b', coords: [...ring] },
+    ])]);
+    for (const key of ['ring-a:0-1', 'ring-b:0-1']) {
+      const pieces = plan.get(key);
+      if (pieces) for (const p of pieces) expect(p.slot).toBe(0);
+    }
+  });
+
+  it('real-package pin: the marquee corridors braid; the pair population stays sane', () => {
+    // A data-refresh canary (red-team): new false-positive pairs surface here instead of silently
+    // shipping. Marquee pairs must braid; the total braided-segment count stays within a band.
+    const jp = JSON.parse(readFileSync('public/rail/jp-2025.json', 'utf8')) as RailGeoPackage;
+    const plan = computeOverlapPlan([jp]);
+    const segLine = new Map(jp.segments.map((s) => [s.segmentId, s.lineId]));
+    const braidedLines = new Set([...plan.keys()].map((sid) => segLine.get(sid)!));
+    for (const marquee of [
+      'jp-北海道旅客鉄道-北海道新幹線',
+      'jp-北海道旅客鉄道-海峡線',
+      'jp-京成電鉄-成田空港線',
+      'jp-北総鉄道-北総線',
+      'jp-東京都-6号線三田線',
+    ]) {
+      expect(braidedLines.has(marquee), `${marquee} must braid`).toBe(true);
+    }
+    expect(plan.size).toBeGreaterThan(100);
+    expect(plan.size).toBeLessThan(400);
   });
 });
