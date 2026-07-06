@@ -41,5 +41,4 @@ A readiness audit found that moving the 8.8 MB package off-origin to a CDN is ge
 today: CORS isn't wired, the service-worker precache is same-origin only (offline would break), and
 `crypto.subtle` is null in an insecure context (an HTTP CDN would silently disable the SHA-256 check).
 So the package stays same-origin and committed; the railnet *secondary-origin* machinery
-(`VITE_RAIL_CDN_SECONDARY`) is in place for when those are addressed. Tracked in
-`docs/designs/rail-geo-durable-package.md`.
+(`VITE_RAIL_CDN_SECONDARY`) is in place for when those are addressed.

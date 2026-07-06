@@ -37,8 +37,6 @@ community heatmap, broad China beyond the 京沪 corridor, any backend.
 
 ## Docs
 
-- [docs/DESIGN.md](docs/DESIGN.md) — full design (office-hours output, approved).
-- [docs/TEST-PLAN.md](docs/TEST-PLAN.md) — coverage map + golden-file geometry suite.
 - [CHANGELOG.md](CHANGELOG.md) — release-by-release history.
 
 ## Attribution
