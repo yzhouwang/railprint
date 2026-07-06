@@ -12,9 +12,10 @@ One tap gives you a Spotify-Wrapped-style share card. **Japan, plus one China co
 > **China corridor is a preview.** It's a curated WGS-84 station-sequence polyline (北京南 → 上海虹桥,
 > 13 stops), **not** full China track geometry yet — that's a tracked refinement from OpenStreetMap ways (ODbL).
 
-> Working name. Status: **v0.11.0.0** — the real MLIT N02 national network (594 lines, ~10,000 stations,
+> Working name. Status: **v0.12.0.0** — the real MLIT N02 national network (594 lines, ~10,000 stations,
 > ~26,800 km) in full official color with logos, operating-company labels, bilingual names, and a
-> zoom-tiered map; cross-line route marking; a trip diary + train-model collection; and the first
+> zoom-tiered map; 共用区間 braiding (shared-track corridors render as side-by-side strands);
+> cross-line route marking; a trip diary + train-model collection; and the first
 > China corridor (京沪高速铁路). The rail data is content-addressed and SHA-256 verified, works fully
 > offline (installable PWA), and a returning rider's coverage survives multi-version data refreshes —
 > rides on now-abolished track are kept as closed-line history rather than silently dropped.
@@ -25,6 +26,7 @@ One tap gives you a Spotify-Wrapped-style share card. **Japan, plus one China co
 - MapLibre GL JS over OpenFreeMap's muted positron vector basemap; rail geometry stitched from MLIT 国土数値情報 N02 (CC BY 4.0).
 - **Every line in its official color + logo**, tagged with its operating company; **bilingual** station and line names (OpenStreetMap + Wikidata). Hover a station to see every line through it.
 - **Zoom-tiered map:** the Shinkansen spine at the national view, the full network as you zoom into a city. Station dots reveal by average spacing, so dense lines (山手線, subways) stay legible.
+- **共用区間 braid:** lines that share physical track (青函トンネル, 成田空港線↔北総線, 三田線↔南北線…) draw as side-by-side strands instead of stacking, so you can see which one you rode. Ride every line of a corridor and their glows merge into one halo; ridden lines always paint above unridden ones.
 - **Mark a ride:** pick a line → tap station A → tap station B, **or** search two stations by 日本語 / romaji / かな and pick from the routes the app finds between them — even across multiple lines (a 特急ひのとり 津→大阪難波 through-service records as one trip). Live km + % (national, HSR) update.
 - **Your rides are a journey log, not just coverage.** Marking a trip you've ridden before records a *new* dated journey (coverage % never double-counts). The **旅の記録 diary** lists each journey — date · route · km · line(s) · train — and an optional **車両** field collects the rolling stock you've ridden (N700S, CR400AF, …), canonicalized so variants fold into one model.
 - **Japan + China in one map.** The **京沪高速铁路 (Beijing–Shanghai HSR)** loads alongside the JR network, drawn in CR red and markable like any line. Stats are **per-country** — your Japan % stays its own number and a separate 中国 figure tracks China; WGS-84 throughout (no GCJ-02). One corridor proves the schema; broad China is next.
