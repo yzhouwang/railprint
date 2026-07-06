@@ -16,6 +16,9 @@
 import type { RailGeoPackage, RailLine, RailSegment } from '../../contract/types';
 import { RAIL_ATTRIBUTION_JP } from '../../contract/types';
 import type { ExternalBasemap } from './basemap';
+// Intentional ESM cycle with ./overlap (it imports minzForRank from here): both sides are hoisted
+// function declarations called only at runtime, so the in-progress bindings resolve safely.
+import { computeOverlapPlan, type OverlapPlan } from './overlap';
 import { tokens, stroke } from '../../design/tokens';
 
 /**
@@ -49,6 +52,17 @@ export interface SegmentFeatureProps {
   color: string;
   /** C9 LOD: the zoom this segment's line appears at (from RailLine.rank). 0 ⇒ always visible. */
   minz: number;
+  // 共用区間 braid props — present ONLY on corridor pieces (lib/map/overlap.ts); every braid
+  // expression coalesces their absence to the unbraided default, so zero-overlap packages emit
+  // byte-identical features to the pre-braid renderer (regression-tested).
+  /** Braid strand slot (±0.5 pair strands; ±⅓·slot taper fractions). Absent ⇒ 0. */
+  slot?: number;
+  /** Corridor partner's LOD reveal zoom — the DD2 glide gate input. */
+  partnersMinz?: number;
+  /** Representative partner segmentId — the DD4 both-ridden glow check key. */
+  partnerSeg?: string;
+  /** DD4 centered-glow opacity share (1/n). */
+  glowShare?: number;
 }
 export interface StationFeatureProps {
   stationId: string;
@@ -140,6 +154,16 @@ export function lodFilter(idProp: 'segmentId' | 'stationId', ...alwaysVisible: s
  * DEFAULT_LINE_COLOR.
  */
 export function buildSegmentCollection(packages: RailGeoPackage[]): SegmentCollection {
+  // 共用区間 braid plan — DD3 FAIL-SAFE: the braid is decoration; on ANY detector exception the
+  // map must still render, so a failure degrades to the pre-braid look (empty plan) with a warn.
+  let overlapPlan: OverlapPlan;
+  try {
+    overlapPlan = computeOverlapPlan(packages);
+  } catch (err) {
+    console.warn('[style] overlap detector failed — rendering unbraided:', err);
+    overlapPlan = new Map();
+  }
+
   const features: GeoJSON.Feature<GeoJSON.LineString, SegmentFeatureProps>[] = [];
   for (const pkg of packages) {
     const colorByLine = new Map<string, string>();
@@ -149,18 +173,40 @@ export function buildSegmentCollection(packages: RailGeoPackage[]): SegmentColle
       minzByLine.set(l.lineId, minzForRank(l.rank));
     }
     for (const seg of pkg.segments) {
-      features.push({
-        type: 'Feature',
-        id: seg.segmentId,
-        geometry: seg.geometry,
-        properties: {
-          segmentId: seg.segmentId,
-          lineId: seg.lineId,
-          isHSR: seg.isHSR,
-          color: colorByLine.get(seg.lineId) ?? DEFAULT_LINE_COLOR,
-          minz: minzByLine.get(seg.lineId) ?? 0,
-        },
-      });
+      const base: SegmentFeatureProps = {
+        segmentId: seg.segmentId,
+        lineId: seg.lineId,
+        isHSR: seg.isHSR,
+        color: colorByLine.get(seg.lineId) ?? DEFAULT_LINE_COLOR,
+        minz: minzByLine.get(seg.lineId) ?? 0,
+      };
+      const pieces = overlapPlan.get(seg.segmentId);
+      if (!pieces) {
+        // The pre-braid path — byte-identical output for every non-corridor segment.
+        features.push({ type: 'Feature', id: seg.segmentId, geometry: seg.geometry, properties: base });
+        continue;
+      }
+      // Corridor segment: one feature per piece, ALL sharing the segmentId (lit expressions, LOD
+      // filters and tap handling key on segmentId membership and are duplicate-tolerant — T6
+      // audit). The shared feature `id` is deliberate: setFeatureState is banned by design rule,
+      // and queryRenderedFeatures does not dedupe by id. Braid props only on offset pieces (#11).
+      for (const piece of pieces) {
+        features.push({
+          type: 'Feature',
+          id: seg.segmentId,
+          geometry: { type: 'LineString', coordinates: piece.coords },
+          properties:
+            piece.slot === 0
+              ? base
+              : {
+                  ...base,
+                  slot: piece.slot,
+                  partnersMinz: piece.partnersMinz,
+                  partnerSeg: piece.partnerSeg,
+                  glowShare: piece.glowShare,
+                },
+        });
+      }
     }
   }
   return { type: 'FeatureCollection', features };
@@ -519,9 +565,15 @@ export function buildBaseStyle({
             14, stroke.ridden * 2.6,
           ],
           'line-opacity': 0.9,
+          // 4A: the casing tracks its strand's braid offset, or a selected corridor line's halo
+          // would sit detached from the offset body.
+          'line-offset': lineOffsetExpression(),
         },
       },
       // The "glow" — a soft halo under the RIDDEN lines, in each line's OWN official color.
+      // DD4: on corridor pieces the glow re-centers to the true geometry when the PARTNER is also
+      // ridden (glowOffset → 0) at glowShare opacity — n centered glows merge into ONE corridor
+      // halo summing to the standard GLOW_OPACITY, while the crisp bodies stay separated above.
       {
         id: SEGMENTS_GLOW_LAYER,
         type: 'line',
@@ -530,22 +582,28 @@ export function buildBaseStyle({
         paint: {
           'line-color': glowColorExpression(),
           'line-width': glowWidthExpression(lit),
-          'line-opacity': glowOpacityExpression(lit),
+          'line-opacity': braidGlowOpacityExpression(lit),
           'line-blur': 4,
+          'line-offset': glowOffsetExpression(lit),
         },
       },
       // The base rail line — STATIC official color (C1) + lit-keyed opacity + width (C2).
       // C9 LOD: only draw once zoom reaches the line's tier (minz) OR it's ridden/selected.
+      // 1A: line-sort-key (LAYOUT) keeps ridden lines painting ABOVE unridden within the layer;
+      // MapView re-applies it with the fresh lit set at flood SETTLE only (layout re-tiles).
       {
         id: SEGMENTS_LAYER,
         type: 'line',
         source: SEGMENTS_SOURCE,
         filter: lodFilter('segmentId', lit, selected),
-        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        layout: { 'line-cap': 'round', 'line-join': 'round', 'line-sort-key': lineSortKeyExpression(lit) },
         paint: {
           'line-color': lineColorExpression(),
           'line-opacity': lineOpacityExpression(lit),
           'line-width': lineWidthExpression(lit),
+          // 4A: the braid offset (slot × zoom-scaled spacing × DD2 glide) — 0 on every
+          // non-corridor feature via coalesce.
+          'line-offset': lineOffsetExpression(),
         },
       },
       {

@@ -349,3 +349,75 @@ describe('C9b station-dot LOD by average spacing', () => {
     }
   });
 });
+
+describe('共用区間 braid integration (buildSegmentCollection × computeOverlapPlan)', () => {
+  it('CRITICAL #16: zero-overlap packages emit BYTE-IDENTICAL features to the pre-braid renderer', () => {
+    // JP_PACKAGE (the 3-line fallback stub) has no shared corridors — the plan must be empty and
+    // every segment must come out as exactly ONE feature with the ORIGINAL geometry object shape
+    // and no braid props. This is the "the braid cannot perturb the rest of the map" contract.
+    const fc = buildSegmentCollection([JP_PACKAGE]);
+    expect(fc.features).toHaveLength(JP_PACKAGE.segments.length);
+    for (const [i, seg] of JP_PACKAGE.segments.entries()) {
+      const f = fc.features[i];
+      expect(f.properties.segmentId).toBe(seg.segmentId);
+      expect(JSON.stringify(f.geometry)).toBe(JSON.stringify(seg.geometry));
+      expect('slot' in f.properties).toBe(false);
+      expect('partnersMinz' in f.properties).toBe(false);
+      expect('partnerSeg' in f.properties).toBe(false);
+      expect('glowShare' in f.properties).toBe(false);
+    }
+  });
+
+  it('#17: a corridor pair splits into multiple features; braid props ONLY on offset pieces', () => {
+    // Two synthetic lines sharing identical geometry (青函-shaped full twin).
+    const coords: [number, number][] = Array.from({ length: 8 }, (_, i) => [139 + i * 3e-3, 35]);
+    const mk = (lineId: string, rank: 0 | 4): typeof JP_PACKAGE => ({
+      ...JP_PACKAGE,
+      lines: [
+        {
+          lineId,
+          name: lineId,
+          country: 'JP',
+          isHSR: false,
+          isLoop: false,
+          rank,
+          stationOrder: [],
+          geometry: { type: 'LineString', coordinates: coords },
+        },
+      ],
+      segments: [
+        {
+          segmentId: `${lineId}:0-1`,
+          lineId,
+          fromStationId: `${lineId}.a`,
+          toStationId: `${lineId}.b`,
+          fromSeq: 0,
+          toSeq: 1,
+          km: 2,
+          isHSR: false,
+          geometry: { type: 'LineString', coordinates: coords },
+        },
+      ],
+      stations: [],
+    });
+    const fc = buildSegmentCollection([mk('twin-a', 0), mk('twin-b', 4)]);
+    const a = fc.features.filter((f) => f.properties.lineId === 'twin-a');
+    const b = fc.features.filter((f) => f.properties.lineId === 'twin-b');
+    expect(a.length).toBeGreaterThanOrEqual(1);
+    expect(b.length).toBeGreaterThanOrEqual(1);
+    const offsetPieces = [...a, ...b].filter((f) => f.properties.slot !== undefined);
+    expect(offsetPieces.length).toBeGreaterThan(0);
+    for (const f of offsetPieces) {
+      // full prop set travels together on corridor pieces
+      expect(typeof f.properties.slot).toBe('number');
+      expect(typeof f.properties.partnersMinz).toBe('number');
+      expect(typeof f.properties.partnerSeg).toBe('string');
+      expect(f.properties.glowShare).toBe(0.5);
+      // duplicate-tolerant consumers rely on the piece keeping its segmentId (T6 audit)
+      expect(f.properties.segmentId).toContain(f.properties.lineId);
+    }
+    // DD1: the rank-0 trunk gets the positive canonical-side slot
+    expect(a[0].properties.slot).toBe(0.5);
+    expect(b[0].properties.slot).toBe(-0.5);
+  });
+});
