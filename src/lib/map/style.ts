@@ -286,6 +286,89 @@ export function glowOpacityExpression(litArray: string[]): unknown[] {
   return ['case', isLit(litArray), GLOW_OPACITY, 0];
 }
 
+// ───────────────────────── 共用区間 braid expressions ─────────────────────────
+// Corridor pieces (lib/map/overlap.ts) carry `slot` (±0.5 strand units, taper fractions),
+// `partnersMinz` (the partner's LOD reveal zoom), `partnerSeg` (a representative partner
+// segmentId) and `glowShare` (1/n). Non-corridor features carry NONE of these — every
+// expression coalesces to the unbraided default, so a zero-overlap package renders
+// byte-identically to today (regression test #16).
+//
+// MapLibre restriction: ['zoom'] is legal only as the INPUT of a top-level interpolate/step.
+// The DD2 glide factor clamp((zoom − partnersMinz)/0.4, 0..1) therefore cannot be written as
+// zoom arithmetic; instead the offset is an interpolate over INTEGER zoom stops whose OUTPUTS
+// run the clamp with each stop's LITERAL zoom — piecewise-linear ≈ the glide, monotone, cheap.
+
+/** Adjacent-strand separation in px at a given zoom ≈ ridden body width + 1.5px (5A). */
+export function slotSpacingPx(zoom: number): number {
+  // anchored to the ridden width curve (4px × RIDDEN_WIDTH_SCALE × zoom multiplier) + 1.5
+  const w = 4 * RIDDEN_WIDTH_SCALE;
+  if (zoom <= 4) return w * 0.6 + 1.5;
+  if (zoom >= 14) return w * 1.6 + 2;
+  if (zoom <= 9) return w * (0.6 + ((zoom - 4) / 5) * 0.4) + 1.5;
+  return w * (1 + ((zoom - 9) / 5) * 0.6) + 1.5 + ((zoom - 9) / 5) * 0.5;
+}
+
+const BRAID_ZOOM_STOPS = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+
+/** The DD2 glide factor at a LITERAL zoom stop: clamp((z − partnersMinz)/0.4, 0, 1). */
+function glideFactorAt(z: number): unknown[] {
+  return ['min', 1, ['max', 0, ['/', ['-', z, ['coalesce', ['get', 'partnersMinz'], 0]], 0.4]]];
+}
+
+/** slot × spacing(z) × glide(z) at a literal stop — the per-feature offset output. */
+function offsetAt(z: number): unknown[] {
+  return ['*', ['coalesce', ['get', 'slot'], 0], slotSpacingPx(z), glideFactorAt(z)];
+}
+
+/**
+ * The braid offset for the BODY + SELECTION CASING layers (4A: identical on both so halos track
+ * their line). Non-corridor features (no `slot`) get 0 everywhere — today's rendering.
+ */
+export function lineOffsetExpression(): unknown[] {
+  const stops: unknown[] = [];
+  for (const z of BRAID_ZOOM_STOPS) stops.push(z, offsetAt(z));
+  return ['interpolate', ['linear'], ['zoom'], ...stops];
+}
+
+/** True iff this piece's corridor PARTNER is also ridden (via the representative partnerSeg). */
+function partnerLit(litArray: string[]): unknown[] {
+  return ['in', ['coalesce', ['get', 'partnerSeg'], ''], ['literal', litArray]];
+}
+
+/**
+ * DD4 — the GLOW layer's offset: when this strand AND its partner are both ridden, the glow
+ * renders CENTERED on the true geometry (offset 0 → the n glows merge into one corridor halo);
+ * otherwise it follows the strand like the body does.
+ */
+export function glowOffsetExpression(litArray: string[]): unknown[] {
+  const stops: unknown[] = [];
+  for (const z of BRAID_ZOOM_STOPS) stops.push(z, ['case', partnerLit(litArray), 0, offsetAt(z)]);
+  return ['interpolate', ['linear'], ['zoom'], ...stops];
+}
+
+/**
+ * DD4 — the GLOW layer's opacity: both-ridden corridor pieces glow at glowShare (1/n) each so the
+ * centered halos SUM to the network-standard GLOW_OPACITY; everything else keeps the standard
+ * value. Unridden stays 0 (the outer case matches glowOpacityExpression).
+ */
+export function braidGlowOpacityExpression(litArray: string[]): unknown[] {
+  return [
+    'case',
+    isLit(litArray),
+    ['case', partnerLit(litArray), ['*', GLOW_OPACITY, ['coalesce', ['get', 'glowShare'], 1]], GLOW_OPACITY],
+    0,
+  ];
+}
+
+/**
+ * 1A — ridden lines always paint above unridden within the body layer. LAYOUT property: MapView
+ * applies it at build + re-applies (regenerated with the current lit set) at flood SETTLE only,
+ * never per animation frame (layout changes re-tile).
+ */
+export function lineSortKeyExpression(litArray: string[]): unknown[] {
+  return ['case', isLit(litArray), 1, 0];
+}
+
 /**
  * A station dot is "lit" when ANY segment touching it is ridden. We precompute the lit
  * station set from the lit segment set + the package adjacency, then key the dot color/
