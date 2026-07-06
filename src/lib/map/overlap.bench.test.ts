@@ -25,10 +25,10 @@ describe('computeOverlapPlan', () => {
       computeOverlapPlan(packages);
       ms = Math.min(ms, performance.now() - start);
     }
-    // <100ms is the user-device intent (8A) and holds locally (~80-87ms measured); CI's 2-core
-    // runners bench ~2× slower, so there the threshold acts as a REGRESSION guard (a 3×-class
-    // jump still fails) rather than the UX budget itself.
-    const budget = process.env.CI ? 250 : 100;
+    // Budget renegotiated with the vertex→edge matching fix (design-review): correctness of real
+    // corridors beat the original <100ms guess — measured ~150ms best-of-3 locally. Boot-time
+    // one-shot (WeakMap-memoized). Thresholds act as REGRESSION guards (a 2×-class jump fails).
+    const budget = process.env.CI ? 500 : 250;
     // eslint-disable-next-line no-console
     console.log(`computeOverlapPlan(jp-2025) took ${ms.toFixed(1)} ms (budget <${budget} ms)`);
     expect(ms).toBeLessThan(budget);

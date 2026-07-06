@@ -2,6 +2,19 @@
 
 All notable changes to RailPrint are documented here.
 
+## [0.12.1.0] - 2026-07-06
+
+### Fixed
+- **共用区間 braid rendered broken corridors** (visual regression in 0.12.0.0, caught by
+  design review of the live effects): the 青函トンネル pair drew as one fat line with the
+  braid shredded into misaligned fragments, and strand separation was half the reviewed
+  design. The detector now matches vertices against the partner's **polyline** (not its
+  vertices), so differing digitization cadences can't fragment a shared corridor; run
+  orientation is decided once per corridor stretch (no more mid-tunnel side-flips); sparse
+  tunnel geometry bridges correctly; and strand separation matches the approved look
+  (~12px at z9 — twice the shipped value). 青函 now renders as two continuous strands with
+  a clear channel through the entire tunnel.
+
 ## [0.12.0.0] - 2026-07-06
 
 **共用区間 braid.** Lines that share physical track now render as side-by-side strands
