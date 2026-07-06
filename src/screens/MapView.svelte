@@ -30,6 +30,7 @@
     glowWidthExpression,
     braidGlowOpacityExpression,
     glowOffsetExpression,
+    corridorPartnerLit,
     lineSortKeyExpression,
     stationColorExpression,
     stationRadiusExpression,
@@ -403,9 +404,12 @@
     map.setPaintProperty(SEGMENTS_LAYER, 'line-width', lineWidthExpression(lit));
     map.setPaintProperty(SEGMENTS_GLOW_LAYER, 'line-width', glowWidthExpression(lit));
     // DD4: both braid-aware — opacity carries the glowShare split, offset re-centers a corridor
-    // strand's glow onto the true geometry once its PARTNER is also ridden (merged corridor halo).
-    map.setPaintProperty(SEGMENTS_GLOW_LAYER, 'line-opacity', braidGlowOpacityExpression(lit));
-    map.setPaintProperty(SEGMENTS_GLOW_LAYER, 'line-offset', glowOffsetExpression(lit));
+    // strand's glow onto the true geometry once ALL its partners are ridden (merged corridor
+    // halo). The partner checks embed only the CORRIDOR-partner subset of the lit set — a closed
+    // small set — so per-feature membership scans stay O(corridors), not O(|lit|), per frame.
+    const corridorLit = corridorPartnerLit(lit, get(packages));
+    map.setPaintProperty(SEGMENTS_GLOW_LAYER, 'line-opacity', braidGlowOpacityExpression(lit, corridorLit));
+    map.setPaintProperty(SEGMENTS_GLOW_LAYER, 'line-offset', glowOffsetExpression(corridorLit));
     map.setPaintProperty(STATIONS_LAYER, 'circle-color', stationColorExpression(litStations));
     map.setPaintProperty(STATIONS_LAYER, 'circle-radius', stationRadiusExpression(litStations));
     applyLodFilters(lit, litStations);
@@ -433,6 +437,8 @@
   function applySortKey(lit: string[]): void {
     if (!map || !styleLoaded) return;
     map.setLayoutProperty(SEGMENTS_LAYER, 'line-sort-key', lineSortKeyExpression(lit));
+    // 15A/#3: the glow layer carries the same sort-key so glow stacking never drifts from bodies.
+    map.setLayoutProperty(SEGMENTS_GLOW_LAYER, 'line-sort-key', lineSortKeyExpression(lit));
   }
 
   // React to litSegmentIds changes: small/equal → snap; big grow → D5 flood wave.
@@ -445,8 +451,15 @@
     const added = diffNewlyLit(prevLit, lit);
     cancelFlood?.();
     if (added.length === 0) {
-      // a removal or no-op — just repaint to the new truth. This IS the settle: the lit set is
-      // already final, so re-tile the stacking order once, immediately after the paint update.
+      // added empty ⇒ lit ⊆ prevLit, so equal length ⇔ the set didn't change (repeat mark,
+      // removal of a still-covered trip). Skip the repaint AND the layout re-tile entirely —
+      // applySortKey re-tiles all 9,442 segments and must not run on a designed no-op.
+      if (lit.length === prevLit.length) {
+        prevLit = lit;
+        return;
+      }
+      // a removal — just repaint to the new truth. This IS the settle: the lit set is already
+      // final, so re-tile the stacking order once, immediately after the paint update.
       repaint(lit);
       applySortKey(lit);
     } else {
@@ -746,7 +759,8 @@
   function pulse(ids: string[]): void {
     if (!map || !styleLoaded || prefersReducedMotion() || ids.length === 0) return;
     const pulsed = ['in', ['get', 'segmentId'], ['literal', ids]];
-    const steady = braidGlowOpacityExpression(get(litSegmentIds));
+    const steadyLit = get(litSegmentIds);
+    const steady = braidGlowOpacityExpression(steadyLit, corridorPartnerLit(steadyLit, get(packages)));
     let t = 0;
     const steps = 6;
     const beat = (): void => {

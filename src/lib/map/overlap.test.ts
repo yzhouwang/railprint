@@ -289,3 +289,96 @@ describe('computeOverlapPlan — splitting + tapers (3B/12A) + CRITICAL seams', 
     expect(plain.partnersMinz).toBe(0);
   });
 });
+
+describe('computeOverlapPlan — review-hardening edges (gap boundary, multi-run, crossed ladders)', () => {
+  it('gap boundary: exactly 2 unmatched vertices still bridge into ONE run', () => {
+    const coords = chain(12);
+    const partner = [...coords];
+    partner[4] = [coords[4][0], coords[4][1] + 30 * QUANTIZE_DEG];
+    partner[5] = [coords[5][0], coords[5][1] + 30 * QUANTIZE_DEG];
+    const pieces = computeOverlapPlan([pkgFromLines([
+      { lineId: 'g2-main', coords },
+      { lineId: 'g2-off', coords: partner },
+    ])]).get('g2-main:0-1')!;
+    expect(pieces.filter((p) => p.slot !== 0)).toHaveLength(1);
+    expect(seamOk(coords, pieces)).toBe(true);
+  });
+
+  it('gap boundary: 3 unmatched vertices SPLIT the run (two offset runs, seams hold)', () => {
+    const coords = chain(14);
+    const partner = [...coords];
+    for (const i of [5, 6, 7]) partner[i] = [coords[i][0], coords[i][1] + 30 * QUANTIZE_DEG];
+    const pieces = computeOverlapPlan([pkgFromLines([
+      { lineId: 'g3-main', coords },
+      { lineId: 'g3-off', coords: partner },
+    ])]).get('g3-main:0-1')!;
+    expect(pieces.filter((p) => p.slot !== 0).length).toBeGreaterThanOrEqual(2);
+    expect(seamOk(coords, pieces)).toBe(true);
+  });
+
+  it('two disjoint runs in ONE segment: inter-run stitching + CRITICAL seam invariant', () => {
+    const dense = 5e-4;
+    const coords: [number, number][] = Array.from({ length: 40 }, (_, i) => [139 + i * dense, 35]);
+    const pkg = pkgFromLines([
+      { lineId: 'tworun-main', coords },
+      { lineId: 'tworun-p1', coords: coords.slice(5, 13) },
+      { lineId: 'tworun-p2', coords: coords.slice(25, 33) },
+    ]);
+    const pieces = computeOverlapPlan([pkg]).get('tworun-main:0-1')!;
+    const offset = pieces.filter((p) => p.slot !== 0);
+    expect(offset.length).toBeGreaterThanOrEqual(2);
+    // the two runs braid against DIFFERENT partners — per-run reps must name each one
+    const reps = new Set(offset.map((p) => p.partnerSeg.split(':')[0]));
+    expect(reps.has('tworun-p1')).toBe(true);
+    expect(reps.has('tworun-p2')).toBe(true);
+    expect(seamOk(coords, pieces)).toBe(true);
+  });
+
+  it('crossed taper ladders (short dense run) degrade to a plain jump — seams hold', () => {
+    const dense = 5e-4; // ~55m spacing: ladders (~2×80m each side) cannot both fit a short run
+    const coords: [number, number][] = Array.from({ length: 24 }, (_, i) => [139 + i * dense, 35]);
+    const partner = coords.slice(9, 15); // 6-vertex shared run ≈ 275m < 2 full ladders
+    const pieces = computeOverlapPlan([pkgFromLines([
+      { lineId: 'short-main', coords },
+      { lineId: 'short-p', coords: partner },
+    ])]).get('short-main:0-1')!;
+    const offset = pieces.filter((p) => p.slot !== 0);
+    expect(offset.length).toBeGreaterThanOrEqual(1);
+    // no fractional taper slots when the ladders would cross — full slot only
+    for (const p of offset) expect(Math.abs(p.slot)).toBe(0.5);
+    expect(seamOk(coords, pieces)).toBe(true);
+  });
+
+  it('15A/#8 continuity: adjacent same-membership segments get identical slot values', () => {
+    const coords = chain(13);
+    const plan = computeOverlapPlan([pkgFromLines([
+      { lineId: 'cont-a', rank: 0, coords, segsAt: [6] },
+      { lineId: 'cont-b', rank: 3, coords: [...coords], segsAt: [6] },
+    ])]);
+    const a1 = plan.get('cont-a:0-1')![0].slot;
+    const a2 = plan.get('cont-a:1-2')![0].slot;
+    expect(a1).toBe(a2); // the trunk keeps its side across the segment boundary
+  });
+
+  it('partnerSeg2: 3-line corridor pieces carry BOTH partner reps; pairs carry none', () => {
+    const coords = chain(8);
+    const plan = computeOverlapPlan([pkgFromLines([
+      { lineId: 'p2-a', rank: 0, coords },
+      { lineId: 'p2-b', rank: 2, coords: [...coords] },
+      { lineId: 'p2-c', rank: 4, coords: [...coords] },
+    ])]);
+    const aPiece = plan.get('p2-a:0-1')![0];
+    expect(aPiece.partnerSeg).not.toBe('');
+    expect(aPiece.partnerSeg2).not.toBe('');
+    expect(aPiece.partnerSeg).not.toBe(aPiece.partnerSeg2);
+    expect(aPiece.glowShare).toBeCloseTo(1 / 3);
+    // the slot-0 CENTER strand is a corridor member too (the style regression pins prop emission)
+    const centre = [...plan.entries()].map(([, ps]) => ps[0]).find((p) => p.slot === 0 && p.partnerSeg !== '');
+    expect(centre).toBeDefined();
+    const pair = computeOverlapPlan([pkgFromLines([
+      { lineId: 'pp-a', coords },
+      { lineId: 'pp-b', coords: [...coords] },
+    ])]).get('pp-a:0-1')![0];
+    expect(pair.partnerSeg2).toBe('');
+  });
+});

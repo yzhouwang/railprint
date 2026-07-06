@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildBaseStyle,
+  lineSortKeyExpression,
+  lineOffsetExpression,
+  braidGlowOpacityExpression,
+  corridorPartnerLit,
+  slotSpacingPx,
+  GLOW_OPACITY,
   buildSegmentCollection,
   buildStationCollection,
   lineColorExpression,
@@ -28,7 +34,7 @@ import {
   lodFilter,
   litStationIds,
 } from './style';
-import { tokens } from '../../design/tokens';
+import { tokens, stroke } from '../../design/tokens';
 import { STUB_PACKAGES, JP_PACKAGE } from '../fallback-package';
 
 describe('buildBaseStyle', () => {
@@ -364,6 +370,7 @@ describe('共用区間 braid integration (buildSegmentCollection × computeOverl
       expect('slot' in f.properties).toBe(false);
       expect('partnersMinz' in f.properties).toBe(false);
       expect('partnerSeg' in f.properties).toBe(false);
+      expect('partnerSeg2' in f.properties).toBe(false);
       expect('glowShare' in f.properties).toBe(false);
     }
   });
@@ -419,5 +426,96 @@ describe('共用区間 braid integration (buildSegmentCollection × computeOverl
     // DD1: the rank-0 trunk gets the positive canonical-side slot
     expect(a[0].properties.slot).toBe(0.5);
     expect(b[0].properties.slot).toBe(-0.5);
+  });
+});
+
+describe('共用区間 braid — review-hardening regressions (3-line CRITICAL, #18/#19, expression semantics)', () => {
+  const mkCorridor = (lineId: string, rank: 0 | 2 | 4, coords: [number, number][]): typeof JP_PACKAGE => ({
+    ...JP_PACKAGE,
+    lines: [{ lineId, name: lineId, country: 'JP', isHSR: false, isLoop: false, rank, stationOrder: [], geometry: { type: 'LineString', coordinates: coords } }],
+    segments: [{ segmentId: `${lineId}:0-1`, lineId, fromStationId: `${lineId}.a`, toStationId: `${lineId}.b`, fromSeq: 0, toSeq: 1, km: 2, isHSR: false, geometry: { type: 'LineString', coordinates: coords } }],
+    stations: [],
+  });
+  const coords: [number, number][] = Array.from({ length: 8 }, (_, i) => [139 + i * 3e-3, 35]);
+
+  it('CRITICAL (review): 3-line corridor — ALL strands incl. the slot-0 CENTER keep glowShare/partnerSeg', () => {
+    const fc = buildSegmentCollection([mkCorridor('t3-a', 0, coords), mkCorridor('t3-b', 2, coords), mkCorridor('t3-c', 4, coords)]);
+    for (const lid of ['t3-a', 't3-b', 't3-c']) {
+      const f = fc.features.find((x) => x.properties.lineId === lid)!;
+      expect(f.properties.glowShare).toBeCloseTo(1 / 3); // was: undefined for the center → 1.67× halo
+      expect(f.properties.partnerSeg).toBeTruthy();
+      expect(f.properties.partnerSeg2).toBeTruthy();
+      expect(typeof f.properties.slot).toBe('number');
+    }
+    const slots = ['t3-a', 't3-b', 't3-c']
+      .map((lid) => fc.features.find((x) => x.properties.lineId === lid)!.properties.slot!)
+      .sort((a, b) => a - b);
+    expect(slots).toEqual([-1, 0, 1]);
+  });
+
+  it('#18: line-offset is wired on ALL THREE line layers; glow carries the sort-key too (15A/#3)', () => {
+    const style = buildBaseStyle({ packages: [JP_PACKAGE], litSegmentIds: [] });
+    const layers = style.layers as { id: string; paint?: Record<string, unknown>; layout?: Record<string, unknown> }[];
+    for (const id of ['rp-segments-casing', 'rp-segments-glow', 'rp-segments-line']) {
+      const layer = layers.find((l) => l.id === id)!;
+      expect(layer.paint?.['line-offset'], `${id} line-offset`).toBeDefined();
+    }
+    expect(layers.find((l) => l.id === 'rp-segments-line')!.layout?.['line-sort-key']).toBeDefined();
+    expect(layers.find((l) => l.id === 'rp-segments-glow')!.layout?.['line-sort-key']).toBeDefined();
+  });
+
+  it('#19: lineSortKeyExpression — lit → 1, unlit → 0', () => {
+    expect(lineSortKeyExpression(['s1'])).toEqual(['case', ['in', ['get', 'segmentId'], ['literal', ['s1']]], 1, 0]);
+  });
+
+  it('DD2 glide semantics: offset output is 0 at/below partnersMinz and full past +0.4 (stop arithmetic)', () => {
+    // The offset is interpolate stops whose OUTPUTS clamp against each stop's LITERAL zoom.
+    // Evaluate the clamp arithmetic for a feature with partnersMinz=7 at stops z=7 and z=8:
+    // z7 → (7−7)/0.4 = 0 (closed); z8 → clamp((8−7)/0.4)=1 (fully open).
+    const expr = lineOffsetExpression() as unknown[];
+    expect(expr.slice(0, 3)).toEqual(['interpolate', ['linear'], ['zoom']]);
+    const stops = expr.slice(3);
+    const outputAt = (z: number): unknown => stops[stops.indexOf(z) + 1];
+    const evalClamp = (z: number, partnersMinz: number): number =>
+      Math.min(1, Math.max(0, (z - partnersMinz) / 0.4));
+    expect(evalClamp(7, 7)).toBe(0);
+    expect(evalClamp(8, 7)).toBe(1);
+    // structural: each stop output multiplies slot × spacing × the glide clamp for that literal z
+    const out8 = outputAt(8) as unknown[];
+    expect(out8[0]).toBe('*');
+    expect(out8[2]).toBeCloseTo(slotSpacingPx(8));
+  });
+
+  it('DD4 opacity semantics: all-ridden corridor piece → GLOW_OPACITY × glowShare; else full; unlit 0', () => {
+    const expr = braidGlowOpacityExpression(['self'], ['partner']) as unknown[];
+    expect(expr[0]).toBe('case');
+    // outer: unlit → 0 (last branch)
+    expect(expr[expr.length - 1]).toBe(0);
+    // inner: the all-partners branch multiplies the standard opacity by the piece's share
+    const inner = expr[2] as unknown[];
+    expect(inner[0]).toBe('case');
+    expect(inner[2]).toEqual(['*', GLOW_OPACITY, ['coalesce', ['get', 'glowShare'], 1]]);
+    expect(inner[3]).toBe(GLOW_OPACITY);
+  });
+
+  it('slotSpacingPx tracks the ridden width curve: ≈6.2px at z9, ≈9.6px at z14, monotone', () => {
+    expect(slotSpacingPx(9)).toBeCloseTo(stroke.ridden * RIDDEN_WIDTH_SCALE + 1.5, 5);
+    expect(slotSpacingPx(14)).toBeCloseTo(stroke.ridden * 1.6 * RIDDEN_WIDTH_SCALE + 2, 5);
+    let prev = 0;
+    for (let z = 3; z <= 16; z += 0.5) {
+      const v = slotSpacingPx(z);
+      expect(v).toBeGreaterThanOrEqual(prev - 1e-9);
+      prev = v;
+    }
+  });
+
+  it('corridorPartnerLit filters the lit array to corridor-partner reps only (perf contract)', () => {
+    const packages = [mkCorridor('cp-a', 0, coords), mkCorridor('cp-b', 4, coords)];
+    const allLit = ['cp-a:0-1', 'cp-b:0-1', 'unrelated:9-9'];
+    const filtered = corridorPartnerLit(allLit, packages);
+    expect(filtered).toEqual(expect.arrayContaining(['cp-a:0-1', 'cp-b:0-1']));
+    expect(filtered).not.toContain('unrelated:9-9');
+    // memoized by identity: same packages array → same underlying set, still pure per lit array
+    expect(corridorPartnerLit([], packages)).toEqual([]);
   });
 });

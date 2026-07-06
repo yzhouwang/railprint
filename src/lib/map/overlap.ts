@@ -31,10 +31,7 @@
 // (empty plan). The braid is decoration; it must never break the map.
 
 import type { RailGeoPackage, RailLine, RailSegment } from '../../contract/types';
-// minzForRank lives in style.ts, which imports computeOverlapPlan from here — an intentional ESM
-// cycle: both are hoisted function declarations called only at runtime, so the in-progress module
-// binding resolves safely. Duplicating the RANK_MINZOOM table here would drift; the cycle can't.
-import { minzForRank } from './style';
+import { minzForRank } from './lod';
 
 /** One render piece of a segment: a coordinate slice + its braid slot. */
 export interface OverlapPiece {
@@ -52,15 +49,18 @@ export interface OverlapPiece {
    */
   partnersMinz: number;
   /**
-   * A representative segmentId of the corridor partner (DD4): the glow layer checks whether the
-   * partner is ALSO ridden — both-ridden → glow renders CENTERED (offset 0) at 1/n opacity each,
-   * summing to the network-standard glow; one-ridden → this strand's own offset glow at full
-   * opacity. '' when slot === 0.
+   * A representative segmentId of the corridor partner (DD4), resolved AT THE RUN's start vertex
+   * so it names the partner segment actually shared here: the glow layer checks whether every
+   * partner is ALSO ridden — all-ridden → glow renders CENTERED (offset 0) at 1/n opacity each,
+   * summing to the network-standard glow; otherwise → this strand's own offset glow at full
+   * opacity. '' on plain (non-corridor) pieces — the discriminator style.ts keys on.
    */
   partnerSeg: string;
+  /** Second representative partner for 3-line corridors; '' on pairs and plain pieces. */
+  partnerSeg2: string;
   /**
-   * DD4 opacity share for the centered corridor glow: 1/n for an n-line corridor (0.5 for a pair),
-   * so the n centered glows sum to the network-standard glow opacity. 1 when slot === 0.
+   * DD4 opacity share for the centered corridor glow: 1/n for an n-line corridor (0.5 for a pair,
+   * ⅓ on every strand of a triple INCLUDING the slot-0 center). 1 on plain pieces.
    */
   glowShare: number;
 }
@@ -80,7 +80,7 @@ export const TAPER_STEP_M = 80;
 /**
  * Compute the braid render plan for a package set. Pure; memoized by `packages` ARRAY IDENTITY
  * (same WeakMap idiom as style.ts segmentIndexCache — a fallback-retry self-heal that swaps the
- * array recomputes automatically). Returns an empty Map when nothing overlaps (CN-only, stub).
+ * array recomputes automatically). Returns an empty Map when nothing overlaps (e.g. the CN-only package set).
  */
 export function computeOverlapPlan(packages: RailGeoPackage[]): OverlapPlan {
   let plan = planCache.get(packages);
@@ -152,6 +152,12 @@ function collectLines(packages: RailGeoPackage[]): Map<string, LineInfo> {
   return byLine;
 }
 
+/** Symmetric get-or-create pair insert: a↔b into a Map<id, Set<id>>. */
+function addPair(m: Map<string, Set<string>>, a: string, b: string): void {
+  (m.get(a) ?? m.set(a, new Set()).get(a)!).add(b);
+  (m.get(b) ?? m.set(b, new Set()).get(b)!).add(a);
+}
+
 function bboxOverlap(a: LineInfo, b: LineInfo): boolean {
   return a.bbox[0] <= b.bbox[2] && b.bbox[0] <= a.bbox[2] && a.bbox[1] <= b.bbox[3] && b.bbox[1] <= a.bbox[3];
 }
@@ -173,8 +179,7 @@ function buildPlan(packages: RailGeoPackage[]): OverlapPlan {
       const a = byLine.get(lineIds[i])!;
       const b = byLine.get(lineIds[j])!;
       if (!bboxOverlap(a, b)) continue;
-      (bboxPairs.get(lineIds[i]) ?? bboxPairs.set(lineIds[i], new Set()).get(lineIds[i])!).add(lineIds[j]);
-      (bboxPairs.get(lineIds[j]) ?? bboxPairs.set(lineIds[j], new Set()).get(lineIds[j])!).add(lineIds[i]);
+      addPair(bboxPairs, lineIds[i], lineIds[j]);
     }
   }
 
@@ -197,8 +202,7 @@ function buildPlan(packages: RailGeoPackage[]): OverlapPlan {
   const hotCells = new Set<number>();
   const markPair = (a: string, b: string, k1: number, k2: number): void => {
     if (!bboxPairs.get(a)?.has(b)) return;
-    (candidates.get(a) ?? candidates.set(a, new Set()).get(a)!).add(b);
-    (candidates.get(b) ?? candidates.set(b, new Set()).get(b)!).add(a);
+    addPair(candidates, a, b);
     hotCells.add(k1);
     hotCells.add(k2);
   };
@@ -246,14 +250,11 @@ function buildPlan(packages: RailGeoPackage[]): OverlapPlan {
       const coords = seg.geometry.coordinates as Coord[];
       if (coords.length < MIN_RUN_VERTICES) continue;
 
-      // Per-vertex partner sets (as a stable joined key) + a representative partner segId map.
+      // Per-vertex partner sets (as a stable joined key).
       const vertexPartners: string[][] = [];
-      const repSeg = new Map<string, string>();
       let anyShared = false;
       for (const c of coords) {
-        const p = partnersAt(c, lineId, eligible);
-        for (const [lid, sid] of p) if (!repSeg.has(lid)) repSeg.set(lid, sid);
-        const sorted = [...p.keys()].sort();
+        const sorted = [...partnersAt(c, lineId, eligible).keys()].sort();
         vertexPartners.push(sorted);
         if (sorted.length > 0) anyShared = true;
       }
@@ -261,7 +262,7 @@ function buildPlan(packages: RailGeoPackage[]): OverlapPlan {
 
       // Maximal runs of a CONSTANT non-empty partner set, bridging ≤RUN_GAP_TOLERANCE mismatched
       // vertices (mismatched vertex cadence between the two polylines — Codex #6).
-      const runs: { a: number; b: number; partners: string[] }[] = [];
+      const runs: { a: number; b: number; partners: string[]; reps: Map<string, string> }[] = [];
       let i = 0;
       while (i < coords.length) {
         if (vertexPartners[i].length === 0) {
@@ -281,12 +282,17 @@ function buildPlan(packages: RailGeoPackage[]): OverlapPlan {
             break;
           }
         }
-        if (end - i + 1 >= MIN_RUN_VERTICES) runs.push({ a: i, b: end, partners: vertexPartners[i] });
+        if (end - i + 1 >= MIN_RUN_VERTICES) {
+          // Representative partner segIds resolved AT THE RUN's start vertex, so partnerSeg names
+          // the partner segment actually shared by THIS run (review: a per-segment first-seen rep
+          // could name a partner segment from a different stretch of the line).
+          runs.push({ a: i, b: end, partners: vertexPartners[i], reps: partnersAt(coords[i], lineId, eligible) });
+        }
         i = end + 1;
       }
       if (runs.length === 0) continue;
 
-      const pieces = splitSegment(coords, runs, info.line, byLine, repSeg);
+      const pieces = splitSegment(coords, runs, info.line, byLine);
       if (pieces) plan.set(seg.segmentId, pieces);
     }
   }
@@ -317,17 +323,23 @@ function lexLess(a: Coord, b: Coord): boolean {
 
 function splitSegment(
   coords: Coord[],
-  runs: { a: number; b: number; partners: string[] }[],
+  runs: { a: number; b: number; partners: string[]; reps: Map<string, string> }[],
   selfLine: RailLine,
   byLine: Map<string, LineInfo>,
-  repSeg: Map<string, string>,
 ): OverlapPiece[] | null {
   const pieces: OverlapPiece[] = [];
   let cursor = 0;
 
   const pushPlain = (from: number, to: number): void => {
     if (to <= from) return;
-    pieces.push({ coords: coords.slice(from, to + 1), slot: 0, partnersMinz: 0, partnerSeg: '', glowShare: 1 });
+    pieces.push({
+      coords: coords.slice(from, to + 1),
+      slot: 0,
+      partnersMinz: 0,
+      partnerSeg: '',
+      partnerSeg2: '',
+      glowShare: 1,
+    });
   };
 
   for (const run of runs) {
@@ -341,7 +353,8 @@ function splitSegment(
     const parity = lexLess(coords[run.a], coords[run.b]) ? 1 : -1;
     const slot = slotFor(selfLine, partnerLines) * parity;
     const partnersMinz = Math.max(...partnerLines.map((l) => minzForRank(l.rank)));
-    const partnerSeg = repSeg.get(run.partners[0]) ?? '';
+    const partnerSeg = run.reps.get(run.partners[0]) ?? '';
+    const partnerSeg2 = run.partners.length > 1 ? (run.reps.get(run.partners[1]) ?? '') : '';
     const glowShare = 1 / (partnerLines.length + 1);
 
     pushPlain(cursor, run.a); // pre-run remainder (shares the boundary vertex with the run)
@@ -352,7 +365,7 @@ function splitSegment(
     // to existing vertices; a run too short for both ladders keeps a plain jump (rare, tiny).
     const runPiece = (from: number, to: number, s: number): void => {
       if (to <= from) return;
-      pieces.push({ coords: coords.slice(from, to + 1), slot: s, partnersMinz, partnerSeg, glowShare });
+      pieces.push({ coords: coords.slice(from, to + 1), slot: s, partnersMinz, partnerSeg, partnerSeg2, glowShare });
     };
     /** Two cut indices ~TAPER_STEP_M apart walking inward from a run boundary; [] if no room. */
     const taperCuts = (boundary: number, inward: 1 | -1, limit: number): number[] => {

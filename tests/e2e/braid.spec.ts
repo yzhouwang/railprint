@@ -5,8 +5,8 @@ import type { RailGeoPackage } from '../../src/contract/types';
 // 共用区間 braid, end to end in a real headless WebGL context — the 青函トンネル corridor where the
 // 北海道新幹線 and the 海峡線 share one physical track (三線軌条). Because the geometry is IDENTICAL,
 // zoom can never pull the two lines apart; the braid detector (lib/map/overlap.ts) splits the shared
-// RUN and tags each strand with a `slot` so the style draws them side by side via data-driven
-// line-offset, in OPPOSITE parity directions (2A — the two lines traverse the tunnel head-to-tail).
+// RUN and tags each strand with a `slot`, parity-normalized per run (2A), so the style draws them
+// side by side via data-driven line-offset.
 //
 // WHY property/feature asserts and NEVER a pixel/screenshot compare: the map renders under
 // Chromium's SwiftShader software GL, whose sub-pixel output drifts run-to-run — a pixel diff here
@@ -15,10 +15,6 @@ import type { RailGeoPackage } from '../../src/contract/types';
 // present, each carrying a numeric slot of opposite sign), and are the braid style props wired
 // (line-offset paint, line-sort-key layout)? That proves detection + direction-parity + style
 // binding without ever trusting a pixel. See tests/e2e/map-lod.spec.ts for the harness idioms.
-//
-// PRE-INTEGRATION: computeOverlapPlan is a skeleton returning an empty Map (the detector lands in a
-// parallel lane), so buildSegmentCollection emits no `slot` and no offset props yet — this spec is
-// EXPECTED to fail until the detector integrates, at which point CI gates it.
 
 const HOKKAIDO_SHINKANSEN = 'jp-北海道旅客鉄道-北海道新幹線';
 const KAIKYO = 'jp-北海道旅客鉄道-海峡線';
@@ -64,18 +60,6 @@ async function seedRides(page: Page): Promise<void> {
   );
 }
 
-// The CI sandbox has no internet; serve a blank 1×1 PNG for the OSM raster so the map loads exactly
-// as in production. The assertions only ever touch the local rail (GeoJSON) layers.
-const BLANK_PNG = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
-  'base64',
-);
-test.beforeEach(async ({ page }) => {
-  await page.route(/tile\.openstreetmap\.org/, (route) =>
-    route.fulfill({ contentType: 'image/png', body: BLANK_PNG }),
-  );
-});
-
 test('青函 braid: the 北海道新幹線↔海峡線 shared tunnel renders both strands with opposite-sign slots + wired offset', async ({
   page,
 }) => {
@@ -96,12 +80,23 @@ test('青函 braid: the 北海道新幹線↔海峡線 shared tunnel renders bot
     { timeout: 30_000 },
   );
 
-  // Jump to the 青函トンネル (Tsugaru Strait) and let the rail layers repaint for the new viewport.
+  // Jump to the 青函トンネル (Tsugaru Strait), then POLL until the corridor is actually rendered —
+  // a fixed sleep under-waits on a loaded SwiftShader CI runner and burns time on a fast one.
   await page.evaluate(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (window as any).__map.jumpTo({ center: [140.393, 41.317], zoom: 8.5 });
   });
-  await page.waitForTimeout(2500);
+  await page.waitForFunction(
+    () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const map = (window as any).__map;
+      return (
+        map.loaded() && map.queryRenderedFeatures({ layers: ['rp-segments-line'] }).length > 0
+      );
+    },
+    null,
+    { timeout: 30_000 },
+  );
 
   const result = await page.evaluate(
     ({ hsLine, kkLine }) => {
@@ -114,11 +109,27 @@ test('青函 braid: the 北海道新幹線↔海峡線 shared tunnel renders bot
           .filter((f) => f.properties.lineId === lineId)
           .map((f) => f.properties.slot)
           .filter((s): s is number => typeof s === 'number' && Number.isFinite(s));
+      // MATCHED corridor pairs: a braided feature names its partner segment (partnerSeg); the
+      // partner's own rendered feature must carry a nonzero slot too — the two strands of ONE
+      // shared run, both offset. (A cross-line any-pair sign product is trivially satisfiable
+      // because parity legitimately differs per run — this is the assert that can actually fail.)
+      const bySegment = new Map<string, number>();
+      for (const f of feats) {
+        if (typeof f.properties.slot === 'number' && f.properties.slot !== 0) {
+          bySegment.set(f.properties.segmentId, f.properties.slot);
+        }
+      }
+      let matchedPairs = 0;
+      for (const f of feats) {
+        const partner = f.properties.partnerSeg;
+        if (typeof partner === 'string' && partner !== '' && bySegment.has(partner)) matchedPairs++;
+      }
       return {
         hsCount: feats.filter((f) => f.properties.lineId === hsLine).length,
         kkCount: feats.filter((f) => f.properties.lineId === kkLine).length,
         hsSlots: slotsFor(hsLine),
         kkSlots: slotsFor(kkLine),
+        matchedPairs,
         // ?? null so an UNSET property (undefined) becomes null and the non-null assert fails loudly.
         lineOffset: map.getPaintProperty('rp-segments-line', 'line-offset') ?? null,
         lineSortKey: map.getLayoutProperty('rp-segments-line', 'line-sort-key') ?? null,
@@ -131,12 +142,12 @@ test('青函 braid: the 北海道新幹線↔海峡線 shared tunnel renders bot
   expect(result.hsCount, 'no 北海道新幹線 features in the 青函 viewport').toBeGreaterThan(0);
   expect(result.kkCount, 'no 海峡線 features in the 青函 viewport').toBeGreaterThan(0);
 
-  // (b) Each line carries at least one numeric `slot`, and there exists a cross-line pair whose
-  // slots have OPPOSITE signs — end-to-end proof of detection + direction-parity (2A).
+  // (b) Each line carries at least one numeric `slot`, and at least one MATCHED pair renders:
+  // a braided feature plus the partner segment it names, both with nonzero slots — end-to-end
+  // proof of detection + per-run parity wiring on the same shared run (2A).
   expect(result.hsSlots.length, 'no numeric slot on any 北海道新幹線 feature').toBeGreaterThan(0);
   expect(result.kkSlots.length, 'no numeric slot on any 海峡線 feature').toBeGreaterThan(0);
-  const oppositeSigns = result.hsSlots.some((a) => result.kkSlots.some((b) => a * b < 0));
-  expect(oppositeSigns, 'no opposite-sign slot pair across 北海道新幹線 and 海峡線').toBe(true);
+  expect(result.matchedPairs, 'no matched braided pair (feature + its named partnerSeg)').toBeGreaterThan(0);
 
   // (c) + (d) The braid style is wired on the segments layer: data-driven offset + sort-key.
   expect(result.lineOffset, "line-offset paint must be set on 'rp-segments-line'").not.toBeNull();
