@@ -12,8 +12,11 @@ import {
   preferPickedLine,
   normRoma,
   bilingualLabel,
+  bigramSet,
+  diceFromSets,
   type StationHit,
 } from './search';
+import { normStation, diceSimilarity } from './import/crosswalk';
 import type { RouteCandidate } from '../contract/types';
 
 const rc = (lines: string[], totalKm: number): RouteCandidate => ({
@@ -128,6 +131,57 @@ describe('resolveQuery — fuzzy + misc', () => {
   it('rejects nonsense with no plausible candidate', async () => {
     const hits = await resolveQuery('zzzqqq', index);
     expect(hits.length).toBe(0);
+  });
+});
+
+// Pins finding 6a: the fuzzy fallback now compares against bigram sets PRECOMPUTED into the
+// index (no per-query normStation/normRoma/bigram slicing), and must return the SAME results
+// (hits AND scores) as the from-scratch diceSimilarity it replaced.
+describe('precomputed fuzzy index (perf refactor is behavior-identical)', () => {
+  it('the index carries precomputed name + romaji bigram sets per instance', () => {
+    expect(index.all.length).toBeGreaterThan(0);
+    for (const entry of index.all) {
+      expect(entry.nameGrams).toEqual(bigramSet(normStation(entry.station.name)));
+      if (entry.station.nameRoma) {
+        expect(entry.romaGrams).toEqual(bigramSet(normRoma(entry.station.nameRoma)));
+      } else {
+        expect(entry.romaGrams).toBeNull();
+      }
+    }
+  });
+
+  it('diceFromSets matches crosswalk diceSimilarity on the same keys', () => {
+    const pairs: [string, string][] = [
+      ['shinjyuku', 'shinjuku'], // the fuzzy-typo pair the UI hits
+      ['shinjuku', 'shinjuku'], // identity → 1
+      ['新宿', '新宿御苑前'], // CJK prefix drift
+      ['a', 'a'], // single-char key (bigrams() yields the char itself)
+      ['a', 'b'],
+      ['', 'shinjuku'], // empty side → 0
+      ['tokyo', 'kyoto'], // shared bigrams, different names
+    ];
+    for (const [a, b] of pairs) {
+      expect(diceFromSets(bigramSet(a), bigramSet(b))).toBeCloseTo(diceSimilarity(a, b), 12);
+    }
+  });
+
+  it('fuzzy hit scores equal the from-scratch Dice reference (romaji typo)', async () => {
+    const hits = await resolveQuery('shinjyuku', index);
+    const hit = hits.find((h) => h.station.name === '新宿')!;
+    expect(hit.exact).toBe(false);
+    // the query is pure ASCII, so the probe is its normRoma key; the score must be the Dice
+    // similarity against the station's normalized romaji, exactly as before the precompute.
+    expect(hit.score).toBeCloseTo(
+      diceSimilarity(normRoma('shinjyuku'), normRoma(hit.station.nameRoma!)),
+      12,
+    );
+  });
+
+  it('fuzzy hit scores equal the from-scratch Dice reference (kanji drift)', async () => {
+    const hits = await resolveQuery('新宿西', index); // no exact key → fuzzy over the JP name
+    const hit = hits.find((h) => h.station.name === '新宿');
+    expect(hit).toBeDefined();
+    expect(hit!.score).toBeCloseTo(diceSimilarity(normStation('新宿西'), normStation('新宿')), 12);
   });
 });
 

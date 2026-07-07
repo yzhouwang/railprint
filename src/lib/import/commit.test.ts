@@ -338,6 +338,41 @@ describe('commitImport — cross-existing dedup (merge mode)', () => {
     expect(after2.map((e) => e.id).sort()).toEqual(after1.map((e) => e.id).sort());
   });
 
+  it('re-importing our OWN manual export in merge mode is idempotent (no duplicate ride)', async () => {
+    // Seed the log exactly the way store.markRide would: the deterministic PK `${tripId}:${segmentId}`.
+    const original: RideEvent = {
+      id: 'trip-x:jr-kururi:0-1',
+      segmentId: 'jr-kururi:0-1',
+      railGeoVersion: JP_PACKAGE.version,
+      date: '2025-01-01',
+      source: 'manual',
+      tripId: 'trip-x',
+      createdAt: '2025-01-02T03:04:05.000Z',
+    };
+    await db.putEvents([original]);
+    expect(await db.getAllEvents()).toHaveLength(1);
+
+    // Back it up and restore-merge (our own export schema, same preserved identity).
+    const backup = exportCsv({
+      segmentId: 'jr-kururi:0-1',
+      date: '2025-01-01',
+      createdAt: '2025-01-02T03:04:05.000Z',
+      tripId: 'trip-x',
+      source: 'manual',
+    });
+    const p = parseImport(backup, STUB_PACKAGES, geo);
+    const res: ImportResolution = { importBatchId: p.report.importBatchId, confirmed: [], skipped: [] };
+    await commitImport(p.resolved, res, STUB_PACKAGES, 'merge');
+
+    // Before the fix, a manual restore minted a fresh `evt-…` id AND was exempt from the dedup, so
+    // every restore doubled the diary. Now the original `${tripId}:${segmentId}` id is reconstructed
+    // (and the exact-identity net catches the trip-less case), so the restore is a no-op.
+    const all = await db.getAllEvents();
+    expect(all).toHaveLength(1);
+    expect(all[0].id).toBe('trip-x:jr-kururi:0-1');
+    expect(all[0].source).toBe('manual');
+  });
+
   it('replace mode wipes the log first, so no cross-existing dedup is applied', async () => {
     // Pre-existing event with a logical key that an incoming import would also produce.
     await db.putEvents([

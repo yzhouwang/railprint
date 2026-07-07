@@ -47,6 +47,13 @@
   // Replace-mode is destructive (wipes the entire ridelog), so committing it routes through an
   // explicit confirm panel first. Merge commits straight through.
   let confirmingReplace = $state(false);
+  // The confirm panel is a real alertdialog: on open we move focus INTO it (so keyboard + screen
+  // reader land on the destructive gate, not still out in the page) and Escape cancels. A full Tab
+  // focus-trap is deferred — same lightweight modal a11y the QuarantineSheet uses.
+  let confirmEl: HTMLDivElement | undefined = $state();
+  $effect(() => {
+    if (confirmingReplace) confirmEl?.focus();
+  });
 
   // Export is disabled (not just toast-on-tap) when there's nothing to write — so the user
   // doesn't tap to discover emptiness.
@@ -280,6 +287,9 @@
     choice = {};
     skipped = {};
     confirmingReplace = false;
+    // Back to the safe default: a destructive 'replace' choice must NOT persist into the next,
+    // separate import (that was a sticky-mode footgun — the commit path caches `committedMode`).
+    mode = 'merge';
   }
 
   function viewMap(): void {
@@ -316,6 +326,10 @@
     URL.revokeObjectURL(url);
   }
 </script>
+
+<!-- Escape cancels the destructive replace-confirm dialog. Top-level (svelte:window must not nest
+     inside a block); the handler is inert unless the dialog is open. -->
+<svelte:window onkeydown={(e) => confirmingReplace && e.key === 'Escape' && cancelReplace()} />
 
 <div class="import">
   <h1 class="title">取込</h1>
@@ -461,9 +475,18 @@
 
     {#if confirmingReplace}
       <!-- Replace is irreversible: an explicit, clearly-marked destructive confirm gates it.
-           Cancel is the default (primary-weight) action; Confirm is the destructive one. -->
+           Cancel is the default (primary-weight) action; Confirm is the destructive one.
+           Focus moves into the panel on open (bind:this + $effect) and Escape cancels (via the
+           top-level svelte:window guarded on confirmingReplace), so the alertdialog role is honest. -->
       <FolderTabCard label="置き換えの確認">
-        <div class="confirm" role="alertdialog" aria-modal="true" aria-labelledby="confirm-head">
+        <div
+          class="confirm"
+          bind:this={confirmEl}
+          tabindex="-1"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="confirm-head"
+        >
           <p id="confirm-head" class="confirm-head">
             <Icon name="alert" size={18} />
             <span>今ある記録をすべて削除します。</span>

@@ -71,6 +71,11 @@ export async function addRideSegments(candidates: RideEvent[]): Promise<RideEven
  * without changing coverage %. The deterministic id `${tripId}:${segmentId}` makes a re-submit
  * of the same trip idempotent, while a fresh tripId appends another journey over the same legs.
  * Atomic + concurrency-safe (one rw txn).
+ *
+ * `kmBySegmentId` is the Phase-4 durability snapshot: the caller (store.markRoute) supplies each
+ * leg's km at record time, mirroring the direct markRide path, so a route-marked ride keeps its
+ * distance even after the segment is later abolished (quarantine display + closedLineKm both read
+ * the snapshot, never the by-then-gone segment record).
  */
 export async function markRouteSegments(
   segmentIds: string[],
@@ -82,6 +87,7 @@ export async function markRouteSegments(
     tripId: string;
     createdAt: string;
   },
+  kmBySegmentId?: ReadonlyMap<string, number | undefined>,
 ): Promise<{ added: number }> {
   if (segmentIds.length === 0) return { added: 0 };
   return db.transaction('rw', db.rideEvents, async () => {
@@ -94,6 +100,7 @@ export async function markRouteSegments(
         id: `${fields.tripId}:${segmentId}`,
         segmentId,
         railGeoVersion: fields.railGeoVersion,
+        km: kmBySegmentId?.get(segmentId),
         date: fields.date,
         trainModel: fields.trainModel,
         source: fields.source,

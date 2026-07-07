@@ -51,6 +51,26 @@ describe('parseImport — incumbent-row matching', () => {
     expect(row.segmentIds).toEqual(['jr-tokaido-shinkansen:0-1']);
   });
 
+  it('splits a 区間 span at the real separator, keeping a name that contains ー (U+30FC) intact', () => {
+    // 千葉ニュータウン中央 has a prolonged-sound ー mid-word; splitting must happen ONLY at 〜.
+    // The old separator set counted ー as a dash, shredding the from-name into "千葉ニュ".
+    const csv = ['路線,区間', '北総線,千葉ニュータウン中央〜印旛日本医大'].join('\n');
+    const { resolved } = parseImport(csv, STUB_PACKAGES, geo);
+    // rawName echoes the resolved from〜to; the full ー-bearing name must survive verbatim.
+    expect(resolved[0].row.rawName).toContain('千葉ニュータウン中央〜印旛日本医大');
+    expect(resolved[0].row.rawName).not.toContain('千葉ニュ〜');
+  });
+
+  it('does NOT split a 区間 span inside a name whose ー is trailing/internal', () => {
+    // 京成高砂〜スカイライナー: the destination ends in ー. The old set split at that ー, dropping
+    // it (→ "スカイライナ"); the fix keeps the whole endpoint name.
+    const csv = ['路線,区間', '京成本線,京成高砂〜スカイライナー'].join('\n');
+    const { resolved } = parseImport(csv, STUB_PACKAGES, geo);
+    expect(resolved[0].row.rawName).toContain('京成高砂〜スカイライナー');
+    // pre-fix the trailing ー was split off (→ "スカイライナ"); the whole name must be preserved.
+    expect(resolved[0].row.rawName.endsWith('スカイライナー')).toBe(true);
+  });
+
   it('surfaces a same-line endpoint pair with no path as review, not a false match', () => {
     // Endpoints resolve, but 木更津 is on 久留里線 while 東京 is not → cannot form a leg.
     const csv = ['路線名,乗車駅,降車駅', '久留里線,木更津,東京'].join('\n');

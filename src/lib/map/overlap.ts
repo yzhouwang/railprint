@@ -9,17 +9,20 @@
 //
 //   packages ─► computeOverlapPlan (memoized by packages identity, WeakMap)
 //     │ 1. per-line bbox prefilter (~50m margin)               — 8A: skip far-apart lines
-//     │ 2. quantize vertices to ~1e-4 (~11m) grid + neighbors  — 三田線↔南北線 share 0 exact vertices
-//     │ 3. shared RUNS per segment vs partner lines            — min-run ≥3 consecutive shared
-//     │    (gap-bridging: ≤2 unmatched vertices stay in-run)     vertices; plain crossings NEVER braid
-//     │ 4. canonical run orientation + per-line parity sign    — 2A: 青函 traverses OPPOSITE directions;
-//     │    (computed on the matched RUN's endpoints)             same slot sign would render stacked
-//     │ 5. slots by (rank, lineId) — DD1: trunk line takes the
+//     │ 2. quantize vertices to ~1e-4 (~11m) grid + sweep      — marks candidate pairs + hot cells
+//     │ 3. rasterize candidate lines' EDGES into the grid      — vertex→POLYLINE matching survives
+//     │    (coarse-gated to hot pockets, ~22m sampling)          differing digitization cadences
+//     │ 4. shared RUNS per segment vs partner lines            — min-run ≥3; plain crossings NEVER
+//     │    (bridge ≤4 EMPTY-set vertices within meter budgets    braid; a CHANGED partner set ends
+//     │    RUN_GAP_HOP_M/RUN_GAP_TOTAL_M incl. the closing hop)  the run (composition change)
+//     │ 5. canonical orientation per CORRIDOR (partner-set     — 2A: 青函 traverses OPPOSITE
+//     │    extent) × per-line traversal = parity sign            directions; same slot sign would
+//     │                                                          render stacked
+//     │ 6. slots by (rank, lineId) — DD1: trunk line takes the
 //     │    same side of every corridor nationwide; symmetric
 //     │    centered values (2 lines → ±0.5; 3 → −1,0,+1)
-//     │ 6. split coords: pre │ taper ×3 │ run │ taper ×3 │ post — 12A: STEPPED taper (line-offset is
-//     │    (~80m steps at ±slot×⅓, ±slot×⅔)                      per-feature constant; 3 small kinks
-//     ▼                                                          ≈1-2px each, round-join softened)
+//     │ 7. split coords: pre │ taper │ run │ taper │ post      — 12A: stepped ⅓/⅔ taper ladders at
+//     ▼                                                          interior mouths only
 //   Map<segmentId, OverlapPiece[]>  — consumed by style.ts buildSegmentCollection
 //
 // SEAM INVARIANT (CRITICAL, tested): for every split segment, concat(pieces[i].coords) with shared
@@ -45,7 +48,8 @@ export interface OverlapPiece {
   /**
    * The reveal zoom (minz) of the corridor PARTNER line(s) — max over partners. The offset gates
    * on this (14A/DD2): a step→interpolate glide over [partnersMinz, partnersMinz+0.4] so a strand
-   * never sits offset while its partner is LOD-hidden. 0 when slot === 0.
+   * never sits offset while its partner is LOD-hidden. 0 on plain (non-corridor) pieces; note a
+   * 3-line corridor's CENTER strand has slot 0 but carries partnersMinz like any corridor piece.
    */
   partnersMinz: number;
   /**
@@ -318,9 +322,6 @@ function buildPlan(packages: RailGeoPackage[]): OverlapPlan {
       // Maximal runs of a CONSTANT non-empty partner set, bridging ≤RUN_GAP_TOLERANCE mismatched
       // vertices (mismatched vertex cadence between the two polylines — Codex #6).
       const runs: { a: number; b: number; partners: string[]; reps: Map<string, string> }[] = [];
-      const firstMatch = vertexPartners.findIndex((v) => v.length > 0);
-      let lastMatch = vertexPartners.length - 1;
-      while (lastMatch > 0 && vertexPartners[lastMatch].length === 0) lastMatch--;
       let i = 0;
       while (i < coords.length) {
         if (vertexPartners[i].length === 0) {
@@ -333,10 +334,17 @@ function buildPlan(packages: RailGeoPackage[]): OverlapPlan {
         let bridged = 0;
         for (let j = i + 1; j < coords.length; j++) {
           if (vertexPartners[j].join('|') === setKey) {
+            // Resuming after a bridged gap: the CLOSING hop back onto shared track spends the
+            // same budget as the hops into the gap — without this, one divergent vertex followed
+            // by a multi-km edge back to the corridor bridged for free (quality review).
+            if (gap > 0) {
+              const closing = metersBetween(coords[j - 1], coords[j]);
+              if (closing > RUN_GAP_HOP_M || bridged + closing > RUN_GAP_TOTAL_M) break;
+            }
             end = j;
             gap = 0;
             bridged = 0;
-          } else {
+          } else if (vertexPartners[j].length === 0) {
             const hop = metersBetween(coords[j - 1], coords[j]);
             if (gap < RUN_GAP_TOLERANCE && hop <= RUN_GAP_HOP_M && bridged + hop <= RUN_GAP_TOTAL_M) {
               gap++;
@@ -344,6 +352,12 @@ function buildPlan(packages: RailGeoPackage[]): OverlapPlan {
             } else {
               break;
             }
+          } else {
+            // A DIFFERENT non-empty partner set is a real corridor-composition change (a third
+            // line joining/leaving), not cadence noise — end the run so the superset stretch
+            // forms its own run with correct n-member slots instead of being swallowed into the
+            // pair (quality review: members otherwise disagree on corridor composition).
+            break;
           }
         }
         if (end - i + 1 >= MIN_RUN_VERTICES) {
@@ -354,20 +368,37 @@ function buildPlan(packages: RailGeoPackage[]): OverlapPlan {
           // can be a gap-BRIDGED vertex with no partner match — fall back to the start (always a
           // matched vertex) rather than demote the run to plain (second adversarial pass).
           const midReps = partnersAt(coords[(i + end) >> 1], lineId, eligible);
-          const reps = midReps.has(vertexPartners[i][0]) ? midReps : partnersAt(coords[i], lineId, eligible);
+          const reps = vertexPartners[i].every((lid) => midReps.has(lid))
+            ? midReps
+            : partnersAt(coords[i], lineId, eligible);
           runs.push({ a: i, b: end, partners: vertexPartners[i], reps });
         }
         i = end + 1;
       }
       if (runs.length === 0) continue;
 
-      // 2A parity — ONE verdict per segment's whole matched extent (not per run): per-run
-      // verdicts flip when a curve changes the dominant axis between fragments, drawing an
-      // X-cross mid-corridor (design-review regression). Both partners' extents span the same
-      // corridor stretch, so their dominant-axis verdicts agree; each line's own traversal
-      // order then yields the side-separating parity.
-      const forward = canonicalForward(coords[firstMatch], coords[lastMatch]);
-      const pieces = splitSegment(coords, runs, info.line, byLine, forward);
+      // 2A parity — ONE verdict per CORRIDOR (partner-set), spanning that corridor's full
+      // matched extent within this segment. Per-run verdicts flipped when a curve changed a
+      // fragment's dominant axis (X-cross mid-corridor — design-review regression); a single
+      // per-SEGMENT verdict broke differently when one segment braids against two
+      // differently-oriented corridors (an L-shaped segment sharing each arm with a different
+      // line — quality review, repro'd): the wrong corridor's axis dominated one arm and both
+      // strands landed on the same side. Per-corridor extents are the geometry both members
+      // actually share, so their dominant-axis verdicts agree.
+      const forwardBySet = new Map<string, boolean | null>();
+      for (const run of runs) {
+        const key = run.partners.join('|');
+        const prev = forwardBySet.get(key);
+        if (prev === undefined) {
+          forwardBySet.set(key, canonicalForward(coords[run.a], coords[run.b]));
+        } else {
+          // extend the corridor's extent: re-derive over min(a)..max(b) seen so far
+          const first = Math.min(run.a, ...runs.filter((r) => r.partners.join('|') === key).map((r) => r.a));
+          const last = Math.max(run.b, ...runs.filter((r) => r.partners.join('|') === key).map((r) => r.b));
+          forwardBySet.set(key, canonicalForward(coords[first], coords[last]));
+        }
+      }
+      const pieces = splitSegment(coords, runs, info.line, byLine, forwardBySet);
       if (pieces) plan.set(seg.segmentId, pieces);
     }
   }
@@ -412,7 +443,7 @@ function splitSegment(
   runs: { a: number; b: number; partners: string[]; reps: Map<string, string> }[],
   selfLine: RailLine,
   byLine: Map<string, LineInfo>,
-  forward: boolean | null,
+  forwardBySet: Map<string, boolean | null>,
 ): OverlapPiece[] | null {
   const pieces: OverlapPiece[] = [];
   let cursor = 0;
@@ -437,6 +468,7 @@ function splitSegment(
     // extent). line-offset renders right-of-travel, so slot × parity puts every member of the
     // corridor on its consistent geographic side regardless of each line's traversal direction
     // (青函 verified opposite, 成田 verified same — both separate under this rule).
+    const forward = forwardBySet.get(run.partners.join('|')) ?? null;
     if (forward === null) {
       // degenerate ring extent — orientation undecidable; render unbraided rather than risk a
       // same-side collision (fail-safe, DD3 spirit).

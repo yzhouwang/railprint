@@ -303,14 +303,25 @@ const JINGHU_HSR: LineSeed = {
 // Fixed timestamp — the stub must be deterministic (no Date.now()).
 const STUB_GENERATED_AT = '2025-04-01T00:00:00.000Z';
 
-export const JP_PACKAGE: RailGeoPackage = assemble('2025.1.0', 'JP', STUB_GENERATED_AT, [
+/**
+ * UNMISTAKABLY SYNTHETIC version pin for the stub packages. This must NEVER collide with a real
+ * shipped data version: the stub used to claim '2025.1.0', which is a REAL JP version with a live
+ * 2025.1.0→2025.2.0 migration — so rides marked while booted on the stub could be dragged through
+ * a real migration chain (or quarantined as "abolished") once the real package arrived. No real
+ * migration chain will ever claim '0.0.0-stub' as a fromVersion; store.ts recognizes this pin and
+ * re-resolves stub-marked rides against the real package BY segmentId (ids are deterministic /
+ * content-addressed) instead of feeding them to the migration runner or the quarantine view.
+ */
+export const STUB_VERSION = '0.0.0-stub';
+
+export const JP_PACKAGE: RailGeoPackage = assemble(STUB_VERSION, 'JP', STUB_GENERATED_AT, [
   YAMANOTE,
   TOKAIDO_SHINKANSEN,
   KURURI,
   TOKYU_TOYOKO,
 ]);
 
-export const CN_PACKAGE: RailGeoPackage = assemble('2025.1.0', 'CN', STUB_GENERATED_AT, [
+export const CN_PACKAGE: RailGeoPackage = assemble(STUB_VERSION, 'CN', STUB_GENERATED_AT, [
   JINGHU_HSR,
 ]);
 

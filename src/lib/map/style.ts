@@ -17,7 +17,7 @@ import type { RailGeoPackage, RailLine, RailSegment } from '../../contract/types
 import { RAIL_ATTRIBUTION_JP } from '../../contract/types';
 import type { ExternalBasemap } from './basemap';
 import { computeOverlapPlan, type OverlapPlan } from './overlap';
-import { minzForRank } from './lod';
+import { minzForRank, RANK_MINZOOM } from './lod';
 import { tokens, stroke } from '../../design/tokens';
 
 /**
@@ -87,7 +87,7 @@ export interface StationFeatureProps {
 // lets us be aggressive here: z3 Shinkansen, z4 trunk (both at the national view), urban/local/
 // minor at z5/6/7 → the whole network is up by region/metro zoom. Was [4,6,7,8,9] (still too high).
 // The table itself lives in lod.ts (overlap.ts needs it too); re-exported here for existing importers.
-export { RANK_MINZOOM } from './lod';
+export { RANK_MINZOOM };
 export { minzForRank };
 
 // C9b — STATION dot LOD by AVERAGE SPACING. A line is readable well before its dots are: a dense
@@ -300,20 +300,24 @@ export function lineOpacityExpression(litArray: string[]): unknown[] {
  */
 export const RIDDEN_WIDTH_SCALE = 1.18; // ridden wider than the 4px base
 export const UNRIDDEN_WIDTH_SCALE = 0.65; // unridden narrower than the 2px base — recede the field
+// The zoom → width-multiplier ladder for the line BODY stroke — the SINGLE source of truth for how
+// body width grows with zoom, consumed by BOTH lineWidthExpression (the emitted paint) AND
+// slotSpacingPx (the braid strand separation). Ridden + unridden ride the same rung zooms but
+// diverge at street zoom (unridden stays thinner: 1.25 vs 1.6). Hoisted because the two consumers
+// used to hard-copy this ladder as inline magic numbers, so a retune of body width would silently
+// desync the approved 2×(body+gap) strand separation from the actual stroke it is meant to clear.
+export const WIDTH_ZOOM_LADDER = [
+  { z: 4, ridden: 0.6, unridden: 0.6 },
+  { z: 9, ridden: 1, unridden: 1 },
+  { z: 14, ridden: 1.6, unridden: 1.25 },
+] as const;
 export function lineWidthExpression(litArray: string[]): unknown[] {
   const rid = (zoomMul: number): number => stroke.ridden * zoomMul * RIDDEN_WIDTH_SCALE;
   const unrid = (zoomMul: number): number => stroke.unridden * zoomMul * UNRIDDEN_WIDTH_SCALE;
-  return [
-    'interpolate',
-    ['linear'],
-    ['zoom'],
-    4,
-    ['case', isLit(litArray), rid(0.6), unrid(0.6)],
-    9,
-    ['case', isLit(litArray), rid(1), unrid(1)],
-    14,
-    ['case', isLit(litArray), rid(1.6), unrid(1.25)],
-  ];
+  const stops: unknown[] = [];
+  for (const rung of WIDTH_ZOOM_LADDER)
+    stops.push(rung.z, ['case', isLit(litArray), rid(rung.ridden), unrid(rung.unridden)]);
+  return ['interpolate', ['linear'], ['zoom'], ...stops];
 }
 
 /**
@@ -353,16 +357,32 @@ export function glowWidthExpression(litArray: string[]): unknown[] {
  */
 export function slotSpacingPx(zoom: number): number {
   const w = stroke.ridden * RIDDEN_WIDTH_SCALE;
-  if (zoom <= 4) return 2 * (w * 0.6 + 1.5);
-  if (zoom >= 14) return 2 * (w * 1.6 + 2);
-  if (zoom <= 9) return 2 * (w * (0.6 + ((zoom - 4) / 5) * 0.4) + 1.5);
-  return 2 * (w * (1 + ((zoom - 9) / 5) * 0.6) + 1.5 + ((zoom - 9) / 5) * 0.5);
+  // The BODY width at this zoom = w × the (linearly-interpolated) RIDDEN rung multiplier — read
+  // from the SAME WIDTH_ZOOM_LADDER lineWidthExpression emits, so the two can never drift. The
+  // rung deltas ([mid−lo], [hi−mid]) and z-spans are taken from the ladder too (not literals), so
+  // retuning a rung propagates here. The gap term (1.5px through z9, widening to 2px by z14) is the
+  // braid's own concern and stays local. Output is byte-identical at the z4/9/14 rungs (pinned).
+  const [lo, mid, hi] = WIDTH_ZOOM_LADDER;
+  if (zoom <= lo.z) return 2 * (w * lo.ridden + 1.5);
+  if (zoom >= hi.z) return 2 * (w * hi.ridden + 2);
+  if (zoom <= mid.z)
+    return 2 * (w * (lo.ridden + ((zoom - lo.z) / (mid.z - lo.z)) * (mid.ridden - lo.ridden)) + 1.5);
+  const t = (zoom - mid.z) / (hi.z - mid.z);
+  return 2 * (w * (mid.ridden + t * (hi.ridden - mid.ridden)) + 1.5 + t * 0.5);
 }
 
-// Integer zooms PLUS a fractional stop 0.4 above each RANK_MINZOOM value: partnersMinz is always
-// one of those integers, and interpolation between stops is linear — without the .4 stops the
-// designed [minz, minz+0.4] glide would silently stretch to a full zoom level (red-team).
-const BRAID_ZOOM_STOPS = [3, 3.4, 4, 4.4, 5, 5.4, 6, 6.4, 7, 7.4, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+// Integer zooms 3..16 PLUS a fractional stop 0.4 above each RANK_MINZOOM value: partnersMinz is
+// always one of those tier integers, and interpolation between stops is linear — without the .4
+// stops the designed [minz, minz+0.4] glide would silently stretch to a full zoom level (red-team).
+// DERIVED from RANK_MINZOOM (not hand-copied) so a retune of the reveal-zoom table — which has
+// changed once already — can never desync the glide stops from the tiers whose reveal they gate:
+// each tier m contributes both m and m+0.4, unioned with the integer scaffold, sorted + deduped.
+const BRAID_ZOOM_STOPS = [
+  ...new Set([
+    ...Array.from({ length: 14 }, (_, i) => i + 3), // integer scaffold 3..16
+    ...RANK_MINZOOM.map((m) => m + 0.4), // the +0.4 glide stop above each tier reveal zoom
+  ]),
+].sort((a, b) => a - b);
 
 /** The DD2 glide factor at a LITERAL zoom stop: clamp((z − partnersMinz)/0.4, 0, 1). */
 function glideFactorAt(z: number): unknown[] {

@@ -5,11 +5,6 @@ import { test, expect, type Page } from '@playwright/test';
 // (header + explicit segmentId) so it resolves deterministically — the fuzzy incumbent-CSV path is
 // covered at the unit layer (import/parse.test.ts, commit.test.ts).
 
-const BLANK_PNG = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
-  'base64',
-);
-
 const SEG = 'jp-東日本旅客鉄道-山手線:004095-004135'; // a real JP segment from public/rail/jp-2025.json
 
 function exportCsv(segmentId: string, tripId: string, date = '2025-04-01'): string {
@@ -18,12 +13,6 @@ function exportCsv(segmentId: string, tripId: string, date = '2025-04-01'): stri
     `${segmentId},,2025.2.0,true,import,${tripId},${date}T00:00:00.000Z,${date},`,
   ].join('\n');
 }
-
-test.beforeEach(async ({ page }) => {
-  await page.route(/tile\.openstreetmap\.org/, (route) =>
-    route.fulfill({ contentType: 'image/png', body: BLANK_PNG }),
-  );
-});
 
 async function gotoImport(page: Page): Promise<void> {
   await page.goto('/?e2e=1');

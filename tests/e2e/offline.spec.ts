@@ -6,12 +6,6 @@ import { test, expect, type Page } from '@playwright/test';
 // JP-only stub), and (2) a brand-new ride can still be recorded. Without the SW, that reload is a
 // browser "no internet" page; that regression is what this guards.
 
-// 1×1 transparent PNG — the basemap tiles are mocked so the map renders even with the network down.
-const BLANK_PNG = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
-  'base64',
-);
-
 const VERSION = '2025.2.0';
 const RIDDEN_YAMANOTE = [
   'jp-東日本旅客鉄道-山手線:004095-004135',
@@ -71,12 +65,6 @@ async function waitForPrecache(page: Page): Promise<void> {
     { timeout: 45_000 },
   );
 }
-
-test.beforeEach(async ({ page }) => {
-  await page.route(/tile\.openstreetmap\.org/, (route) =>
-    route.fulfill({ contentType: 'image/png', body: BLANK_PNG }),
-  );
-});
 
 test('OFFLINE boot: with the network cut, the REAL package (not the stub) loads from the SW cache', async ({
   page,

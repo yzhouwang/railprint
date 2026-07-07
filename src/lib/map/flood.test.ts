@@ -1,12 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import {
   segmentMidpoints,
+  allSegmentMidpoints,
   floodOrder,
   buildFloodPlan,
   litAtFrame,
   diffNewlyLit,
+  MIN_WAVE_SIZE,
 } from './flood';
-import { JP_PACKAGE } from '../fallback-package';
+import { JP_PACKAGE, STUB_PACKAGES } from '../fallback-package';
 
 describe('segmentMidpoints', () => {
   it('computes a midpoint per segment from its endpoint stations', () => {
@@ -18,6 +20,42 @@ describe('segmentMidpoints', () => {
     const p = mids.get(seg.segmentId)!;
     expect(p.lon).toBeCloseTo((a.lon + b.lon) / 2, 9);
     expect(p.lat).toBeCloseTo((a.lat + b.lat) / 2, 9);
+  });
+});
+
+// Pins finding 1/5's shared helper: MapView's mount AND its packages-store rebuild both use
+// this one merge (the old inline version computed pkgs[0] twice, then re-looped everything).
+describe('allSegmentMidpoints', () => {
+  it('merges midpoints across every package (union of per-package maps)', () => {
+    const merged = allSegmentMidpoints(STUB_PACKAGES);
+    let expected = 0;
+    for (const pkg of STUB_PACKAGES) {
+      const solo = segmentMidpoints(pkg);
+      expected += solo.size;
+      for (const [id, p] of solo) expect(merged.get(id)).toEqual(p);
+    }
+    // packages are disjoint by contract, so the union is exactly the sum of the parts.
+    expect(merged.size).toBe(expected);
+  });
+
+  it('later packages win a duplicate segmentId (deterministic override)', () => {
+    const mk = (lon: number): (typeof STUB_PACKAGES)[number] =>
+      ({
+        ...JP_PACKAGE,
+        stations: [
+          { ...JP_PACKAGE.stations[0], stationId: 'sa', lon, lat: 0 },
+          { ...JP_PACKAGE.stations[0], stationId: 'sb', lon, lat: 0 },
+        ],
+        segments: [
+          { ...JP_PACKAGE.segments[0], segmentId: 'dup', fromStationId: 'sa', toStationId: 'sb' },
+        ],
+      }) as (typeof STUB_PACKAGES)[number];
+    const merged = allSegmentMidpoints([mk(10), mk(20)]);
+    expect(merged.get('dup')?.lon).toBe(20);
+  });
+
+  it('is empty for no packages', () => {
+    expect(allSegmentMidpoints([]).size).toBe(0);
   });
 });
 
@@ -101,6 +139,17 @@ describe('buildFloodPlan', () => {
     const plan = buildFloodPlan(['a', 'b'], [], mids);
     expect(plan.frames).toBe(1);
     expect(litAtFrame(plan, 0).sort()).toEqual(['a', 'b']);
+  });
+
+  // Pins finding 3's exported threshold: MapView gates pulse() on `newlyLit.length <
+  // MIN_WAVE_SIZE` so the pulse and the flood never both claim the glow layer for one mark.
+  // The DEFAULT plan must snap strictly below the export and take the wave path at/above it.
+  it('MIN_WAVE_SIZE is the default snap/wave boundary MapView keys pulse off', () => {
+    const wave = JP_PACKAGE.segments.map((s) => s.segmentId);
+    const below = buildFloodPlan([], wave.slice(0, MIN_WAVE_SIZE - 1), mids, { segmentsPerFrame: 1 });
+    expect(below.frames).toBe(1); // snap → the pulse path
+    const at = buildFloodPlan([], wave.slice(0, MIN_WAVE_SIZE), mids, { segmentsPerFrame: 1 });
+    expect(at.frames).toBeGreaterThan(1); // wave → pulse must stay out
   });
 });
 
