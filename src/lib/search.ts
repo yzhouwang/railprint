@@ -12,7 +12,7 @@
 import type { RailGeoPackage, RailLine, RailStation, RouteCandidate } from '../contract/types';
 import type { GeoIndex, StationGroupMember } from './geo-index';
 import { groupKeyOf } from './geo-index';
-import { normStation, diceSimilarity } from './import/crosswalk';
+import { normStation } from './import/crosswalk';
 import { segmentsBetween } from './resolver';
 
 // ───────────────────────────── romaji normalization ─────────────────────────
@@ -55,20 +55,66 @@ export interface StationHit {
   exact: boolean;
 }
 
+/**
+ * A precomputed bigram MULTISET (counts + total bigram count). The fuzzy fallback runs a Dice
+ * comparison against every station instance on every resolve; recomputing normStation/normRoma
+ * + slicing bigrams from scratch per query made each keystroke an O(N × normalize) scan. The
+ * index now bakes these once at build; per-query cost is a Map-lookup intersection only.
+ */
+export interface BigramSet {
+  counts: Map<string, number>;
+  total: number;
+}
+
+/** Bigram multiset of a (pre-normalized) key. Mirrors crosswalk's bigrams(): 1-char → itself. */
+export function bigramSet(s: string): BigramSet {
+  const counts = new Map<string, number>();
+  if (s.length === 1) {
+    counts.set(s, 1);
+    return { counts, total: 1 };
+  }
+  for (let i = 0; i < s.length - 1; i++) {
+    const g = s.slice(i, i + 2);
+    counts.set(g, (counts.get(g) ?? 0) + 1);
+  }
+  return { counts, total: Math.max(0, s.length - 1) };
+}
+
+/**
+ * Sørensen–Dice over two precomputed bigram multisets — numerically IDENTICAL to crosswalk's
+ * diceSimilarity(a, b) on the same keys (multiset intersection ÷ mean size), just without the
+ * per-call normalization + bigram slicing. Empty either side → 0, like the string form.
+ */
+export function diceFromSets(a: BigramSet, b: BigramSet): number {
+  if (a.total === 0 || b.total === 0) return 0;
+  // Iterate the smaller distinct-bigram side (the query, in practice — a few chars).
+  const [small, big] = a.counts.size <= b.counts.size ? [a, b] : [b, a];
+  let overlap = 0;
+  for (const [g, c] of small.counts) {
+    const other = big.counts.get(g);
+    if (other) overlap += Math.min(c, other);
+  }
+  return (2 * overlap) / (a.total + b.total);
+}
+
 export interface SearchIndex {
   /** normStation(name) → station instances (a transfer name keys many instances). */
   byName: Map<string, StationHit[]>;
   /** normRoma(nameRoma) → station instances (undefined for the ~3% without nameRoma). */
   byRoma: Map<string, StationHit[]>;
-  /** Flat list of every (station,line) instance — the fuzzy fallback scans this. */
-  all: { station: RailStation; line: RailLine }[];
+  /**
+   * Flat list of every (station,line) instance — the fuzzy fallback scans this. Each entry
+   * carries its normalized-name bigrams precomputed (romaGrams null when nameRoma is absent
+   * or normalizes to nothing), so resolveQuery never re-normalizes a station per keystroke.
+   */
+  all: { station: RailStation; line: RailLine; nameGrams: BigramSet; romaGrams: BigramSet | null }[];
 }
 
 /** Build the bilingual lookup index once at boot (cheap; ~10k stations). Pure. */
 export function buildSearchIndex(geo: GeoIndex): SearchIndex {
   const byName = new Map<string, StationHit[]>();
   const byRoma = new Map<string, StationHit[]>();
-  const all: { station: RailStation; line: RailLine }[] = [];
+  const all: SearchIndex['all'] = [];
   const push = (m: Map<string, StationHit[]>, key: string, hit: StationHit): void => {
     if (!key) return;
     (m.get(key) ?? m.set(key, []).get(key)!).push(hit);
@@ -76,10 +122,17 @@ export function buildSearchIndex(geo: GeoIndex): SearchIndex {
   for (const station of geo.stationById.values()) {
     const line = geo.lineById.get(station.lineId);
     if (!line) continue;
-    all.push({ station, line });
+    const nameKey = normStation(station.name);
+    const romaKey = station.nameRoma ? normRoma(station.nameRoma) : '';
+    all.push({
+      station,
+      line,
+      nameGrams: bigramSet(nameKey),
+      romaGrams: romaKey ? bigramSet(romaKey) : null,
+    });
     const hit: StationHit = { station, line, score: 1, exact: true };
-    push(byName, normStation(station.name), hit);
-    if (station.nameRoma) push(byRoma, normRoma(station.nameRoma), hit);
+    push(byName, nameKey, hit);
+    if (station.nameRoma) push(byRoma, romaKey, hit);
   }
   return { byName, byRoma, all };
 }
@@ -122,12 +175,15 @@ export async function resolveQuery(raw: string, index: SearchIndex): Promise<Sta
   }
 
   // 4) Fuzzy fallback — Dice over the JP name (kanji input) and over romaji (latin input).
+  //    The query's bigrams are built ONCE here; each station comparison is then a pure
+  //    multiset intersection against the index's precomputed grams (no re-normalization).
   const romaProbe = looksJapanese(q) && !hasKana(q) ? '' : (await foldToRomaji(q)) || romaKey;
+  const nameProbeGrams = nameKey ? bigramSet(nameKey) : null;
+  const romaProbeGrams = romaProbe ? bigramSet(romaProbe) : null;
   const scored: StationHit[] = [];
-  for (const { station, line } of index.all) {
-    const nameScore = nameKey ? diceSimilarity(nameKey, normStation(station.name)) : 0;
-    const romaScore =
-      romaProbe && station.nameRoma ? diceSimilarity(romaProbe, normRoma(station.nameRoma)) : 0;
+  for (const { station, line, nameGrams, romaGrams } of index.all) {
+    const nameScore = nameProbeGrams ? diceFromSets(nameProbeGrams, nameGrams) : 0;
+    const romaScore = romaProbeGrams && romaGrams ? diceFromSets(romaProbeGrams, romaGrams) : 0;
     const score = Math.max(nameScore, romaScore);
     if (score >= FUZZY_FLOOR) scored.push({ station, line, score, exact: false });
   }

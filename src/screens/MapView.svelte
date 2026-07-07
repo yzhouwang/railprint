@@ -19,9 +19,11 @@
   import { KNOWN_TRAIN_MODELS } from '../lib/train-models';
   import { markMode, toast } from '../lib/ui';
   import { tokens } from '../design/tokens';
-  import type { RailLine, RouteCandidate } from '../contract/types';
+  import type { RailGeoPackage, RailLine, RouteCandidate } from '../contract/types';
   import {
     buildBaseStyle,
+    buildSegmentCollection,
+    buildStationCollection,
     networkBounds,
     riddenBounds,
     litStationIds,
@@ -42,17 +44,19 @@
     DEFAULT_LINE_COLOR,
     SEGMENTS_LAYER,
     SEGMENTS_SOURCE,
+    STATIONS_SOURCE,
     SEGMENTS_GLOW_LAYER,
     STATIONS_LAYER,
     SELECTION_CASING_LAYER,
     HIGHLIGHT_STATION_LAYER,
   } from '../lib/map/style';
   import {
-    segmentMidpoints,
+    allSegmentMidpoints,
     buildFloodPlan,
     diffNewlyLit,
     prefersReducedMotion,
     runFlood,
+    MIN_WAVE_SIZE,
     type SegPoint,
   } from '../lib/map/flood';
   import { buildSearchIndex, resolveQuery, bilingualLabel, type StationHit } from '../lib/search';
@@ -66,7 +70,7 @@
   // isolatedModules), so they do NOT violate the "never statically import maplibre" rule above:
   // that rule bans a side-effectful VALUE load of the WebGL library, which still happens lazily in
   // onMount via `await import(...)`. `Map` is aliased so it does not shadow the JS built-in Map.
-  import type { Map as MapLibreMap, Popup as MapLibrePopup, FilterSpecification } from 'maplibre-gl';
+  import type { Map as MapLibreMap, Popup as MapLibrePopup, FilterSpecification, GeoJSONSource } from 'maplibre-gl';
   type MapLib = typeof import('maplibre-gl');
   let map: MapLibreMap | null = null;
   let mapLib: MapLib | null = null;
@@ -149,6 +153,7 @@
   });
 
   function resetSearch(): void {
+    cancelPendingResolves(); // a queued debounce must not repopulate hits after a reset
     entryMode = 'tap';
     queryA = '';
     queryB = '';
@@ -184,6 +189,14 @@
   let prevLit: string[] = [];
   let cancelFlood: (() => void) | null = null;
   let floodInFlight = false; // a live wave — its cancel must never be followed by a paint skip
+  // The packages ARRAY IDENTITY the map's sources were last built/setData'd from, and the lit
+  // array the style's paint channels were last settled to. Both exist to reconcile the ASYNC
+  // BOOT WINDOW (and later store swaps): the style is baked from a snapshot in onMount, and any
+  // store emission before styleLoaded flips would otherwise leave the map stale forever.
+  let builtPackages: RailGeoPackage[] | null = null;
+  let styleLit: string[] = [];
+  const sameLit = (a: string[], b: string[]): boolean =>
+    a.length === b.length && a.every((id, i) => id === b[i]);
 
   onMount(() => {
     let disposed = false;
@@ -193,9 +206,7 @@
         await import('maplibre-gl/dist/maplibre-gl.css');
         if (disposed) return;
         const pkgs = get(packages);
-        midpoints = segmentMidpoints(pkgs[0] ?? { segments: [], stations: [] } as never);
-        // merge midpoints across all packages
-        for (const p of pkgs) for (const [k, v] of segmentMidpoints(p)) midpoints.set(k, v);
+        midpoints = allSegmentMidpoints(pkgs);
 
         const initialLit = get(litSegmentIds);
         prevLit = initialLit;
@@ -209,6 +220,8 @@
         const basemap = e2eEnabled() ? null : await loadBasemap();
         if (disposed) return;
         const style = buildBaseStyle({ packages: pkgs, litSegmentIds: initialLit, basemap });
+        builtPackages = pkgs;
+        styleLit = initialLit;
 
         map = new mapLib.Map({
           container,
@@ -231,6 +244,22 @@
         const becomeReady = (): void => {
           if (disposed || status === 'ready' || !map) return;
           styleLoaded = true;
+          // Boot-window reconcile. The style above was baked from snapshots (pkgs/initialLit),
+          // and `await loadBasemap` can take seconds — a packages swap (fallback-retry self-heal)
+          // or a litSegmentIds emission in that window hit effects that early-return on
+          // !styleLoaded, so nothing would ever repaint. Catch both up to the CURRENT store
+          // truth exactly once, here, before first paint is visible.
+          syncSourcesToPackages(get(packages));
+          const litNow = get(litSegmentIds);
+          if (litNow !== styleLit && !sameLit(litNow, styleLit)) {
+            // no wave for boot-window catch-up: the map was never seen in the stale state.
+            repaint(litNow);
+            applySortKey(litNow);
+            styleLit = litNow;
+          }
+          // prevLit tracks litNow already (the lit effect updates it even pre-style), but align
+          // explicitly so the equal-length no-op skip stays sound whatever the emission order was.
+          prevLit = litNow;
           fitToNetwork();
           wireStationClicks();
           void surfaceLogoCredits();
@@ -284,6 +313,7 @@
     return () => {
       disposed = true;
       if (readyFallbackTimer !== null) clearTimeout(readyFallbackTimer);
+      cancelPendingResolves();
       cancelFlood?.();
       popup?.remove?.();
       popup = null;
@@ -447,6 +477,39 @@
     map.setLayoutProperty(SEGMENTS_GLOW_LAYER, 'line-sort-key', lineSortKeyExpression(lit));
   }
 
+  // Rebuild the map's data from a NEW packages array (identity-compared, so a repeat emission
+  // of the same array is free). The style itself is only baked once in onMount; afterwards the
+  // sources are swapped in-place via setData — same layers, same paint expressions. Called from
+  // the $packages effect below AND from becomeReady (a swap during the async boot window fires
+  // before styleLoaded, so the effect's guard eats it — becomeReady replays the current truth).
+  // searchIndex derives from $geo (already reactive) and the style.ts caches are WeakMap-keyed
+  // by the packages identity (auto-invalidate on swap) — neither needs touching here.
+  function syncSourcesToPackages(pkgs: RailGeoPackage[]): void {
+    if (!map || !styleLoaded || pkgs === builtPackages) return;
+    builtPackages = pkgs;
+    midpoints = allSegmentMidpoints(pkgs);
+    (map.getSource(SEGMENTS_SOURCE) as GeoJSONSource | undefined)?.setData(
+      buildSegmentCollection(pkgs) as never,
+    );
+    (map.getSource(STATIONS_SOURCE) as GeoJSONSource | undefined)?.setData(
+      buildStationCollection(pkgs) as never,
+    );
+    // Re-derive every lit-keyed channel + LOD filter against the new features (segment/station
+    // ids can change across a stub → real-network swap), and settle the stacking order once.
+    const lit = get(litSegmentIds);
+    repaint(lit);
+    applySortKey(lit);
+    styleLit = lit;
+  }
+
+  // React to a packages-store swap (fallback-retry self-heal on online/focus): without this the
+  // map renders the 3-line stub all session while stats show the real network. The initial mount
+  // already built from the current value — the identity guard in syncSourcesToPackages skips it.
+  $effect(() => {
+    const pkgs = $packages; // read synchronously so the dep registers even when the guard bails
+    syncSourcesToPackages(pkgs);
+  });
+
   // React to litSegmentIds changes: small/equal → snap; big grow → D5 flood wave.
   $effect(() => {
     const lit = $litSegmentIds;
@@ -583,7 +646,11 @@
         const km = kmOf(newlyLit);
         toast(`区間を記録しました（+${newlyLit.length}区間 / +${km.toFixed(1)} km）`, 'success', 6000, undo);
       }
-      pulse(res.segmentIds);
+      // A >= MIN_WAVE_SIZE grow takes the D5 flood path, which owns the glow layer's
+      // line-opacity for its whole sweep — pulse's 120ms rewrites would fight the ~23ms wave
+      // frames and its final repaint would snap the wave early. Pulse only on the small-mark
+      // (snap) path; the wave IS the celebration for a big mark.
+      if (newlyLit.length < MIN_WAVE_SIZE) pulse(res.segmentIds);
       markTrainModel = '';
       markMode.set(false); // exit mark mode after a successful mark
     } catch (err) {
@@ -635,15 +702,42 @@
     // station. Always show the matches as tappable suggestions; the user chooses when ready.
   }
 
+  // Debounce the per-keystroke resolve: the fuzzy fallback scans every station instance, so
+  // resolving on EVERY input event burns a full scan per character. 150ms trails the keystroke
+  // burst; SearchSeq still guards out-of-order async resolves (the seq is taken when the resolve
+  // actually FIRES, so a stale timer that slips through can never clobber a newer one). Timers
+  // are PER FIELD so a fast A→B hop doesn't drop A's pending resolve, and they're cancelled on
+  // reset/unmount/pick/Escape so a stale resolve can't repopulate a hit list after the fact.
+  const SEARCH_DEBOUNCE_MS = 150;
+  const searchTimers: Record<'A' | 'B', number | null> = { A: null, B: null };
+  function scheduleResolve(which: 'A' | 'B', raw: string): void {
+    cancelPendingResolve(which);
+    searchTimers[which] = window.setTimeout(() => {
+      searchTimers[which] = null;
+      void resolveInto(which, raw);
+    }, SEARCH_DEBOUNCE_MS);
+  }
+  function cancelPendingResolve(which: 'A' | 'B'): void {
+    const t = searchTimers[which];
+    if (t !== null) {
+      window.clearTimeout(t);
+      searchTimers[which] = null;
+    }
+  }
+  function cancelPendingResolves(): void {
+    cancelPendingResolve('A');
+    cancelPendingResolve('B');
+  }
+
   function onQueryA(e: Event): void {
     queryA = (e.target as HTMLInputElement).value;
     selectedLine = null;
-    void resolveInto('A', queryA);
+    scheduleResolve('A', queryA);
   }
   function onQueryB(e: Event): void {
     queryB = (e.target as HTMLInputElement).value;
     selectedLine = null;
-    void resolveInto('B', queryB);
+    scheduleResolve('B', queryB);
   }
 
   // Enter selects the FIRST hit (same as clicking the top `.hit`); Escape clears this field's
@@ -660,7 +754,9 @@
       e.preventDefault();
       const query = which === 'A' ? queryA : queryB;
       if (query) {
-        // clear just this field's query + its hit list; nothing else changes.
+        // clear just this field's query + its hit list (and its queued resolve, which would
+        // otherwise fire ~150ms later with the pre-Escape text); nothing else changes.
+        cancelPendingResolve(which);
         if (which === 'A') {
           queryA = '';
           hitsA = [];
@@ -677,6 +773,8 @@
   }
 
   function pickHit(which: 'A' | 'B', hit: StationHit): void {
+    // A pick within the debounce window must win: the queued resolve would null the pick out.
+    cancelPendingResolve(which);
     if (which === 'A') {
       pickedA = hit;
       hitsA = [];
@@ -751,7 +849,8 @@
         const km = kmOf(newlyLit);
         toast(`経路を記録しました（+${newlyLit.length}区間 / +${km.toFixed(1)} km）`, 'success', 6000, undo);
       }
-      pulse(r.segmentIds);
+      // Same wave/pulse exclusivity as doMark: a big grow floods, a small one pulses.
+      if (newlyLit.length < MIN_WAVE_SIZE) pulse(r.segmentIds);
       markTrainModel = '';
       markMode.set(false); // exit mark mode (resets search) on success
     } catch (err) {
@@ -770,16 +869,20 @@
 
   // Motion beat #2: a brief pulse on the freshly-marked segment(s). The non-pulsed
   // segments keep their steady-state glow (lit → 0.18, unlit → 0) while the marked ones
-  // flash brighter. Gated by prefers-reduced-motion.
+  // flash brighter. Gated by prefers-reduced-motion, and by floodInFlight: callers already
+  // route big marks to the wave instead, but an unrelated in-flight wave (e.g. an import
+  // landing mid-mark) must not have its glow opacity stomped by these 120ms rewrites either.
   function pulse(ids: string[]): void {
-    if (!map || !styleLoaded || prefersReducedMotion() || ids.length === 0) return;
+    if (!map || !styleLoaded || floodInFlight || prefersReducedMotion() || ids.length === 0) return;
     const pulsed = ['in', ['get', 'segmentId'], ['literal', ids]];
     const steadyLit = get(litSegmentIds);
     const steady = braidGlowOpacityExpression(steadyLit, corridorPartnerLit(steadyLit, get(packages)));
     let t = 0;
     const steps = 6;
     const beat = (): void => {
-      if (!map || !styleLoaded) return;
+      // A wave that starts MID-pulse takes over the glow layer: bail without a restore —
+      // the flood repaints every frame, so it immediately owns line-opacity from here.
+      if (!map || !styleLoaded || floodInFlight) return;
       t++;
       const on = t % 2 === 1;
       // pulsed → flash; everyone else → steady-state expression.

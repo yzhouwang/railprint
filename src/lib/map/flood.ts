@@ -37,6 +37,19 @@ export function segmentMidpoints(pkg: RailGeoPackage): Map<string, SegPoint> {
 }
 
 /**
+ * Midpoints merged across EVERY loaded package — the map renders all packages in one style,
+ * so the sweep needs one flat lookup. Later packages win a duplicate segmentId (packages are
+ * disjoint by contract; the override is just deterministic tie-breaking). MapView calls this
+ * at mount AND on every packages-store swap (the fallback-retry self-heal), so it lives here
+ * where it's pure and unit-testable rather than inlined in the component.
+ */
+export function allSegmentMidpoints(packages: RailGeoPackage[]): Map<string, SegPoint> {
+  const out = new Map<string, SegPoint>();
+  for (const pkg of packages) for (const [k, v] of segmentMidpoints(pkg)) out.set(k, v);
+  return out;
+}
+
+/**
  * Order the newly-lit segments into a wave. The wave sweeps along a diagonal axis
  * (south-west → north-east, i.e. increasing lon+lat) so the green visibly rolls across
  * the JP network rather than popping in. Deterministic: ties break on segmentId.
@@ -77,10 +90,17 @@ export interface FloodOptions {
   minWaveSize?: number;
 }
 
+/**
+ * Default wave threshold, EXPORTED so MapView's pulse() can key off the same number: a mark
+ * of >= MIN_WAVE_SIZE new segments takes the flood path, and pulse must stay out of the
+ * glow layer while a wave may be sweeping (they'd fight over line-opacity otherwise).
+ */
+export const MIN_WAVE_SIZE = 3;
+
 const DEFAULTS = {
   maxFrames: 48,
   segmentsPerFrame: 6,
-  minWaveSize: 3,
+  minWaveSize: MIN_WAVE_SIZE,
 } as const;
 
 /**
@@ -135,9 +155,9 @@ export function litAtFrame(plan: FloodPlan, i: number): string[] {
 }
 
 /**
- * Detect a "flood" grow: which segmentIds are NEW in `next` vs `prev`. Returns null when
- * nothing was added (a removal or no-op — caller just snaps). Used by MapView to decide
- * whether a litSegmentIds change warrants the wave vs a plain repaint.
+ * Detect a "flood" grow: which segmentIds are NEW in `next` vs `prev`. Returns an empty
+ * array when nothing was added (a removal or no-op — caller just snaps). Used by MapView to
+ * decide whether a litSegmentIds change warrants the wave vs a plain repaint.
  */
 export function diffNewlyLit(prev: string[], next: string[]): string[] {
   const before = new Set(prev);
