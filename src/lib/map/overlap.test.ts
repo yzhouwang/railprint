@@ -100,9 +100,12 @@ describe('computeOverlapPlan — detection', () => {
     expect(plan.size).toBe(0);
   });
 
-  it('#4 overlapping bboxes but no shared vertices → empty plan', () => {
+  it('#4 overlapping bboxes but no shared cells → empty plan', () => {
+    // 5e-4° ≈ 55m apart: within the ±5e-4 bbox margins (bboxes DO overlap, unlike #3's
+    // prefilter path) but far beyond the ~22m grid reach — exercises the sweep-finds-nothing
+    // branch the old 2km fixture missed (its bboxes never overlapped at all).
     const plan = computeOverlapPlan([pkgFromLines([
-      { lineId: 'north', coords: chain(6, 139, 35.02) }, // ~2km apart: same bbox zone, no cell hits
+      { lineId: 'north', coords: chain(6, 139, 35.0005) },
       { lineId: 'south', coords: chain(6, 139, 35.0) },
     ])]);
     expect(plan.size).toBe(0);
@@ -120,7 +123,7 @@ describe('computeOverlapPlan — detection', () => {
     expect(MIN_RUN_VERTICES).toBeGreaterThanOrEqual(3);
   });
 
-  it('#6 gap-bridging: ≤2 unmatched vertices inside a run stay in-run (cadence mismatch)', () => {
+  it('#6 gap-bridging: brief unmatched stretches stay in-run (≤RUN_GAP_TOLERANCE, budget-capped)', () => {
     const coords = chain(10);
     const partner = [...coords];
     partner[4] = [coords[4][0], coords[4][1] + 30 * QUANTIZE_DEG]; // one vertex pulled ~330m off
@@ -292,7 +295,7 @@ describe('computeOverlapPlan — splitting + tapers (3B/12A) + CRITICAL seams', 
 });
 
 describe('computeOverlapPlan — review-hardening edges (gap boundary, multi-run, crossed ladders)', () => {
-  it('gap boundary: exactly 2 unmatched vertices still bridge into ONE run', () => {
+  it('gap bridging: a 2-vertex unmatched stretch bridges into ONE run (within tolerance 4)', () => {
     const coords = chain(12);
     const partner = [...coords];
     partner[4] = [coords[4][0], coords[4][1] + 30 * QUANTIZE_DEG];
@@ -460,5 +463,68 @@ describe('computeOverlapPlan — red-team regressions (parity jitter, rings, rea
     }
     expect(plan.size).toBeGreaterThan(100);
     expect(plan.size).toBeLessThan(400);
+  });
+});
+
+describe('computeOverlapPlan — quality-review regressions (per-corridor parity, budgets, composition)', () => {
+  it('L-shaped segment braiding against TWO corridors: each arm separates from ITS partner', () => {
+    // The per-SEGMENT parity verdict regressed here (quality review, repro'd): main's whole-extent
+    // dominant axis was decided by the longer arm, flipping the shorter arm onto its partner's
+    // side. Main: westward E-W arm (shared with 'ew-partner') then northward N-S arm (shared with
+    // 'ns-partner'). Both partners traverse their arm in main's direction ⇒ separation requires
+    // OPPOSITE effective slot signs per arm-pair.
+    const ew: [number, number][] = Array.from({ length: 7 }, (_, i) => [139 + (6 - i) * 3e-3, 35]);
+    const ns: [number, number][] = Array.from({ length: 7 }, (_, i) => [139, 35 + (i + 1) * 3e-3]);
+    const main = [...ew, ...ns];
+    const plan = computeOverlapPlan([pkgFromLines([
+      { lineId: 'm-main', rank: 0, coords: main },
+      { lineId: 'ew-partner', rank: 3, coords: [...ew] },
+      { lineId: 'ns-partner', rank: 3, coords: [...ns] },
+    ])]);
+    const mainPieces = plan.get('m-main:0-1')!;
+    const ewPiece = plan.get('ew-partner:0-1')![0];
+    const nsPiece = plan.get('ns-partner:0-1')![0];
+    const mainVsEw = mainPieces.find((p) => p.slot !== 0 && p.partnerSeg === 'ew-partner:0-1')!;
+    const mainVsNs = mainPieces.find((p) => p.slot !== 0 && p.partnerSeg === 'ns-partner:0-1')!;
+    expect(mainVsEw.slot * ewPiece.slot).toBeLessThan(0); // same traversal ⇒ opposite signs
+    expect(mainVsNs.slot * nsPiece.slot).toBeLessThan(0);
+  });
+
+  it('closing hop spends the bridging budget: a ~3km edge back onto shared track never bridges', () => {
+    // One divergent vertex whose CLOSING edge back to the corridor is ~3km — the old code only
+    // budgeted hops INTO the gap and resumed for free (quality review).
+    const coords: [number, number][] = [
+      [139, 35], [139.003, 35], [139.006, 35], [139.009, 35], [139.012, 35],
+      [139.0125, 35.0005], // divergent vertex (~55m off), hop in ≈ 70m — within budget
+      [139.045, 35],       // closing hop ≈ 2.9km back onto the corridor
+      [139.048, 35], [139.051, 35], [139.054, 35], [139.057, 35],
+    ];
+    const partner = coords.filter((_, i) => i !== 5); // shares everything except the divergent vertex
+    const plan = computeOverlapPlan([pkgFromLines([
+      { lineId: 'close-main', coords },
+      { lineId: 'close-p', coords: partner },
+    ])]);
+    const pieces = plan.get('close-main:0-1')!;
+    expect(pieces.filter((p) => p.slot !== 0).length).toBeGreaterThanOrEqual(2); // split, not bridged
+    expect(seamOk(coords, pieces)).toBe(true);
+  });
+
+  it('a different non-empty partner set ENDS the run: 3-line pockets keep their own composition', () => {
+    // A third line joins for a 4-vertex interior stretch. The old code bridged the pair run
+    // straight over it (partnerSeg2 never set on main; members disagreed on corridor
+    // composition — quality review, repro'd). Now the pocket forms its own 3-member run.
+    const coords = chain(14);
+    const third = coords.slice(5, 9);
+    const plan = computeOverlapPlan([pkgFromLines([
+      { lineId: 'pk-main', rank: 0, coords },
+      { lineId: 'pk-pair', rank: 2, coords: [...coords] },
+      { lineId: 'pk-third', rank: 4, coords: third },
+    ])]);
+    const mainPieces = plan.get('pk-main:0-1')!;
+    const triple = mainPieces.filter((p) => p.partnerSeg2 !== '' && p.slot !== 0);
+    expect(triple.length).toBeGreaterThanOrEqual(1); // the pocket names BOTH partners
+    const pairOnly = mainPieces.filter((p) => p.partnerSeg !== '' && p.partnerSeg2 === '');
+    expect(pairOnly.length).toBeGreaterThanOrEqual(2); // pair runs on both sides of the pocket
+    expect(seamOk(coords, mainPieces)).toBe(true);
   });
 });
