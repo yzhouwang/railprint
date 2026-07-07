@@ -2,6 +2,34 @@
 
 All notable changes to RailPrint are documented here.
 
+## [0.12.2.0] - 2026-07-07
+
+Quality-sweep release: a 51-agent adversarially-verified audit confirmed 28 findings; this
+ships every HIGH and MEDIUM fix.
+
+### Fixed
+- **The map now picks up the real network after a failed first load heals itself** — it no
+  longer shows the tiny built-in stub until you reload the page.
+- **Rides recorded through the route picker keep their distance** if their segment is later
+  retired (they previously lost km in the 廃線 tally forever).
+- **Rides marked while offline on first launch are safe**: they re-attach to the real
+  network when it arrives instead of risking mis-migration or false quarantine.
+- **A failed app start now shows an error card** (日本語+English) with a reload button
+  instead of a blank page.
+- Corridor braiding handles three-line stretches honestly (each stretch knows all its
+  members), never bridges across kilometers of separate track, and orients each corridor
+  independently — an L-shaped line braiding with two others can no longer collapse onto its
+  partner.
+- Importing station names containing ー (ニュータウン, スカイライナー…) no longer splits them in
+  two; re-importing your own backup no longer duplicates every ride.
+- The import screen's destructive "replace" choice resets between imports, and its
+  confirmation dialog now works properly with screen readers and Escape.
+
+### Changed
+- Station search stays smooth while typing on the full 10k-station network (precomputed
+  index + debounce).
+- Mark feedback: the small-mark pulse and the big-mark flood wave no longer run at once.
+
 ## [0.12.1.0] - 2026-07-06
 
 ### Fixed
