@@ -468,22 +468,71 @@ describe('共用区間 braid — review-hardening regressions (3-line CRITICAL, 
     expect(lineSortKeyExpression(['s1'])).toEqual(['case', ['in', ['get', 'segmentId'], ['literal', ['s1']]], 1, 0]);
   });
 
-  it('DD2 glide semantics: offset output is 0 at/below partnersMinz and full past +0.4 (stop arithmetic)', () => {
-    // The offset is interpolate stops whose OUTPUTS clamp against each stop's LITERAL zoom.
-    // Evaluate the clamp arithmetic for a feature with partnersMinz=7 at stops z=7 and z=8:
-    // z7 → (7−7)/0.4 = 0 (closed); z8 → clamp((8−7)/0.4)=1 (fully open).
+  it('DD2 glide semantics: the EMITTED z=7.4 stop runs the PRODUCTION glide clamp (no reimplementation)', () => {
+    // Walk the ACTUAL emitted interpolate tree — the offset at each stop must be
+    // slot × spacing(z) × clamp((z − partnersMinz)/0.4, 0, 1), keyed off the LITERAL zoom. The old
+    // version verified a locally-reimplemented `evalClamp`, which was tautological and left the real
+    // glideFactorAt (the /0.4 divisor, the min/max clamp, the partnersMinz coalesce) with zero
+    // coverage — so a regression in any of those would sail through. This asserts the emitted arrays.
     const expr = lineOffsetExpression([]) as unknown[];
     expect(expr.slice(0, 3)).toEqual(['interpolate', ['linear'], ['zoom']]);
     const stops = expr.slice(3);
     const outputAt = (z: number): unknown => stops[stops.indexOf(z) + 1];
-    const evalClamp = (z: number, partnersMinz: number): number =>
-      Math.min(1, Math.max(0, (z - partnersMinz) / 0.4));
-    expect(evalClamp(7, 7)).toBe(0);
-    expect(evalClamp(8, 7)).toBe(1);
-    // structural: each stop output multiplies slot × spacing × the glide clamp for that literal z
-    const out8 = outputAt(8) as unknown[];
-    expect(out8[0]).toBe('*');
-    expect(out8[2]).toBeCloseTo(slotSpacingPx(8));
+    // 7.4 is a real stop (RANK_MINZOOM tier 7 + 0.4); its output is the full offset product.
+    const out = outputAt(7.4) as unknown[];
+    // multiplication chain: ['*', slot-coalesce, spacing-number, glide]
+    expect(out[0]).toBe('*');
+    expect(out[1]).toEqual(['coalesce', ['get', 'slot'], 0]);
+    expect(out[2]).toBe(slotSpacingPx(7.4)); // the literal spacing number, not an expression
+    // the glide sub-expression IS the production clamp: min(1, max(0, (7.4 − partnersMinz)/0.4)),
+    // partnersMinz coalesced to 0 when absent — asserted structurally against the real arrays.
+    const glide = out[3] as unknown[];
+    expect(glide[0]).toBe('min');
+    expect(glide[1]).toBe(1);
+    const max = glide[2] as unknown[];
+    expect(max[0]).toBe('max');
+    expect(max[1]).toBe(0);
+    expect(max[2]).toEqual(['/', ['-', 7.4, ['coalesce', ['get', 'partnersMinz'], 0]], 0.4]);
+  });
+
+  it('BRAID_ZOOM_STOPS is DERIVED from RANK_MINZOOM: every tier m has both m and m+0.4 as glide stops', () => {
+    // Pins Fix #1: the glide interpolates over these stops; if the stop list ever drifted from the
+    // RANK_MINZOOM table (which has changed once already) the designed [m, m+0.4] glide would silently
+    // stretch to a full zoom level. Read the emitted interpolate's stop zooms and assert coverage.
+    const expr = lineOffsetExpression([]) as unknown[];
+    const stopZooms = expr.slice(3).filter((_, i) => i % 2 === 0) as number[];
+    for (const m of RANK_MINZOOM) {
+      expect(stopZooms).toContain(m); // the tier reveal zoom itself
+      expect(stopZooms).toContain(m + 0.4); // and the +0.4 glide-complete stop
+    }
+    // interpolate requires strictly-ascending input stops (the sort + dedup must hold)
+    for (let i = 1; i < stopZooms.length; i++) expect(stopZooms[i]).toBeGreaterThan(stopZooms[i - 1]);
+  });
+
+  it('WIDTH_ZOOM_LADDER is the single source for BOTH the width paint and slotSpacingPx (Fix #2)', () => {
+    // Pins Fix #2: lineWidthExpression and slotSpacingPx must consume ONE shared ladder so retuning
+    // body width cannot silently break the approved 2×(body+gap) strand separation. This asserts the
+    // emitted width expression's structure AND the slotSpacingPx OUTPUT VALUES are byte-identical to
+    // the pre-refactor ladder (0.6 @z4 / 1.0 @z9 / 1.6 @z14 ridden; 0.6 / 1.0 / 1.25 unridden).
+    const rid = (m: number): number => stroke.ridden * m * RIDDEN_WIDTH_SCALE;
+    const unrid = (m: number): number => stroke.unridden * m * UNRIDDEN_WIDTH_SCALE;
+    const litArr = ['x'];
+    expect(lineWidthExpression(litArr)).toEqual([
+      'interpolate',
+      ['linear'],
+      ['zoom'],
+      4,
+      ['case', ['in', ['get', 'segmentId'], ['literal', litArr]], rid(0.6), unrid(0.6)],
+      9,
+      ['case', ['in', ['get', 'segmentId'], ['literal', litArr]], rid(1), unrid(1)],
+      14,
+      ['case', ['in', ['get', 'segmentId'], ['literal', litArr]], rid(1.6), unrid(1.25)],
+    ]);
+    // slotSpacingPx frozen at the three rungs — the body width it clears is driven by the same ladder.
+    const w = stroke.ridden * RIDDEN_WIDTH_SCALE;
+    expect(slotSpacingPx(4)).toBe(2 * (w * 0.6 + 1.5));
+    expect(slotSpacingPx(9)).toBe(2 * (w * 1 + 1.5));
+    expect(slotSpacingPx(14)).toBe(2 * (w * 1.6 + 2));
   });
 
   it('DD4 opacity semantics: all-ridden corridor piece → GLOW_OPACITY × glowShare; else full; unlit 0', () => {
