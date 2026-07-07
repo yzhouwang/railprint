@@ -4,11 +4,6 @@ import { test, expect, type Page } from '@playwright/test';
 // and confirm the route-picker surfaces a multi-line route that single-line marking could never reach.
 // Uses the same headless-WebGL harness as map-lod.spec.ts.
 
-const BLANK_PNG = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
-  'base64',
-);
-
 // A ride so the app boots into the map (not the empty state) and the mark FAB is reachable.
 async function seedRide(page: Page): Promise<void> {
   await page.evaluate(async () => {
@@ -55,12 +50,6 @@ async function enterSearchMode(page: Page): Promise<void> {
   await page.getByRole('button', { name: '区間をマーク' }).first().click();
   await page.getByRole('tab', { name: '駅名で検索' }).click();
 }
-
-test.beforeEach(async ({ page }) => {
-  await page.route(/tile\.openstreetmap\.org/, (route) =>
-    route.fulfill({ contentType: 'image/png', body: BLANK_PNG }),
-  );
-});
 
 test('search 津 → 大阪難波 surfaces a multi-line route and records it', async ({ page }) => {
   await enterSearchMode(page);

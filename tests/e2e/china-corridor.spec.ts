@@ -8,11 +8,6 @@ import { test, expect, type Page } from '@playwright/test';
 //     log a China ride, not just that a pre-seeded row resolves.
 // Runs on the non-map stats screen for assertions, so no WebGL is needed beyond booting the map.
 
-const BLANK_PNG = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
-  'base64',
-);
-
 const CN_SEG = 'cn-中国铁路-京沪高速铁路:1-2'; // a real segment from public/rail/cn-jinghu-2025.json
 
 async function seedRide(page: Page, segmentId: string): Promise<void> {
@@ -51,12 +46,6 @@ async function enterSearchMode(page: Page, seedSegment: string): Promise<void> {
   await page.getByRole('button', { name: '区間をマーク' }).first().click();
   await page.getByRole('tab', { name: '駅名で検索' }).click();
 }
-
-test.beforeEach(async ({ page }) => {
-  await page.route(/tile\.openstreetmap\.org/, (route) =>
-    route.fulfill({ contentType: 'image/png', body: BLANK_PNG }),
-  );
-});
 
 test('SMOKE: a seeded China ride loads the corridor and shows the per-country 中国 card', async ({ page }) => {
   await page.goto('/?e2e=1');

@@ -86,19 +86,6 @@ async function renderedSegments(
   );
 }
 
-// The CI sandbox has no internet, and MapLibre won't fire 'load' until the basemap source gets
-// at least one tile. Serve a blank 1×1 PNG for the OSM raster so the map loads exactly as in
-// production — the assertions only touch the local rail (GeoJSON) layers, never the basemap.
-const BLANK_PNG = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
-  'base64',
-);
-test.beforeEach(async ({ page }) => {
-  await page.route(/tile\.openstreetmap\.org/, (route) =>
-    route.fulfill({ contentType: 'image/png', body: BLANK_PNG }),
-  );
-});
-
 test('zoom-LOD: low zoom shows only top tiers + ridden; zooming in reveals urban lines', async ({
   page,
 }) => {

@@ -77,8 +77,13 @@ function detectColumns(header: string[]): ColumnMap {
 
 // ───────────────────────────── span splitting ───────────────────────────────
 
-// 区間 cells use a few separators between endpoints: 〜 ～ ~ ー − - → .
-const SPAN_SEP = /[〜～~ー−\-—–]|->|→|=>|＝＞/;
+// 区間 cells use a few separators between endpoints: 〜 ～ ~ − - – — → ⇒ .
+// DELIBERATELY excludes the katakana prolonged-sound mark ー (U+30FC): it looks dash-like but
+// is a LETTER inside ordinary station names (ニュータウン, シーサイドライン, スカイライナー),
+// so treating it as a span separator shreds those names mid-word (e.g. シーサイドライン →
+// シ / サイドライン). Genuine span glyphs only: wave/full/ASCII tilde, minus, hyphen, en/em
+// dash, and the arrow forms below.
+const SPAN_SEP = /[〜～~−\-—–]|->|→|=>|＝＞/;
 
 function splitSpan(cell: string): { from: string; to: string } | null {
   const m = cell.split(SPAN_SEP).map((s) => s.trim()).filter(Boolean);

@@ -72,6 +72,42 @@ function contentEventId(ev: {
 }
 
 /**
+ * Own-export-row id, RECONSTRUCTING the original identity where possible. The store writes every
+ * manual/corridor/route event with the deterministic PK `${tripId}:${segmentId}` (store.markRide,
+ * db.markRouteSegments). So restoring OUR OWN backup must rebuild THAT exact id — then a merge
+ * (Dexie bulkPut by id) overwrites the original in place instead of minting a fresh `evt-…` twin.
+ * That twin was the duplication bug: manual/corridor rows are EXEMPT from the logical-ride dedup,
+ * so a mismatched id guaranteed a doubled diary entry on every backup→restore-merge cycle.
+ *
+ * When the preserved row carries no tripId the original id is unreconstructable, so we fall back to
+ * the content-addressed id and lean on the exact-identity net in dropEventsAlreadyInLog (keyed on
+ * segmentId+source+createdAt) to keep the restore idempotent.
+ */
+function preservedEventId(
+  tripId: string | undefined,
+  content: {
+    segmentId: string;
+    createdAt: string;
+    source: string;
+    tripId?: string;
+    date?: string;
+    trainModel?: string;
+  },
+): string {
+  return tripId ? `${tripId}:${content.segmentId}` : contentEventId(content);
+}
+
+/**
+ * Exact-restore identity of an OWN (non-import) event: a re-imported backup preserves the
+ * ORIGINAL (segmentId, source, createdAt), so an event already in the log restores to the same
+ * key. Two GENUINE manual marks of one segment differ in createdAt (a fresh timestamp per
+ * markRide call), so this key collapses restores ONLY — never real repeat rides.
+ */
+function ownRestoreKey(ev: { segmentId: string; source: string; createdAt: string }): string {
+  return `${ev.segmentId}|${ev.source}|${ev.createdAt}`;
+}
+
+/**
  * PURE: build the RideEvents a commit would write, given the resolved rows + the user's
  * resolution. No store/db side effects — unit-tested directly.
  */
@@ -140,10 +176,12 @@ export function buildImportEvents(
       // Only commit segments that exist in a loaded package (honesty: a stale/unknown
       // segmentId from a hand-edited CSV is dropped here, not silently "ridden").
       if (!knownSeg.has(segmentId)) continue;
-      // Content-addressed for re-imported own-export rows (batch-independent); CSV-hash-
-      // stable for incumbent rows. Either way, re-importing the same data overwrites.
+      // Own-export rows reconstruct their ORIGINAL `${tripId}:${segmentId}` id (falling back to a
+      // content-addressed id when trip-less) so a backup→restore-merge overwrites in place instead
+      // of doubling; incumbent rows use the CSV-hash-stable id. Either way, re-importing the same
+      // data overwrites rather than piling up.
       const id = r.preserved
-        ? contentEventId({ segmentId, createdAt, source, tripId, date: r.date, trainModel: r.trainModel })
+        ? preservedEventId(tripId, { segmentId, createdAt, source, tripId, date: r.date, trainModel: r.trainModel })
         : eventId(resolution.importBatchId, idx, segmentId);
       if (seenIds.has(id)) continue; // de-dupe within the batch
       seenIds.add(id);
@@ -189,34 +227,45 @@ export async function commitImport(
     await store.replaceEvents(built);
     return built;
   }
-  // Merge: a re-imported overlapping EXPORT (same ride date + segmentId, fresh createdAt/tripId/
-  // event id) must not duplicate a ride a PRIOR import already wrote. We dedup import-vs-import
-  // only — a manual/corridor mark of the same segment+day is a distinct, append-only record and
-  // must never shadow (silently drop) an incoming import ride.
+  // Merge: two kinds of already-in-log rows must not double.
+  //  • import rows: a re-imported overlapping EXPORT (same ride date + segmentId, fresh
+  //    createdAt/tripId) must not duplicate a ride a PRIOR import already wrote — dedup by the
+  //    logical ride (date, segmentId), import-vs-import ONLY, so an existing manual/corridor mark
+  //    never shadows (silently drops) an incoming import ride.
+  //  • own manual/corridor rows: a restored backup preserves the ORIGINAL (segmentId, source,
+  //    createdAt), so an exact restore of an event already in the log is a no-op — but two genuine
+  //    manual marks differ in createdAt, so a real repeat ride is still appended, never deduped.
   const events = await dropEventsAlreadyInLog(built);
   await store.addEvents(events);
   return events;
 }
 
 /**
- * Drop the import-source events whose logical ride (date, segmentId) was already written by a
- * PRIOR import. Reads the existing events through the db kernel, mutates nothing. The dedup key
- * set is scoped to existing IMPORT events only — a manual/corridor mark of the same segment+day
- * is a distinct append-only record and must never shadow an incoming import ride (that would be a
- * silent data drop). Incoming manual/corridor rows are likewise never deduped.
+ * Drop events already in the log, by two distinct rules, reading the existing events through the
+ * db kernel and mutating nothing:
+ *  • IMPORT rows dedup by logical ride (date, segmentId) against existing IMPORT events only — a
+ *    manual/corridor mark of the same segment+day is a distinct append-only record and must never
+ *    shadow an incoming import ride (that would be a silent data drop).
+ *  • Own MANUAL/CORRIDOR rows dedup by exact restore identity (segmentId, source, createdAt)
+ *    against existing manual/corridor events only — this collapses a re-imported backup (which
+ *    preserves the original createdAt) but leaves genuine repeat rides (fresh createdAt) intact,
+ *    so it never silently drops a real second ride.
  */
 async function dropEventsAlreadyInLog(built: RideEvent[]): Promise<RideEvent[]> {
-  // Only import-source events are eligible for cross-existing dedup; if there are none we
-  // skip the db read entirely.
-  if (!built.some((e) => e.source === 'import')) return built;
+  if (built.length === 0) return built;
 
   const existing = await db.getAllEvents();
-  const existingKeys = new Set(
+  // Import-vs-import logical dedup (ride day + segmentId).
+  const importKeys = new Set(
     existing.filter((e) => e.source === 'import').map(logicalRideKey),
+  );
+  // Own-restore exact-identity dedup (segmentId + source + createdAt) for manual/corridor.
+  const ownKeys = new Set(
+    existing.filter((e) => e.source !== 'import').map(ownRestoreKey),
   );
 
   return built.filter((e) => {
-    if (e.source !== 'import') return true; // append-only: manual/corridor are never deduped
-    return !existingKeys.has(logicalRideKey(e));
+    if (e.source === 'import') return !importKeys.has(logicalRideKey(e));
+    return !ownKeys.has(ownRestoreKey(e)); // manual/corridor: drop only an EXACT restore
   });
 }

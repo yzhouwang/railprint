@@ -76,7 +76,7 @@
     border: none;
     color: inherit;
     font: inherit;
-    font-weight: var(--weight-bold, 700);
+    font-weight: var(--weight-display);
     text-decoration: underline;
     padding: 0 var(--space-xs);
     white-space: nowrap;

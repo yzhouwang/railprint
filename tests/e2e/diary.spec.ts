@@ -4,11 +4,6 @@ import { test, expect, type Page } from '@playwright/test';
 // twice (two tripIds on one segment) — the append model (E1) — and assert the diary shows it as
 // TWO distinct dated rows (D2: date-led, never collapsed), with the captured train model on its row.
 
-const BLANK_PNG = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
-  'base64',
-);
-
 const SEG = 'jp-東日本旅客鉄道-山手線:004095-004135'; // a real segment in the shipped JP package
 
 async function seedTwoTrips(page: Page): Promise<void> {
@@ -29,12 +24,6 @@ async function seedTwoTrips(page: Page): Promise<void> {
     });
   }, SEG);
 }
-
-test.beforeEach(async ({ page }) => {
-  await page.route(/tile\.openstreetmap\.org/, (route) =>
-    route.fulfill({ contentType: 'image/png', body: BLANK_PNG }),
-  );
-});
 
 test('diary shows a repeat journey as two dated rows + the captured train model', async ({ page }) => {
   await page.goto('/?e2e=1');
