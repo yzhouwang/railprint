@@ -4,6 +4,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { get } from 'svelte/store';
 import type { RailGeoPackage } from '../contract/types';
+import { STUB_VERSION } from './fallback-package';
 
 const realPkg: RailGeoPackage = {
   version: '2025.1.0', generatedAt: 't', crs: 'WGS84', country: 'JP',
@@ -221,6 +222,95 @@ describe('N→N+1 geometry migration (GOLDEN: coverage preserved across a versio
     const e = get(store.events).find((x) => x.id === 'e1')!;
     expect(e.originalSegmentId).toBe(OLD_SEG); // untouched — already current, not re-migrated
     expect(e.segmentId).toBe(NEW_SEG);
+    await store.clearAllRides();
+  });
+
+  it('REGRESSION (stub version collision): a ride marked ON THE STUB is adopted by segmentId when the real package arrives — never dragged through a real migration chain', async () => {
+    // The stub used to claim '2025.1.0' — a REAL shipped JP version with a live 2025.1.0→2025.2.0
+    // migration — so a stub-marked ride was run through that real map (or quarantined). The stub now
+    // pins STUB_VERSION, which no chain claims; the ride resolves against the real package by its
+    // deterministic segmentId instead. The migration map here is a TRAP: it remaps the stub-marked
+    // id, and the old behavior would have followed it.
+    const STUB_SEG = 'jr-yamanote:0-1'; // a real stub segment (marking happens against the stub)
+    const realJp: RailGeoPackage = {
+      ...realPkg,
+      version: '2025.2.0',
+      segments: [{ ...realPkg.segments[0], segmentId: STUB_SEG, km: 2.22 }], // same id, real km
+    };
+    const collisionManifest = {
+      packages: {
+        JP: {
+          version: '2025.2.0', path: 'rail/jp-2025.json',
+          migrations: [{ fromVersion: '2025.1.0', toVersion: '2025.2.0', path: 'rail/migrations/jp/2025.1.0-to-2025.2.0.json' }],
+        },
+      },
+    };
+    const trapMap = { fromVersion: '2025.1.0', toVersion: '2025.2.0', segmentIdMap: { [STUB_SEG]: 'jr-yamanote:00wrong' } };
+    let healed = false;
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const u = String(url);
+      if (!healed) throw new Error('first boot offline'); // boot 1 fails everything → stub
+      if (u.includes('manifest')) return { ok: true, json: async () => collisionManifest };
+      if (u.includes('/migrations/')) return { ok: true, json: async () => trapMap };
+      if (u.includes('cn-')) throw new Error('no CN'); // JP-only heal keeps this test focused
+      return R(realJp);
+    }));
+    const store = await import('./store');
+    await store.clearAllRides();
+    await store.init();
+    expect(get(store.usingFallback)).toBe(true);
+    await store.markRoute({ segmentIds: [STUB_SEG], lines: ['jr-yamanote'], totalKm: 2, lineChanges: 0, railGeoVersion: get(store.packages)[0].version });
+    const marked = get(store.events)[0];
+    expect(marked.railGeoVersion).toBe(STUB_VERSION); // pinned to the SYNTHETIC version, never a real one
+    expect(marked.km).toBeGreaterThan(0); // route-marked events carry the Phase-4 km snapshot too
+
+    healed = true;
+    window.dispatchEvent(new Event('online')); // real package arrives
+    await vi.waitFor(() => expect(get(store.events)[0]?.railGeoVersion).toBe('2025.2.0')); // adopted
+    const ev = get(store.events)[0];
+    expect(ev.segmentId).toBe(STUB_SEG);           // resolved BY ID — the trap map was never applied
+    expect(ev.originalSegmentId).toBeUndefined();  // never entered the migration chain
+    expect(ev.km).toBe(2.22);                      // km snapshot refreshed from real geometry
+    expect(get(store.orphanCount)).toBe(0);        // NOT quarantined as abolished
+    expect(get(store.dataDegraded)).toBe(false);   // the ride resolves — coverage is truthful again
+    expect(get(store.litSegmentIds)).toContain(STUB_SEG);
+    await store.clearAllRides();
+  });
+
+  it('REGRESSION (stub rides never misclassified as abolished): a stub ride the real package lacks stays pinned — no quarantine, surfaced as degraded', async () => {
+    const STUB_ONLY_SEG = 'jr-kururi:0-1'; // in the stub, NOT in the healed real package below
+    const realJp: RailGeoPackage = { ...realPkg, version: '2025.2.0' }; // real ids only (x:0-1)
+    const healManifest = {
+      packages: {
+        JP: {
+          version: '2025.2.0', path: 'rail/jp-2025.json',
+          migrations: [{ fromVersion: '2025.1.0', toVersion: '2025.2.0', path: 'rail/migrations/jp/2025.1.0-to-2025.2.0.json' }],
+        },
+      },
+    };
+    let healed = false;
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const u = String(url);
+      if (!healed) throw new Error('first boot offline');
+      if (u.includes('manifest')) return { ok: true, json: async () => healManifest };
+      if (u.includes('/migrations/')) return { ok: true, json: async () => ({ segmentIdMap: {} }) }; // maps nothing
+      if (u.includes('cn-')) throw new Error('no CN');
+      return R(realJp);
+    }));
+    const store = await import('./store');
+    await store.clearAllRides();
+    await store.init();
+    await store.markRoute({ segmentIds: [STUB_ONLY_SEG], lines: ['jr-kururi'], totalKm: 2, lineChanges: 0, railGeoVersion: get(store.packages)[0].version });
+
+    healed = true;
+    window.dispatchEvent(new Event('online'));
+    await vi.waitFor(() => expect(get(store.usingFallback)).toBe(false)); // real package swapped in
+    await new Promise((r) => setTimeout(r, 25)); // let the async adoption/migration pass fully settle
+    const ev = get(store.events)[0];
+    expect(ev.segmentId).toBe(STUB_ONLY_SEG);       // untouched
+    expect(ev.railGeoVersion).toBe(STUB_VERSION);   // still stub-pinned — never fed a real version
+    expect(get(store.orphanCount)).toBe(0);         // the OLD behavior quarantined this as "abolished"
+    expect(get(store.dataDegraded)).toBe(true);     // unresolved ≠ silent 0% — surfaced honestly
     await store.clearAllRides();
   });
 

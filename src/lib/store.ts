@@ -18,7 +18,7 @@ import type {
 import { MANIFEST_SCHEMA_VERSION } from '../contract/types';
 import { coverageWarnings, resolveCoverage, segmentsBetween, type CoverageWarning } from './resolver';
 import * as db from './db';
-import { JP_PACKAGE } from './fallback-package';
+import { JP_PACKAGE, STUB_VERSION } from './fallback-package';
 import { canonicalizeTrainModel } from './train-models';
 
 // ───────────────────────────────── state ────────────────────────────────────
@@ -124,14 +124,24 @@ export const litSegmentIds: Readable<string[]> = derived(coverages, ($coverages)
  * shows a 'network data unavailable, retrying' banner instead of presenting that as truth.
  */
 export const dataDegraded: Readable<boolean> = derived(
-  [usingFallback, events, packages],
-  ([$usingFallback, $events, $packages]) => {
+  [usingFallback, events, packages, geo],
+  ([$usingFallback, $events, $packages, $geo]) => {
     if ($usingFallback && $events.length > 0) return true;
-    const loadedSegments = loadedSegmentSetsByNamespace($packages, $usingFallback);
+    // HOT PATH (recomputed on every events/packages tick): only namespace KEYS are needed here,
+    // so use the cheap namespaces-only helper — building the full per-package segmentId Sets
+    // (~9.4k entries) just to call .has() on the Map keys was pure waste. Segment membership for
+    // the stub check below reuses the already-memoized geo index instead of building anything.
+    const namespaces = loadedNamespaces($packages, $usingFallback);
     // A saved ride whose NAMESPACE has no loaded package = a package (e.g. the CN corridor)
     // failed to load, so that ride would silently read as 0 coverage. A missing segment inside a
-    // loaded namespace is Phase 4 quarantine data, not a transient package-load failure.
-    return $events.some((e) => !loadedSegments.has(namespaceOf(e.segmentId)));
+    // loaded namespace is Phase 4 quarantine data, not a transient package-load failure — EXCEPT
+    // a stub-pinned ride, which is never quarantined (see orphanGroups): until it re-resolves
+    // against the real package its 0-coverage must not be presented as truth.
+    return $events.some(
+      (e) =>
+        !namespaces.has(namespaceOf(e.segmentId)) ||
+        (e.railGeoVersion === STUB_VERSION && !$geo.segmentById.has(e.segmentId)),
+    );
   },
 );
 
@@ -172,6 +182,19 @@ function loadedSegmentSetsByNamespace(pkgs: RailGeoPackage[], degradedJP: boolea
   return out;
 }
 
+/** KEYS-ONLY companion to loadedSegmentSetsByNamespace (same degraded-JP rule): which namespaces
+ *  have a trustworthy package loaded. dataDegraded runs on every events/packages change and only
+ *  needs namespace membership, so it must never pay for the per-package segmentId Sets that the
+ *  quarantine view builds. */
+function loadedNamespaces(pkgs: RailGeoPackage[], degradedJP: boolean): Set<Country> {
+  const out = new Set<Country>();
+  for (const pkg of pkgs) {
+    if (pkg.country === 'JP' && degradedJP) continue;
+    out.add(pkg.country);
+  }
+  return out;
+}
+
 /** Pending abolished-segment rides, grouped by parsed line label for the quarantine UI. */
 export const orphanGroups: Readable<OrphanGroup[]> = derived(
   [packages, events, usingFallback],
@@ -181,6 +204,12 @@ export const orphanGroups: Readable<OrphanGroup[]> = derived(
 
     for (const ev of $events) {
       if (ev.quarantine === 'kept') continue;
+      // A stub-pinned ride is NEVER an abolished-segment orphan: it was recorded against the
+      // built-in synthetic package, so its id missing from the real package means "not yet
+      // re-resolved against real data" (adoptStubPinnedEvents / dataDegraded cover that), not a
+      // real-world line closure. Classifying it as abolished would invite the user to write off
+      // a ride that is merely unresolved.
+      if (ev.railGeoVersion === STUB_VERSION) continue;
       const segs = loadedSegments.get(namespaceOf(ev.segmentId));
       if (!segs || segs.has(ev.segmentId)) continue;
 
@@ -461,14 +490,49 @@ function bindMigrationRetry(pkgs: RailGeoPackage[]): void {
   for (const t of triggers) window.addEventListener(t, handler);
 }
 
+/**
+ * Rides marked while booted on the built-in stub are pinned to STUB_VERSION — a synthetic version
+ * no real migration chain will ever claim. They must NOT enter the migration runner (the stub used
+ * to claim a real version, letting a real old→new map remap ids that were never in that scheme);
+ * instead they re-resolve against the real package BY segmentId once it arrives — segmentIds are
+ * deterministic / content-addressed, so a stub id that exists in the real package IS the same
+ * physical segment. Adoption re-pins railGeoVersion to the real version and refreshes the km
+ * snapshot from real geometry (the stub's km is a station-pair haversine approximation). A stub id
+ * the real package does NOT contain stays pinned — never migrated, never quarantined as abolished
+ * (see orphanGroups) — and surfaces through dataDegraded instead. Needs no network, so it runs
+ * before (and independent of) the manifest fetch.
+ */
+async function adoptStubPinnedEvents(pkgs: RailGeoPackage[]): Promise<void> {
+  const stubEvs = get(events).filter((e) => e.railGeoVersion === STUB_VERSION);
+  if (stubEvs.length === 0) return;
+  const realPkgs = pkgs.filter((p) => p.version !== STUB_VERSION);
+  if (realPkgs.length === 0) return; // still on the stub — nothing real to resolve against yet
+  const versionByNs = new Map(realPkgs.map((p) => [p.country, p.version]));
+  const segById = new Map(realPkgs.flatMap((p) => p.segments.map((s) => [s.segmentId, s] as const)));
+  const adopted: RideEvent[] = [];
+  for (const ev of stubEvs) {
+    const version = versionByNs.get(namespaceOf(ev.segmentId));
+    const seg = segById.get(ev.segmentId);
+    if (version === undefined || !seg) continue; // unresolvable (for now) — leave pinned to the stub
+    adopted.push({ ...ev, railGeoVersion: version, km: seg.km });
+  }
+  if (adopted.length === 0) return;
+  await db.putEvents(adopted); // in-place by stable id, same as the migration runner
+  await refresh();
+}
+
 async function migrateEventsIfNeeded(pkgs: RailGeoPackage[]): Promise<void> {
   if (typeof fetch === 'undefined') return;
+  await adoptStubPinnedEvents(pkgs); // stub rides resolve by segmentId, never via the chain below
   const evs = get(events);
   if (evs.length === 0) return;
   // PER-NAMESPACE current version — JP and CN bump independently, so a global version set would let
   // CN's version (e.g. 2025.1.0) mask a genuinely-stale JP event also pinned to 2025.1.0.
   const versionByNs = new Map(pkgs.map((p) => [p.country, p.version]));
   const stale = evs.filter((e) => {
+    // Stub-pinned events NEVER enter the migration chain — no real chain claims STUB_VERSION, and
+    // any event still carrying it here is one adoptStubPinnedEvents could not (yet) resolve.
+    if (e.railGeoVersion === STUB_VERSION) return false;
     const v = versionByNs.get(namespaceOf(e.segmentId));
     return v !== undefined && e.railGeoVersion !== v;
   });
@@ -690,6 +754,11 @@ export async function markRoute(
   const tripId = db.newId();
   const createdAt = new Date().toISOString();
   const trainModel = opts?.trainModel === undefined ? undefined : canonicalizeTrainModel(opts.trainModel) || undefined;
+  // Phase-4 km snapshot, mirroring the direct markRide path: without it a route-marked ride loses
+  // its distance forever once the segment is abolished (quarantine shows no km; closedLineKm reads
+  // km ?? 0). The route's segments all live in loaded packages, so the memoized geo index has them.
+  const segById = get(geo).segmentById;
+  const kmBySegmentId = new Map(route.segmentIds.map((id) => [id, segById.get(id)?.km]));
   const res = await db.markRouteSegments(route.segmentIds, {
     railGeoVersion: route.railGeoVersion,
     date: opts?.date,
@@ -697,7 +766,7 @@ export async function markRoute(
     source: opts?.source ?? 'manual',
     tripId,
     createdAt,
-  });
+  }, kmBySegmentId);
   await refresh();
   return { added: res.added, tripId, totalKm: route.totalKm, segmentIds: route.segmentIds, alreadyCovered };
 }

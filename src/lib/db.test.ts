@@ -102,6 +102,18 @@ describe('markRouteSegments (append by trip)', () => {
     expect(await eventIds()).toEqual(['trip-X:L:0-1', 'trip-X:L:1-2']);
   });
 
+  it('REGRESSION: threads the per-segment km snapshot into route-marked events (Phase-4 durability)', async () => {
+    // Route-marked rides used to be written WITHOUT the km snapshot the direct markRide path
+    // records, so their distance was lost forever once the segment was abolished (quarantine
+    // showed no km; closedLineKm read km ?? 0). The caller now supplies km per segment.
+    const km = new Map<string, number | undefined>([['L:0-1', 4.2], ['L:1-2', undefined]]);
+    const res = await markRouteSegments(['L:0-1', 'L:1-2'], fields('trip-km'), km);
+    expect(res).toEqual({ added: 2 });
+    const all = await getAllEvents();
+    expect(all.find((e) => e.segmentId === 'L:0-1')?.km).toBe(4.2); // snapshot persisted
+    expect(all.find((e) => e.segmentId === 'L:1-2')?.km).toBeUndefined(); // unknown km stays absent, never 0
+  });
+
   it('leaves existing duplicate rows under their original trips', async () => {
     await putEvents([
       ev('L:0-1', 'old-a:L:0-1', 'old-a'),
