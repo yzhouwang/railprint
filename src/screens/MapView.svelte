@@ -27,7 +27,7 @@
   } from '../lib/store';
   import { SearchSeq, sameStation, classifyRoutes, type RouteOutcome } from '../lib/marking';
   import Pill from '../components/Pill.svelte';
-  import { canonicalizeTrainModel, foldKey, resolveModel, modelByFold } from '../lib/train-models';
+  import { sameModel, collectionFold, foldPreview, resolveModel, modelByFold } from '../lib/train-models';
   import { suggestModels } from '../lib/model-suggest';
   import { markMode, toast, goToTab, collectionSheetRequest } from '../lib/ui';
   import { tokens } from '../design/tokens';
@@ -150,12 +150,17 @@
   );
 
   // D15: live canonical preview (feedback, not validation — free text is always accepted).
-  const markModelCanon = $derived(canonicalizeTrainModel(markTrainModel));
-  const showModelPreview = $derived(
-    markTrainModel.trim().length > 0 && markModelCanon !== markTrainModel.trim(),
-  );
+  // foldPreview is SHARED with the diary editor so the two input surfaces behave identically.
+  const markModelPreview = $derived(foldPreview(markTrainModel));
 
   // ── first-collect reward beat (D14/DD4) + milestone celebration (D11/DD6) ──
+
+  /** ONE definition of "is this mark collecting a new model?" — shared by both mark paths
+   *  (was copy-pasted; the two must stay in lockstep or the beat fires inconsistently). */
+  function newModelInfo(raw: string): { fold: string; isNew: boolean } {
+    const fold = collectionFold(raw);
+    return { fold, isNew: fold !== '' && !get(collectedModelKeys).has(fold) };
+  }
 
   /** ` · 新幹線 8/13` — ONLY when this model itself counts toward its section's meter.
    *  D6 honesty (review finding): an inactive E3 or a non-corridor CN model sits in a
@@ -692,10 +697,7 @@
       // D14: capture BEFORE the mark whether this model is new to the collection — after the
       // write the derived set already contains it.
       const modelRaw = markTrainModel.trim();
-      // Registry-resolved fold: alias spellings (レールスター → 700) must key exactly like
-      // collectedModelKeys/summarizeCollection or the beat mis-fires (review finding).
-      const modelFold = resolveModel(modelRaw)?.fold ?? foldKey(modelRaw);
-      const isNewModel = modelFold !== '' && !get(collectedModelKeys).has(modelFold);
+      const { fold: modelFold, isNew: isNewModel } = newModelInfo(modelRaw);
       const res = await markRide({
         lineId: selectedLine.lineId,
         fromStationId: from,
@@ -910,8 +912,7 @@
     try {
       const before = new Set(get(litSegmentIds));
       const modelRaw = markTrainModel.trim();
-      const modelFold = resolveModel(modelRaw)?.fold ?? foldKey(modelRaw); // registry-resolved (see doMark)
-      const isNewModel = modelFold !== '' && !get(collectedModelKeys).has(modelFold);
+      const { fold: modelFold, isNew: isNewModel } = newModelInfo(modelRaw);
       const res = await markRoute(r, { trainModel: modelRaw || undefined });
       // E1: the route is always recorded as a new trip. Report newly-lit coverage; a full
       // repeat (every leg already ridden) says so instead of dead-ending.
@@ -1233,17 +1234,17 @@
             bind:value={markTrainModel}
             autocomplete="off"
           />
-          {#if showModelPreview}
+          {#if markModelPreview !== null}
             <!-- D15: feedback, not validation — shows what the fold will record -->
-            <p class="train-preview u-muted">→ {markModelCanon} として記録</p>
+            <p class="train-preview u-muted">→ {markModelPreview} として記録</p>
           {/if}
           {#if modelSuggestions.length > 0}
             <div class="train-chips" role="group" aria-label="車両の候補">
               {#each modelSuggestions as m (m)}
                 <!-- 5A: highlight by FOLD so typed 'E5系' lights the E5 chip (preview and chip agree) -->
                 <Pill
-                  active={markModelCanon !== '' && markModelCanon === foldKey(m)}
-                  onclick={() => (markTrainModel = markModelCanon === foldKey(m) ? '' : m)}
+                  active={sameModel(markTrainModel, m)}
+                  onclick={() => (markTrainModel = sameModel(markTrainModel, m) ? '' : m)}
                 >{m}</Pill>
               {/each}
             </div>

@@ -40,6 +40,32 @@ export function sameModel(a: string | undefined, b: string | undefined): boolean
   return ka !== '' && ka === foldKey(b);
 }
 
+/**
+ * THE collection-identity key (D2, single definition — ship review): the REGISTRY fold when
+ * the raw spelling resolves through the fold+alias index (so 'N700系7000番台' and 'レールスター'
+ * land on their card), else the raw string's own foldKey (unknown その他 identities).
+ * Every surface that keys or compares collection membership — summarizeCollection standings,
+ * collectedModelKeys, the first-collect beat, diary pill groups, the sheet's detail filters —
+ * MUST route through this one function; hand-recomputing it is how the alias bug class ships.
+ */
+export function collectionFold(raw: string | undefined): string {
+  const k = foldKey(raw);
+  if (k === '') return '';
+  return byFold.get(k)?.fold ?? k;
+}
+
+/**
+ * D15 preview helper (shared by the map capture field and the diary editor so the two input
+ * surfaces provably behave identically): the canonical token when folding would CHANGE the
+ * trimmed input, else null (no preview shown for already-canonical text).
+ */
+export function foldPreview(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (trimmed === '') return null;
+  const canon = canonicalizeTrainModel(raw);
+  return canon !== trimmed ? canon : null;
+}
+
 // ── registry indexes (built once at module init; registry is static data) ──
 
 const byFold = new Map<string, TrainModelInfo>();
@@ -82,10 +108,13 @@ for (const [k, v] of Object.entries(SPEED_ONLY)) {
   if (!TOP_SPEED.has(k)) TOP_SPEED.set(k, v);
 }
 
-/** Top speed for a logged model, or undefined if unknown. */
+/** Top speed for a logged model, or undefined if unknown. Resolves through the registry
+ *  alias index first (ship review: rides logged as 'N700系7000番台'/'レールスター' must carry
+ *  their card's speed into the fastest-model pick), then the speed-only family keys. */
 export function topSpeedKmh(model: string | undefined): number | undefined {
   if (!model) return undefined;
-  return TOP_SPEED.get(foldKey(model));
+  const k = foldKey(model);
+  return byFold.get(k)?.topSpeedKmh ?? TOP_SPEED.get(k);
 }
 
 // ── legacy suggestion list (v1 API kept for compatibility + the chips-migration baseline) ──

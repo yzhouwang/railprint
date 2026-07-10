@@ -22,20 +22,16 @@
   //
   // Membership/meters all derive from the pure lib (summarizeCollection reads RAW events —
   // D16); this component only lays the summary out. Accent hues appear ONLY inside the
-  // silhouette fills (DD8) — all chrome here is emerald-system.
+  // silhouette fills (DD8) — chrome is emerald-system, with ONE user-blessed exception:
+  // the amber 引退迫る caution tag (retirement urgency is roster data; approved board).
   import { tick } from 'svelte';
   import FolderTabCard from './FolderTabCard.svelte';
   import ProgressBar from './ProgressBar.svelte';
   import TrainSilhouette from './TrainSilhouette.svelte';
-  import { events, packages, geo } from '../lib/store';
-  import {
-    summarizeCollection,
-    deriveMilestones,
-    type ModelStanding,
-    type SectionMeter,
-  } from '../lib/collection';
+  import { events, packages, geo, collection } from '../lib/store';
+  import { deriveMilestones, type ModelStanding, type SectionMeter } from '../lib/collection';
   import { summarizeTrips } from '../lib/trips';
-  import { foldKey, modelByFold, topSpeedKmh } from '../lib/train-models';
+  import { collectionFold, modelByFold, topSpeedKmh } from '../lib/train-models';
   import { ROSTER_BASIS_YEAR, type TrainModelInfo } from '../lib/model-registry';
 
   interface Props {
@@ -55,7 +51,9 @@
   );
   let sheetEl: HTMLDivElement | undefined = $state();
 
-  const summary = $derived(summarizeCollection($events, $packages));
+  // The SHARED memoized summary (perf review): StatsScreen already subscribes to this
+  // derived, so re-deriving locally would run summarizeCollection twice per events tick.
+  const summary = $derived($collection);
   const milestones = $derived(deriveMilestones(summary));
 
   // The model behind the detail view. A ghost (uncollected) card is tappable too: it has no
@@ -100,14 +98,19 @@
   // carry this fold, PLUS the D16 raw-grouped remainder for unresolvable trips.
   const detailTrips = $derived.by((): DetailTripRow[] => {
     if (view.kind !== 'detail') return [];
-    const fold = view.fold;
+    // Canonical CARD fold (ship review, alias class): rides stored as 'N700系7000番台' or
+    // 'レールスター' must appear on their card's journey list — collectionFold is the ONE
+    // identity every comparison below uses.
+    const fold = modelByFold(view.fold)?.fold ?? view.fold;
     const idx = $geo;
     const rows: DetailTripRow[] = [];
-    const resolved = new Set<string>(); // trip keys already shown via a package summary
+    // Country-prefixed like diaryRows (ship review): a JP and CN trip sharing an imported
+    // tripId must not shadow each other out of the fallback pass.
+    const resolved = new Set<string>();
     for (const pkg of $packages) {
       for (const t of summarizeTrips($events, pkg)) {
-        if (!t.trainModels.some((m) => foldKey(m) === fold)) continue;
-        resolved.add(t.tripId);
+        if (!t.trainModels.some((m) => collectionFold(m) === fold)) continue;
+        resolved.add(`${pkg.country}:${t.tripId}`);
         const name = (id: string | undefined): string =>
           (id && idx.stationById.get(id)?.name) || '?';
         const lineNames: string[] = [];
@@ -137,10 +140,15 @@
       kept: boolean;
     }
     const raw = new Map<string, RawBucket>();
+    const segCountry = new Map<string, string>();
+    for (const p of $packages) for (const seg of p.segments) segCountry.set(seg.segmentId, p.country);
     for (const ev of $events) {
-      if (foldKey(ev.trainModel) !== fold) continue;
+      if (collectionFold(ev.trainModel) !== fold) continue;
       const key = ev.tripId ?? `solo:${ev.id}`;
-      if (resolved.has(key)) continue;
+      // shown already iff the OWNING package's summary rendered this trip (unresolved rows
+      // have no owner and always reach the fallback pass — D16).
+      const owner = segCountry.get(ev.segmentId);
+      if (owner !== undefined && resolved.has(`${owner}:${key}`)) continue;
       let b = raw.get(key);
       if (!b) {
         b = { dates: [], createdAts: [], km: 0, count: 0, kept: false };
@@ -221,15 +229,40 @@
     cells[j].focus();
   }
 
-  // Initial focus lands on the sheet itself (tabindex -1) — QuarantineSheet idiom; a full
-  // Tab trap stays deferred there too, Escape + initial focus cover the core modal a11y.
+  // Initial focus lands on the sheet itself (tabindex -1) — QuarantineSheet idiom.
   $effect(() => {
     sheetEl?.focus();
   });
+
+  // DD13 Tab focus trap (ship review): aria-modal promises keyboard isolation — Tab and
+  // Shift+Tab cycle within the sheet's focusables instead of escaping to the UI behind
+  // the backdrop. Recomputed per keypress (the focusable set changes with the view swap).
+  function trapTab(e: KeyboardEvent): void {
+    if (e.key !== 'Tab' || !sheetEl) return;
+    const focusables = [...sheetEl.querySelectorAll<HTMLElement>(
+      'button, input, [tabindex]:not([tabindex="-1"])',
+    )].filter((el) => !el.hasAttribute('disabled') && el.offsetParent !== null);
+    if (focusables.length === 0) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    const active = document.activeElement as HTMLElement | null;
+    if (e.shiftKey && (active === first || active === sheetEl)) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && active === last) {
+      e.preventDefault();
+      first.focus();
+    } else if (active && !sheetEl.contains(active)) {
+      // focus escaped (e.g. via pointer) — pull the cycle back inside
+      e.preventDefault();
+      first.focus();
+    }
+  }
 </script>
 
 <svelte:window
   onkeydown={(e) => {
+    trapTab(e);
     if (e.key !== 'Escape') return;
     if (view.kind === 'detail') void back(); // DD14: Escape backs out of detail first
     else onclose();
@@ -300,9 +333,12 @@
             {/if}
 
             {#if sec.category === 'other'}
-              <!-- その他: first-class cards, text-only + dashed, verbatim first-seen spelling -->
+              <!-- その他: first-class cards, text-only + dashed, verbatim first-seen spelling.
+                   Render capped (ship review): a hostile/huge import with thousands of DISTINCT
+                   free-text models must not freeze the sheet — the summary stays complete
+                   (counts/milestones honest), only the card list truncates, and says so. -->
               <div class="txlist">
-                {#each sec.collected as s (s.fold)}
+                {#each sec.collected.slice(0, 60) as s (s.fold)}
                   <button
                     class="txcard"
                     type="button"
@@ -313,6 +349,9 @@
                     <span class="txcount">{s.rideCount}回</span>
                   </button>
                 {/each}
+                {#if sec.collected.length > 60}
+                  <p class="txmore u-muted">ほか {sec.collected.length - 60} 件（最近の乗車順）</p>
+                {/if}
               </div>
             {:else}
               <div class="grid">
@@ -660,7 +699,10 @@
     position: absolute;
     top: 6px;
     right: 6px;
-    font-size: 10px;
+    /* 引退迫る amber is the USER-BLESSED caution exception to the emerald-monochrome chrome
+       rule (ship design review): retirement urgency is roster DATA, matching the approved
+       board. Do not cite this as precedent for new chrome hues. */
+    font-size: var(--size-label, 11px);
     font-weight: 700;
     padding: 2px 5px;
     border-radius: 6px;
@@ -673,6 +715,10 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-sm);
+  }
+  .txmore {
+    font-size: var(--size-label);
+    margin: var(--space-xs) 0 0;
   }
   .txcard {
     display: flex;

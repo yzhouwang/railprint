@@ -12,6 +12,9 @@ import {
   setTripTrainModel,
   restoreEvents,
   collectedModelKeys,
+  seedCelebratedMilestones,
+  celebrateNewMilestones,
+  hasCelebratedSeed,
   events,
   headline,
   litSegmentIds,
@@ -426,5 +429,51 @@ describe('collectedModelKeys', () => {
     expect(keys.has('N700')).toBe(true); // the CARD fold — so marking 'N700系' is NOT "new"
     expect(keys.has('N700系7000番台')).toBe(false); // raw alias fold never leaks as an identity
     expect(keys.has('おもちゃ')).toBe(true);
+  });
+});
+
+// ──────── celebration meta (D11/6A — once per device EVER; seeds are silent) ────────
+
+describe('celebration meta (seed / celebrate / dedupe)', () => {
+  /** Ride an E5 so the collection earns 初車両 + 320km/hクラブ. */
+  const rideE5 = () =>
+    addEvents([
+      {
+        id: 'cel-1',
+        segmentId: 'jr-kururi:0-1',
+        railGeoVersion: JP_PACKAGE.version,
+        trainModel: 'E5系',
+        source: 'manual',
+        tripId: 'cel-t1',
+        createdAt: '2025-06-01T00:00:00.000Z',
+      },
+    ]);
+
+  it('hasCelebratedSeed is false on a fresh device and true after any seed', async () => {
+    expect(await hasCelebratedSeed()).toBe(false);
+    await seedCelebratedMilestones();
+    expect(await hasCelebratedSeed()).toBe(true);
+  });
+
+  it('celebrates a fresh crossing ONCE — the second call returns [] (once per device, ever)', async () => {
+    await rideE5();
+    const first = await celebrateNewMilestones();
+    expect(first.map((m) => m.id).sort()).toEqual(['club-320', 'first-model']);
+    const second = await celebrateNewMilestones();
+    expect(second).toEqual([]); // the dedupe: no repeat toast for the same stamps
+  });
+
+  it('a SEED suppresses the burst: restore-then-celebrate yields [] (6A — no stale-stamp burst)', async () => {
+    await rideE5(); // "restored history" — earned before this device ever celebrated
+    await seedCelebratedMilestones(); // import/boot-upgrade path seeds silently
+    expect(await celebrateNewMilestones()).toEqual([]);
+  });
+
+  it('concurrent celebrate calls are serialized — the same crossing never double-toasts', async () => {
+    await rideE5();
+    const [a, b] = await Promise.all([celebrateNewMilestones(), celebrateNewMilestones()]);
+    // exactly ONE of the racing calls wins the fresh stamps; the other sees them celebrated
+    expect(a.length + b.length).toBe(2);
+    expect(a.length === 0 || b.length === 0).toBe(true);
   });
 });

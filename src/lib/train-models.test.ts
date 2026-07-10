@@ -3,6 +3,8 @@ import {
   canonicalizeTrainModel,
   foldKey,
   sameModel,
+  collectionFold,
+  foldPreview,
   resolveModel,
   KNOWN_TRAIN_MODELS,
   topSpeedKmh,
@@ -132,5 +134,29 @@ describe('topSpeedKmh', () => {
 
   it('knows E8 (missing from v1 — in service since 2024)', () => {
     expect(topSpeedKmh('E8系')).toBe(300);
+  });
+
+  it('resolves registry ALIASES to their card speed (ship review: alias rides count for fastest)', () => {
+    expect(topSpeedKmh('N700系7000番台')).toBe(300); // alias of the N700 card
+    expect(topSpeedKmh('レールスター')).toBe(285); // alias of the 700 card
+  });
+});
+
+describe('collectionFold (THE collection identity — single definition)', () => {
+  it('maps alias spellings to their CARD fold, unknowns to their own fold, blanks to empty', () => {
+    expect(collectionFold('N700系7000番台')).toBe('N700');
+    expect(collectionFold('レールスター')).toBe('700');
+    expect(collectionFold('E5系')).toBe('E5');
+    expect(collectionFold('おもちゃ')).toBe('おもちゃ');
+    expect(collectionFold(undefined)).toBe('');
+    expect(collectionFold('   ')).toBe('');
+  });
+});
+
+describe('foldPreview (D15 shared input feedback)', () => {
+  it('previews only when folding CHANGES the trimmed input', () => {
+    expect(foldPreview('e5系')).toBe('E5');
+    expect(foldPreview('E5')).toBeNull(); // already canonical — no preview
+    expect(foldPreview('  ')).toBeNull();
   });
 });

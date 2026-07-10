@@ -22,6 +22,7 @@
     coverages,
     geo,
     events,
+    packages,
     orphanCount,
     closedLineKm,
     closedLineCount,
@@ -29,7 +30,7 @@
     restoreEvents,
     collection,
   } from '../lib/store';
-  import { canonicalizeTrainModel, foldKey, resolveModel } from '../lib/train-models';
+  import { canonicalizeTrainModel, sameModel, collectionFold, foldPreview, resolveModel } from '../lib/train-models';
   import { suggestModels } from '../lib/model-suggest';
   import type { RideEvent } from '../contract/types';
 
@@ -129,6 +130,17 @@
     return buckets;
   });
 
+  // segmentId → owning country, across ALL loaded packages. Needed because tripIds can repeat
+  // across JP/CN (the diary row key is country-prefixed for exactly this reason) — a bucket
+  // keyed on bare tripId would leak the OTHER country's rows into this row's pills and, worse,
+  // hand their event ids to setTripTrainModel (ship review P1). Unresolved segments (quarantine/
+  // orphan/CN-404) belong to NO package and stay with every candidate row — D16 generosity.
+  const segCountry = $derived.by(() => {
+    const map = new Map<string, string>();
+    for (const p of $packages) for (const seg of p.segments) map.set(seg.segmentId, p.country);
+    return map;
+  });
+
   const diaryRows = $derived.by(() => {
     const idx = $geo;
     const stationName = (id: string) => idx.stationById.get(id)?.name ?? '?';
@@ -145,13 +157,17 @@
         const groups = new Map<string, { label: string; labelAt: string; eventIds: string[] }>();
         const blankIds: string[] = [];
         for (const ev of tripEventRows.get(t.tripId) ?? []) {
+          // Cross-package guard (ship review P1): only rows belonging to THIS package's trip —
+          // or unresolved anywhere (D16) — may surface as pills / edit targets here.
+          const owner = segCountry.get(ev.segmentId);
+          if (owner !== undefined && owner !== pkg.country) continue;
           if (!ev.trainModel) {
             blankIds.push(ev.id);
             continue;
           }
           // Registry-resolved: two alias spellings of one card must be ONE pill, and the
           // per-pill edit scope must cover both (review finding, alias class).
-          const fold = resolveModel(ev.trainModel)?.fold ?? foldKey(ev.trainModel);
+          const fold = collectionFold(ev.trainModel);
           const g = groups.get(fold);
           if (g) {
             g.eventIds.push(ev.id);
@@ -208,18 +224,21 @@
   const lastEditToast = new Map<string, number>();
 
   const draftCanon = $derived(editing ? canonicalizeTrainModel(editing.draft) : '');
-  const showCanonPreview = $derived(
-    editing !== null && editing.draft.trim().length > 0 && draftCanon !== editing.draft.trim(),
-  );
+  const draftPreview = $derived(editing ? foldPreview(editing.draft) : null);
 
-  function editorChips(row: DiaryRow): string[] {
+  // Memoized on (editing.key, events, geo) — reading editing.key alone means keystrokes on
+  // editing.draft do NOT re-trigger this O(events) pass (ship review, perf).
+  const editorChipList = $derived.by(() => {
+    if (!editing) return [];
+    const row = diaryRows.find((r) => r.key === editing!.key);
+    if (!row) return [];
     const idx = $geo;
     return suggestModels($events, {
       lineId: row.lineId,
       lineOfSegment: (sid) => idx.segmentById.get(sid)?.lineId,
       max: 6,
     });
-  }
+  });
 
   function openEditor(e: MouseEvent, row: DiaryRow, fold: string | null, current: string): void {
     if (editBusy) return;
@@ -378,7 +397,7 @@
             <span class="dex-meter-num">
               <span class="dex-big">{shelfMeter.collected}</span><span class="dex-den u-muted">/{shelfMeter.total}</span>
             </span>
-            <span class="dex-meter-bar"><ProgressBar value={(shelfMeter.collected / shelfMeter.total) * 100} label={shelfMeter.label} /></span>
+            <span class="dex-meter-bar"><ProgressBar value={shelfMeter.total > 0 ? (shelfMeter.collected / shelfMeter.total) * 100 : 0} label={shelfMeter.label} /></span>
             <span class="dex-meter-label u-muted">{shelfMeter.label}</span>
           </span>
         {/if}
@@ -443,15 +462,15 @@
                       else if (e.key === 'Escape') closeEditor();
                     }}
                   />
-                  {#if showCanonPreview}
-                    <p class="editor-preview u-muted">→ {draftCanon} として記録</p>
+                  {#if draftPreview !== null}
+                    <p class="editor-preview u-muted">→ {draftPreview} として記録</p>
                   {/if}
                   <div class="editor-chips">
-                    {#each editorChips(t) as chip (chip)}
+                    {#each editorChipList as chip (chip)}
                       <Pill
-                        active={editing !== null && foldKey(editing.draft) === foldKey(chip)}
+                        active={editing !== null && sameModel(editing.draft, chip)}
                         onclick={() => {
-                          if (editing) editing.draft = foldKey(editing.draft) === foldKey(chip) ? '' : chip;
+                          if (editing) editing.draft = sameModel(editing.draft, chip) ? '' : chip;
                         }}
                       >{chip}</Pill>
                     {/each}

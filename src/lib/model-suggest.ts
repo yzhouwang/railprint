@@ -3,7 +3,7 @@
 // segment→line lookup); this module only ranks. Stored trainModel strings are NEVER
 // rewritten (plan D4) — everything here is read-time.
 //
-// Replaces the v1 `modelSuggestions` $derived (MapView.svelte:129–153; its exact behavior
+// Replaces the v1 `modelSuggestions` $derived (the v1 `modelSuggestions` $derived in MapView, now replaced; its exact behavior
 // is regression-pinned in model-suggest.test.ts per review 9A#4) with two upgrades:
 //   (a) FOLD-keyed dedupe of recents — 'E5系' (import spelling) and 'E5' (manual spelling)
 //       are ONE chip, not two (kills the double-chip bug). Equality routes through
@@ -13,7 +13,7 @@
 //       deliberately NO curated line→model dataset (zero licensing surface, plan D8): the
 //       only signal is the caller-supplied segment→line lookup over the user's own events.
 //
-// Complexity (the MapView.svelte:129–132 rule, kept): ONE O(events) pass collects per-fold
+// Complexity (the v1 no-full-log-sort rule, kept — see the regression baseline in model-suggest.test.ts): ONE O(events) pass collects per-fold
 // maxima — latest createdAt, the raw spelling at that createdAt, an on-selected-line flag —
 // then ONLY the (few) distinct folds are sorted. Never a sort over the whole event log just
 // to surface ≤8 chips (the log is id-ordered, not date-ordered, so the maxima need the pass

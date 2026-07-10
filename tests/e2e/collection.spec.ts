@@ -121,6 +121,16 @@ test('未記録 funnel: toggle filters to model-less trips; the inline editor dr
   await expect(page.locator('.trip')).toHaveCount(2);
   // The freshly-tagged model joins the diary pills and the shelf count ticks to 2.
   await expect(page.locator('.dex-shelf')).toContainText('2車両を記録');
+
+  // Editing an EXISTING pill (ship coverage gap): tap the E7 pill → editor prefilled →
+  // change to E6 → the pill relabels and the trip never loses its other data.
+  await page.getByRole('button', { name: 'E7系', exact: true }).click();
+  const editInput = page.locator('#dex-edit-input');
+  await expect(editInput).toHaveValue('E7系');
+  await editInput.fill('E6');
+  await page.getByRole('button', { name: '保存' }).click();
+  await expect(page.getByText(/車両を「E6」に更新しました/)).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole('button', { name: 'E6系', exact: true })).toBeVisible();
 });
 
 test('CN-only rider: the shelf hero meter is the earnable 京沪 corridor, never a JP 0/13', async ({ page }) => {

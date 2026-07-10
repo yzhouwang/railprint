@@ -253,15 +253,22 @@
       const committedMode = mode; // capture before reset() clears it
       const written = await commitImport(parsed.resolved, resolution, get(packages), mode);
 
-      // v0.13 6A: an import/restore SEEDS the celebrated-milestone set silently — a backup
-      // restore on a fresh device must never burst years-old achievement toasts; only a live
-      // in-session mark celebrates.
-      await seedCelebratedMilestones();
-
       // Durability: first ever import asks the browser to make storage persistent.
       if (!(await db.getMeta<boolean>(PERSIST_KEY))) {
         await requestPersistence();
         await db.setMeta(PERSIST_KEY, true);
+      }
+
+      // v0.13 6A: an import/restore SEEDS the celebrated-milestone set silently — a backup
+      // restore on a fresh device must never burst years-old achievement toasts. BEST-EFFORT
+      // and isolated (ship review): the import above already committed durably, so a transient
+      // IndexedDB failure in this cosmetic seed must never relabel a successful import as
+      // failed, skip the persistence request, or eat the undo toast. Worst case on failure:
+      // one stale celebration later — the accepted over/under-remember tradeoff.
+      try {
+        await seedCelebratedMilestones();
+      } catch (err) {
+        console.warn('[import] celebration seed failed (non-fatal)', err);
       }
 
       if (written.length === 0) {
