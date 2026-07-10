@@ -76,7 +76,9 @@ test('REAL FLOW: search 北京南 → 上海虹桥, record with a train model, s
   await page.locator('.hit').first().click();
 
   // 北京南 → 上海虹桥 is the whole 京沪 line (one line, 0 changes) → it records automatically.
-  await expect(page.getByText(/経路を記録しました/)).toBeVisible({ timeout: 15_000 });
+  // v0.13 D14: CR400AF is new to the collection, so the first-collect beat (with the 京沪
+  // corridor meter) replaces the plain 経路を記録しました toast.
+  await expect(page.getByText(/CR400AFを図鑑に追加しました/)).toBeVisible({ timeout: 15_000 });
 
   // Stats now show a China figure, and the diary row carries the model + the true endpoints.
   await page.getByRole('button', { name: /統計/ }).first().click();
