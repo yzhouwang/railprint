@@ -111,6 +111,9 @@
     lineLabel: string;
     /** first lineId — seeds the editor's line-aware chip ranking (D8). */
     lineId?: string;
+    /** ALL trip lineIds — the v3 plausibility gate takes every line the trip touches
+     *  (eligible-in-ANY-context), not just the first (outside-voice review point). */
+    lineIds: string[];
     modelGroups: ModelPillGroup[];
     /** rows with NO model — the ＋車両 target (13A: fills blanks only). */
     blankIds: string[];
@@ -193,6 +196,7 @@
           segCount: t.segmentIds.length,
           lineLabel: lineNames.length === 1 ? lineNames[0] : `${t.lineIds.length}路線`,
           lineId: t.lineIds[0],
+          lineIds: t.lineIds,
           modelGroups: [...groups.entries()].map(([fold, g]) => ({ fold, label: g.label, eventIds: g.eventIds })),
           blankIds,
           createdAt: t.createdAt,
@@ -233,9 +237,17 @@
     const row = diaryRows.find((r) => r.key === editing!.key);
     if (!row) return [];
     const idx = $geo;
+    // v3 gate: one context per resolvable trip line (eligible-in-ANY). Unresolvable lines
+    // (quarantine/orphan imports) contribute nothing; zero contexts ⇒ fail-open v2 pinned
+    // behavior, so degraded rows keep their old chips rather than losing the surface.
+    const contexts = row.lineIds
+      .map((id) => idx.lineById.get(id))
+      .filter((l): l is NonNullable<typeof l> => l !== undefined)
+      .map((l) => ({ lineId: l.lineId, country: l.country, isHSR: l.isHSR }));
     return suggestModels($events, {
       lineId: row.lineId,
       lineOfSegment: (sid) => idx.segmentById.get(sid)?.lineId,
+      contexts,
       max: 6,
     });
   });
@@ -465,16 +477,21 @@
                   {#if draftPreview !== null}
                     <p class="editor-preview u-muted">→ {draftPreview} として記録</p>
                   {/if}
-                  <div class="editor-chips">
-                    {#each editorChipList as chip (chip)}
-                      <Pill
-                        active={editing !== null && sameModel(editing.draft, chip)}
-                        onclick={() => {
-                          if (editing) editing.draft = sameModel(editing.draft, chip) ? '' : chip;
-                        }}
-                      >{chip}</Pill>
-                    {/each}
-                  </div>
+                  {#if editorChipList.length > 0}
+                    <div class="editor-chips">
+                      {#each editorChipList as chip (chip)}
+                        <Pill
+                          active={editing !== null && sameModel(editing.draft, chip)}
+                          onclick={() => {
+                            if (editing) editing.draft = sameModel(editing.draft, chip) ? '' : chip;
+                          }}
+                        >{chip}</Pill>
+                      {/each}
+                    </div>
+                  {:else}
+                    <!-- v3 gate honest empty state — same copy as the map capture field. -->
+                    <p class="editor-preview u-muted">この路線の候補は未収録です。自由入力で記録できます。</p>
+                  {/if}
                   <div class="editor-actions">
                     <button class="ebtn primary" type="button" disabled={editBusy} onclick={() => void saveEditor(t)}>
                       保存

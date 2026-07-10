@@ -173,6 +173,116 @@ describe('suggestModels — raw spellings and empty fields', () => {
   });
 });
 
+describe('suggestModels — v3 plausibility gate (per-line service profiles)', () => {
+  // Real profiled lines (line-profiles.ts, fact-checked 2026-07-10) + one synthetic
+  // unprofiled id that will never gain a profile (stable regardless of data growth).
+  const TOKAIDO = { lineId: 'jp-東海旅客鉄道-東海道新幹線', country: 'JP', isHSR: true };
+  const JINGHU = { lineId: 'cn-中国铁路-京沪高速铁路', country: 'CN', isHSR: true };
+  const UNPROFILED_JP = { lineId: 'jp-テスト-未収録線', country: 'JP', isHSR: false };
+
+  it('empty-history 東海道: pads are EXACTLY the fact-checked roster — no CR, no E5 (the user-reported bug)', () => {
+    const out = suggestModels([], { contexts: [TOKAIDO] });
+    expect(out).toEqual(['N700A', 'N700S']);
+  });
+
+  it('empty-history 京沪: exactly the 4 corridor models; CR200J (parallel 京沪线, not the HSR) never pads', () => {
+    const out = suggestModels([], { contexts: [JINGHU] });
+    expect(out).toEqual(['CR400AF', 'CR400BF', 'CRH380B', 'CRH380C']);
+    expect(out).not.toContain('CR200J');
+  });
+
+  it('an off-line registry recent is gated off an HSR line, but the SAME model logged ON the line bypasses every gate (G4)', () => {
+    const lineOf = (sid: string): string | undefined =>
+      sid === 'on-jinghu' ? JINGHU.lineId : 'cn-中国铁路-京沪線';
+    // Logged elsewhere → gated (plausibility beats recency)…
+    const gated = suggestModels([ev('CR200J', at(0), 'elsewhere')], { contexts: [JINGHU], lineOfSegment: lineOf });
+    expect(gated).not.toContain('CR200J');
+    // …but the user's own record on THIS line is never called implausible.
+    const own = suggestModels([ev('CR200J', at(0), 'on-jinghu')], { contexts: [JINGHU], lineOfSegment: lineOf });
+    expect(own[0]).toBe('CR200J');
+  });
+
+  it("bare 'CR400' (speed-only family, no registry card) survives as the user's own free text but never pads with a context", () => {
+    const out = suggestModels([ev('CR400', at(0))], { contexts: [UNPROFILED_JP] });
+    expect(out).toEqual(['CR400']); // kept as unknown text (G5)… and no pads at all follow
+    const noRecent = suggestModels([], { contexts: [UNPROFILED_JP] });
+    expect(noRecent).not.toContain('CR400');
+  });
+
+  it('unprofiled conventional JP line: NO default pads (honest empty), same-country recents pass, CN recents are gated', () => {
+    expect(suggestModels([], { contexts: [UNPROFILED_JP] })).toEqual([]);
+    const out = suggestModels([ev('E353', at(0)), ev('CR400AF', at(1))], { contexts: [UNPROFILED_JP] });
+    expect(out).toEqual(['E353系']); // registry display name; the newer CN recent is gone
+  });
+
+  it('HSR context gates a same-country off-roster recent (E353 on 東海道) while unknown free text always survives', () => {
+    const out = suggestModels([ev('E353', at(0)), ev('謎の保線車両', at(1))], { contexts: [TOKAIDO] });
+    expect(out).not.toContain('E353系');
+    expect(out).toContain('謎の保線車両');
+  });
+
+  it('rejected recents do NOT consume the 6-recent quota (an older eligible model still surfaces)', () => {
+    const cn = ['CR400AF', 'CR400BF', 'CR300AF', 'CR300BF', 'CRH2', 'CRH3', 'CRH380A'];
+    const events = [ev('E353', at(0)), ...cn.map((m, i) => ev(m, at(i + 1)))];
+    const out = suggestModels(events, { contexts: [UNPROFILED_JP] });
+    expect(out).toEqual(['E353系']); // 7 newer CN recents all gated, none evicted the JP one
+  });
+
+  it('multi-line trip (editor): eligible in ANY context — a conventional line rescues what the HSR context alone would gate', () => {
+    const hsrOnly = suggestModels([ev('E353', at(0))], { contexts: [TOKAIDO] });
+    expect(hsrOnly).not.toContain('E353系');
+    const both = suggestModels([ev('E353', at(0))], { contexts: [TOKAIDO, UNPROFILED_JP] });
+    expect(both[0]).toBe('E353系');
+    // …and the profiled context still contributes its pads after the recents.
+    expect(both).toContain('N700A');
+  });
+
+  it('profile pads dedupe against recents by CARD (an alias recent suppresses its pad entry)', () => {
+    // 'N700系7000番台' resolves to the N700 card; on 山陽 the pad list contains N700 — one chip.
+    const SANYO = { lineId: 'jp-西日本旅客鉄道-山陽新幹線', country: 'JP', isHSR: true };
+    const out = suggestModels([ev('N700系7000番台', at(0))], { contexts: [SANYO] });
+    expect(out.filter((m) => foldKey(m) === 'N700')).toHaveLength(1);
+    expect(out).toContain('500系'); // rest of the 山陽 roster still pads
+  });
+
+  it('an empty contexts array is the fail-open path — exact v1/v2 pad behavior (degraded editor rows)', () => {
+    expect(suggestModels([], { contexts: [] })).toEqual(KNOWN_TRAIN_MODELS.slice(0, 8));
+  });
+
+  // ── conventional 特急/通勤 profiles (model-major data, inverted) ──
+  const YAMANOTE = { lineId: 'jp-東日本旅客鉄道-山手線', country: 'JP', isHSR: false };
+  const CHUO_EAST = { lineId: 'jp-東日本旅客鉄道-中央線', country: 'JP', isHSR: false };
+
+  it('山手線 pads its real stock (E235系) — never a Shinkansen or CN token (the second half of the user report)', () => {
+    const out = suggestModels([], { contexts: [YAMANOTE] });
+    expect(out).toContain('E235系');
+    for (const chip of out) {
+      expect(['E5系', 'N700S', 'CR400AF', 'CR200J']).not.toContain(chip);
+    }
+  });
+
+  it('operator-split lines resolve separately: あずさ pads JR東 中央線, しなの does not (it lives on the JR東海 side)', () => {
+    const out = suggestModels([], { contexts: [CHUO_EAST] });
+    expect(out).toContain('E353系');
+    expect(out).toContain('E233系');
+    expect(out).not.toContain('383系'); // 383 serves jp-東海旅客鉄道-中央線 (木曽), a different lineId
+  });
+
+  it('ubiquitous workhorse (キハ40): passes as a recent on any JP conventional line, still gated off HSR lines', () => {
+    const events = [ev('キハ40', at(0))];
+    expect(suggestModels(events, { contexts: [UNPROFILED_JP] })).toContain('キハ40系');
+    expect(suggestModels(events, { contexts: [YAMANOTE] })).toContain('キハ40系'); // profiled conventional, ubiquitous passes
+    expect(suggestModels(events, { contexts: [TOKAIDO] })).not.toContain('キハ40系');
+  });
+
+  it('curated line-major + inverted model-major MERGE (奥羽線: mini-shinkansen first, then its DMU)', () => {
+    const OU = { lineId: 'jp-東日本旅客鉄道-奥羽線', country: 'JP', isHSR: false };
+    const out = suggestModels([], { contexts: [OU] });
+    expect(out.slice(0, 2)).toEqual(['E8系', 'E6系']); // curated order leads
+    expect(out).toContain('GV-E400系'); // inverted conventional data appends
+  });
+});
+
 describe('suggestModels — benchmark-style guard (O(events) single pass)', () => {
   it('5k events rank correctly within the regression-guard budget (<50ms best-of-3)', () => {
     // 5k events cycling 20 models on 20 segments (model index == segment index), timestamps

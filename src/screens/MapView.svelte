@@ -138,13 +138,18 @@
     resetSearch();
   }
 
-  // Chips v2 (D8): fold-deduped recents ranked line-aware from the user's OWN history, padded
-  // from the known list — all inside the pure model-suggest lib (same O(events) single-pass
-  // discipline as v1; the pre-migration behavior is pinned in model-suggest.test.ts).
+  // Chips v3 (plausibility gate): fold-deduped recents ranked line-aware from the user's OWN
+  // history, padded from the selected line's fact-checked service profile — all inside the
+  // pure model-suggest lib (line-profiles.ts holds the data; the no-context v2 behavior stays
+  // pinned in model-suggest.test.ts). Zero chips is a legitimate state now: unprofiled lines
+  // show the honest free-text hint instead of implausible pads.
   const modelSuggestions = $derived.by(() =>
     suggestModels($events, {
       lineId: selectedLine?.lineId,
       lineOfSegment: (sid) => $geo.segmentById.get(sid)?.lineId,
+      contexts: selectedLine
+        ? [{ lineId: selectedLine.lineId, country: selectedLine.country, isHSR: selectedLine.isHSR }]
+        : undefined,
       max: 8,
     }),
   );
@@ -1248,6 +1253,10 @@
                 >{m}</Pill>
               {/each}
             </div>
+          {:else}
+            <!-- Honest empty state (v3 gate): an unprofiled line pads nothing — free text
+                 is the capture path, and suggestions never pretend to be eligibility. -->
+            <p class="train-preview u-muted">この路線の候補は未収録です。自由入力で記録できます。</p>
           {/if}
         </div>
       {/if}
