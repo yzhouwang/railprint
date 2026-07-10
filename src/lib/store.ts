@@ -19,7 +19,7 @@ import { MANIFEST_SCHEMA_VERSION } from '../contract/types';
 import { coverageWarnings, resolveCoverage, segmentsBetween, type CoverageWarning } from './resolver';
 import * as db from './db';
 import { JP_PACKAGE, STUB_VERSION } from './fallback-package';
-import { canonicalizeTrainModel, foldKey } from './train-models';
+import { canonicalizeTrainModel, foldKey, resolveModel } from './train-models';
 import {
   summarizeCollection,
   deriveMilestones,
@@ -264,11 +264,14 @@ export const collection: Readable<CollectionSummary> = derived(
   ([$events, $packages]) => summarizeCollection($events, $packages),
 );
 
-/** Folds the user has collected — the first-collect toast's O(1) membership check (D14). */
+/** Folds the user has collected — the first-collect toast's O(1) membership check (D14).
+ *  Keys are REGISTRY-resolved (alias spellings land on their card fold, matching how
+ *  summarizeCollection keys standings) — otherwise marking 'N700系' after having collected
+ *  'N700系7000番台' would false-positive as a brand-new model (review finding). */
 export const collectedModelKeys: Readable<Set<string>> = derived(events, ($events) => {
   const folds = new Set<string>();
   for (const ev of $events) {
-    const k = foldKey(ev.trainModel);
+    const k = resolveModel(ev.trainModel)?.fold ?? foldKey(ev.trainModel);
     if (k) folds.add(k);
   }
   return folds;

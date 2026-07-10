@@ -11,6 +11,7 @@ import {
   replaceEvents,
   setTripTrainModel,
   restoreEvents,
+  collectedModelKeys,
   events,
   headline,
   litSegmentIds,
@@ -396,5 +397,34 @@ describe('setTripTrainModel', () => {
     await restoreEvents(first.prior);
     expect(get(events).find((e) => e.id === target[0])!.trainModel).toBe('E5');
     void second;
+  });
+});
+
+// ─────────── collectedModelKeys (D14 membership — registry-resolved folds) ───────────
+
+describe('collectedModelKeys', () => {
+  it('keys alias spellings by their REGISTRY fold, matching summarizeCollection (review fix)', async () => {
+    await addEvents([
+      {
+        id: 'a1',
+        segmentId: 'jr-kururi:0-1',
+        railGeoVersion: JP_PACKAGE.version,
+        trainModel: 'N700系7000番台', // registry alias — its own foldKey ≠ the card fold
+        source: 'manual',
+        createdAt: '2025-05-01T00:00:00.000Z',
+      },
+      {
+        id: 'a2',
+        segmentId: 'jr-kururi:1-2',
+        railGeoVersion: JP_PACKAGE.version,
+        trainModel: 'おもちゃ', // unknown free text — keys by its own fold, never dropped
+        source: 'manual',
+        createdAt: '2025-05-01T00:00:00.000Z',
+      },
+    ]);
+    const keys = get(collectedModelKeys);
+    expect(keys.has('N700')).toBe(true); // the CARD fold — so marking 'N700系' is NOT "new"
+    expect(keys.has('N700系7000番台')).toBe(false); // raw alias fold never leaks as an identity
+    expect(keys.has('おもちゃ')).toBe(true);
   });
 });

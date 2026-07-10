@@ -62,7 +62,10 @@
   // ModelStanding, so we fall back to the registry entry for the want-list facts (未乗車).
   const detail = $derived.by(() => {
     if (view.kind !== 'detail') return undefined;
-    const fold = view.fold;
+    // Deep-links may carry a RAW-string fold (e.g. the alias 'レールスター') while standings
+    // key on the REGISTRY fold ('700') — canonicalize through the alias index first, or a
+    // just-collected model would render as 未乗車 (review finding, alias class).
+    const fold = modelByFold(view.fold)?.fold ?? view.fold;
     let standing: ModelStanding | undefined;
     for (const sec of summary.sections) {
       const hit = sec.collected.find((s) => s.fold === fold);

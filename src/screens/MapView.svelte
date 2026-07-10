@@ -27,7 +27,7 @@
   } from '../lib/store';
   import { SearchSeq, sameStation, classifyRoutes, type RouteOutcome } from '../lib/marking';
   import Pill from '../components/Pill.svelte';
-  import { canonicalizeTrainModel, foldKey, resolveModel } from '../lib/train-models';
+  import { canonicalizeTrainModel, foldKey, resolveModel, modelByFold } from '../lib/train-models';
   import { suggestModels } from '../lib/model-suggest';
   import { markMode, toast, goToTab, collectionSheetRequest } from '../lib/ui';
   import { tokens } from '../design/tokens';
@@ -157,11 +157,16 @@
 
   // ── first-collect reward beat (D14/DD4) + milestone celebration (D11/DD6) ──
 
-  /** ` · 新幹線 8/12` when the fold's section carries an honest meter, else ''. */
+  /** ` · 新幹線 8/13` — ONLY when this model itself counts toward its section's meter.
+   *  D6 honesty (review finding): an inactive E3 or a non-corridor CN model sits in a
+   *  metered section without ticking the meter — suffixing its toast with 0/N would be
+   *  misleading, so those get no suffix at all. */
   function meterSuffix(fold: string): string {
+    const entry = modelByFold(fold);
+    if (!entry?.active) return '';
+    if (entry.category === 'cn-hsr' && entry.corridor !== 'jinghu') return '';
     for (const section of get(collection).sections) {
-      if (!section.meter) continue;
-      if (section.collected.some((s) => s.fold === fold)) {
+      if (section.category === entry.category && section.meter) {
         return ` · ${section.meter.label} ${section.meter.collected}/${section.meter.total}`;
       }
     }
@@ -687,7 +692,9 @@
       // D14: capture BEFORE the mark whether this model is new to the collection — after the
       // write the derived set already contains it.
       const modelRaw = markTrainModel.trim();
-      const modelFold = foldKey(modelRaw);
+      // Registry-resolved fold: alias spellings (レールスター → 700) must key exactly like
+      // collectedModelKeys/summarizeCollection or the beat mis-fires (review finding).
+      const modelFold = resolveModel(modelRaw)?.fold ?? foldKey(modelRaw);
       const isNewModel = modelFold !== '' && !get(collectedModelKeys).has(modelFold);
       const res = await markRide({
         lineId: selectedLine.lineId,
@@ -903,7 +910,7 @@
     try {
       const before = new Set(get(litSegmentIds));
       const modelRaw = markTrainModel.trim();
-      const modelFold = foldKey(modelRaw);
+      const modelFold = resolveModel(modelRaw)?.fold ?? foldKey(modelRaw); // registry-resolved (see doMark)
       const isNewModel = modelFold !== '' && !get(collectedModelKeys).has(modelFold);
       const res = await markRoute(r, { trainModel: modelRaw || undefined });
       // E1: the route is always recorded as a new trip. Report newly-lit coverage; a full

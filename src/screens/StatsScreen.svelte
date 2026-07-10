@@ -149,7 +149,9 @@
             blankIds.push(ev.id);
             continue;
           }
-          const fold = foldKey(ev.trainModel);
+          // Registry-resolved: two alias spellings of one card must be ONE pill, and the
+          // per-pill edit scope must cover both (review finding, alias class).
+          const fold = resolveModel(ev.trainModel)?.fold ?? foldKey(ev.trainModel);
           const g = groups.get(fold);
           if (g) {
             g.eventIds.push(ev.id);
@@ -189,6 +191,11 @@
   // ── 未記録 funnel (DD1/DD3): the enrichment badge lives HERE, next to where editing happens.
   let unrecordedOnly = $state(false);
   const unrecordedCount = $derived(diaryRows.filter((r) => r.modelGroups.length === 0).length);
+  // Draining the LAST untagged trip while the filter is active must return the full diary,
+  // not a blank list with the (now-hidden) toggle unreachable (review finding).
+  $effect(() => {
+    if (unrecordedCount === 0 && unrecordedOnly) unrecordedOnly = false;
+  });
   const visibleDiaryRows = $derived(
     unrecordedOnly ? diaryRows.filter((r) => r.modelGroups.length === 0) : diaryRows,
   );
@@ -311,7 +318,7 @@
   <!-- Phase 4: the quarantine entry must survive an all-orphaned log (riddenKm 0 → !hasRides), so the
        stats body renders whenever there are rides OR orphans OR kept closed-line rides. The coverage
        cards, diary, and Wrapped still need real resolved rides, so they stay behind hasRides. -->
-  {#if $headline.hasRides || $orphanCount > 0 || $closedLineCount > 0}
+  {#if $headline.hasRides || $orphanCount > 0 || $closedLineCount > 0 || $collection.totalModels > 0}
     {#if $headline.hasRides}
       <CountryStatCards />
     {/if}
@@ -350,9 +357,12 @@
       </FolderTabCard>
     {/if}
 
-    {#if $headline.hasRides}
+    {#if $headline.hasRides || $collection.totalModels > 0}
     <!-- DD1: the 車両図鑑 shelf — ONE job (show collection progress, invite one tap); the whole
-         shelf is the button. 未記録 enrichment lives on the diary card below, not here. -->
+         shelf is the button. 未記録 enrichment lives on the diary card below, not here.
+         Gated on rides OR collected models (not hasRides alone): D16 keeps the collection
+         alive through CN-404/quarantine/orphan states, so its shelf must survive them too
+         (review finding). -->
     <button class="dex-shelf" bind:this={dexShelfEl} onclick={() => openDexSheet(undefined)}>
       <span class="dex-body">
         <span class="dex-title">
@@ -382,7 +392,9 @@
       </span>
       <span class="dex-chevron u-muted" aria-hidden="true">›</span>
     </button>
+    {/if}
 
+    {#if $headline.hasRides}
     <FolderTabCard label="旅の記録">
       {#if unrecordedCount > 0}
         <!-- DD3: the 未記録 funnel — the toggle narrows the diary to model-less trips so

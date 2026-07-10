@@ -308,7 +308,9 @@ export function drawWrappedCard(ctx: CanvasRenderingContext2D, data: WrappedData
       const vW = ctx.measureText(truncateToWidth(ctx, s.value, innerW)).width;
       ctx.fillStyle = tokens.railText;
       ctx.font = font(500, 34);
-      ctx.fillText(s.sub, innerX + Math.min(vW, innerW) + 0, y);
+      // 16px breathing room between value and sub (was 0 — "121 km" hugged the station name;
+      // the v0.13 記録した車両 row made the crowding obvious on the smoke render).
+      ctx.fillText(s.sub, innerX + Math.min(vW, innerW) + 16, y);
     }
     y += 90;
   }

@@ -116,6 +116,9 @@ test('未記録 funnel: toggle filters to model-less trips; the inline editor dr
   // Undo-able success toast; the funnel count drains to zero (toggle disappears).
   await expect(page.getByText(/車両を「E7」に更新しました/)).toBeVisible({ timeout: 10_000 });
   await expect(page.getByRole('button', { name: /未記録のみ/ })).toHaveCount(0);
+  // Draining the LAST untagged trip must return the FULL diary, never a blank filtered
+  // list with the toggle gone (review fix: the filter auto-resets at zero).
+  await expect(page.locator('.trip')).toHaveCount(2);
   // The freshly-tagged model joins the diary pills and the shelf count ticks to 2.
   await expect(page.locator('.dex-shelf')).toContainText('2車両を記録');
 });
