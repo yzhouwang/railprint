@@ -66,7 +66,7 @@
   });
 
   /** Shelf hero meter: the first metered section the user has progress in (CN-only riders get
-   *  the 京沪 meter instead of a dispiriting JP 0/12 — DD15). */
+   *  the 京沪 meter instead of a dispiriting JP 0/13 — DD15). */
   const shelfMeter = $derived.by(() => {
     const metered = $collection.sections.filter((s) => s.meter);
     return metered.find((s) => s.meter!.collected > 0)?.meter;
