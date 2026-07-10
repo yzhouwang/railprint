@@ -2,6 +2,37 @@
 
 All notable changes to RailPrint are documented here.
 
+## [0.13.1.0] - 2026-07-11
+
+**Chips that know the line.** The 車両 suggestion chips now understand which trains
+actually run where — marking 東海道新幹線 suggests N700A/N700S, never CR200J; 山手線
+suggests E235系, never a Shinkansen.
+
+### Added
+- **Per-line service profiles** (web-fact-checked, mid-2026 timetable basis, per-entry
+  provenance): real rosters for all 9 新幹線 lines (incl. through-runners — E6/E8 on
+  東北新幹線, レールスター and 500系 still on 山陽), the shared-track hosts where Shinkansen
+  trainsets run conventional lines (田沢湖線・奥羽線・海峡線・博多南線), the 京沪 corridor's
+  actual fleet, and service-line maps for all 39 conventional 特急・通勤・気動車 models
+  (あずさ on 中央線, サンライズ across its 10-line run, ソニック on 日豊線…). Both mark
+  flows are covered — line-first taps and station-search routes.
+- **Honest empty state**: a line with no curated candidates shows
+  「この路線の候補は未収録です。自由入力で記録できます。」 instead of implausible chips
+  (announced to screen readers; yields to the live preview once you type).
+
+### Changed
+- **Suggestions only, never a gate on you**: your own history on the line you're marking
+  always chips (even if the curated roster disagrees), unknown free-text models are never
+  filtered, and manual typing stays unrestricted. Contextually-implausible recents no
+  longer crowd out plausible ones (rejected suggestions stop consuming chip slots).
+- Chips on a multi-line trip in the diary editor consider every line the trip touches.
+
+### Fixed
+- Empty-history capture chips began with the flat CN-first list (CR400AF…CR200J) on every
+  Japanese line — the pad list is now per-line truth, and a degraded state (offline stub
+  boot, unresolvable imported trips) keeps your recents rather than falling back to the
+  wrong list.
+
 ## [0.13.0.0] - 2026-07-10
 
 **車両図鑑.** The optional 車両 field grows into the collection loop the founding design
