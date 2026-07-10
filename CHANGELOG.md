@@ -17,7 +17,7 @@ reviewed; built against the approved variant-A board).
   typographic milestone stamps (初車両・新幹線コンプリート・320km/hクラブ・日中両国・
   引退前に乗った), and a ロースター基準: 2026年 footer. Fully keyboard-navigable
   (focus trap, Escape, roving arrow keys), 100dvh on mobile / wide panel on desktop.
-- **Curated model registry** (~56 形式, facts only, per-entry provenance, web
+- **Curated model registry** (63 形式, facts only, per-entry provenance, web
   fact-checked): 13 active 新幹線 (E2 restored by the 2026-03 改正 — honest denominator),
   京沪 corridor roster (CR400AF/BF + CRH380B/C — the CN meter counts only what the app's
   corridor can actually deliver), 特急 flagships incl. 285系 サンライズ, iconic 通勤 and
@@ -46,8 +46,9 @@ reviewed; built against the approved variant-A board).
 
 ### Internal
 - One definition of model equality (`foldKey`/`sameModel` in train-models.ts) shared by
-  chips, pills, collection keying, and the speed lookup; stored `trainModel` strings are
-  NEVER rewritten — all folding is read-time (export fidelity; re-import idempotency is
+  chips, pills, collection keying, and the speed lookup; a new 車両 value canonicalizes
+  once at write (mirroring markRide) and existing/imported `trainModel` strings are never
+  rewritten — all folding is read-time (export fidelity; re-import idempotency is
   guaranteed by the dedup nets, asserted per identity class in commit.test.ts).
 - `setTripTrainModel(eventIds)` is a row spread — a CRITICAL test pins every
   non-trainModel field byte-identical (the v0.12.2.0 km-snapshot bug class can't recur).
