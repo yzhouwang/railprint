@@ -31,7 +31,7 @@
     collection,
   } from '../lib/store';
   import { canonicalizeTrainModel, sameModel, collectionFold, foldPreview, resolveModel } from '../lib/train-models';
-  import { suggestModels } from '../lib/model-suggest';
+  import { suggestModels, lineContexts, NO_PROFILE_HINT, NO_PROFILE_HINT_MULTI } from '../lib/model-suggest';
   import type { RideEvent } from '../contract/types';
 
   // Phase 4 — the quarantine review sheet opens from the QuarantineCard below the coverage cards.
@@ -109,10 +109,8 @@
     km: number;
     segCount: number;
     lineLabel: string;
-    /** first lineId — seeds the editor's line-aware chip ranking (D8). */
-    lineId?: string;
     /** ALL trip lineIds — the v3 plausibility gate takes every line the trip touches
-     *  (eligible-in-ANY-context), not just the first (outside-voice review point). */
+     *  (eligible-in-ANY-context); [0] seeds the editor's line-aware chip ranking (D8). */
     lineIds: string[];
     modelGroups: ModelPillGroup[];
     /** rows with NO model — the ＋車両 target (13A: fills blanks only). */
@@ -195,7 +193,6 @@
           km: t.km,
           segCount: t.segmentIds.length,
           lineLabel: lineNames.length === 1 ? lineNames[0] : `${t.lineIds.length}路線`,
-          lineId: t.lineIds[0],
           lineIds: t.lineIds,
           modelGroups: [...groups.entries()].map(([fold, g]) => ({ fold, label: g.label, eventIds: g.eventIds })),
           blankIds,
@@ -238,16 +235,13 @@
     if (!row) return [];
     const idx = $geo;
     // v3 gate: one context per resolvable trip line (eligible-in-ANY). Unresolvable lines
-    // (quarantine/orphan imports) contribute nothing; zero contexts ⇒ fail-open v2 pinned
-    // behavior, so degraded rows keep their old chips rather than losing the surface.
-    const contexts = row.lineIds
-      .map((id) => idx.lineById.get(id))
-      .filter((l): l is NonNullable<typeof l> => l !== undefined)
-      .map((l) => ({ lineId: l.lineId, country: l.country, isHSR: l.isHSR }));
+    // (quarantine/orphan imports) contribute nothing; zero contexts = KNOWN-EMPTY — the
+    // gate stays on with recents-only + the honest hint, never the legacy CN-first pads
+    // (outside-voice review round).
     return suggestModels($events, {
-      lineId: row.lineId,
+      lineId: row.lineIds[0],
       lineOfSegment: (sid) => idx.segmentById.get(sid)?.lineId,
-      contexts,
+      contexts: lineContexts(row.lineIds, (id) => idx.lineById.get(id)),
       max: 6,
     });
   });
@@ -488,9 +482,13 @@
                         >{chip}</Pill>
                       {/each}
                     </div>
-                  {:else}
-                    <!-- v3 gate honest empty state — same copy as the map capture field. -->
-                    <p class="editor-preview u-muted">この路線の候補は未収録です。自由入力で記録できます。</p>
+                  {:else if editing.draft.trim() === ''}
+                    <!-- v3 gate honest empty state — shared constant with the map capture
+                         field; yields to the fold preview once the user types; announced
+                         (role="status") like the map's zero-result messages. -->
+                    <p class="editor-preview u-muted" role="status">
+                      {t.lineIds.length > 1 ? NO_PROFILE_HINT_MULTI : NO_PROFILE_HINT}
+                    </p>
                   {/if}
                   <div class="editor-actions">
                     <button class="ebtn primary" type="button" disabled={editBusy} onclick={() => void saveEditor(t)}>

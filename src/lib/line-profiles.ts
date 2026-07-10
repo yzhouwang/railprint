@@ -12,7 +12,7 @@
 //    Charters, inspection trains (923/E926), test sets and freight are OUT.
 //  • Every entry web-fact-checked (2026-07-10, two independent multi-agent research
 //    passes + cross-examination); per-entry provenance below. Inspect before editing.
-//  • Fold tokens MUST resolve in the model registry (fold or alias) — test-enforced.
+//  • Fold tokens MUST be registry CARD folds (aliases rejected) — test-enforced.
 //  • This gates SUGGESTIONS ONLY. Free-text entry is never validated against it, and
 //    a rider's own on-this-line history always outranks it (model-suggest G4).
 //
@@ -65,14 +65,24 @@ const LINE_PROFILES: Readonly<Record<string, readonly string[]>> = {
   // HSR; CRH380A(L) only rarely covers 京沪 diagrams; CR300/CRH2/CRH3 absent. Matches the
   // registry's corridor:'jinghu' set — model-registry.test.ts pins that equivalence.
   'cn-中国铁路-京沪高速铁路': ['CR400AF', 'CR400BF', 'CRH380B', 'CRH380C'],
+
+  // ── boot-fallback stub lines (fallback-package.ts) ─────────────────────────
+  // A failed package fetch boots the 5-line offline stub with its OWN lineIds — without
+  // these entries every stub line is unprofiled and the degraded boot loses all curated
+  // chips (outside-voice P2). 東急東横線 stays unprofiled: no registry card serves it.
+  'jr-yamanote': ['E235'],
+  'jr-tokaido-shinkansen': ['N700A', 'N700S'],
+  'jr-kururi': ['キハE130'],
+  'cn-jinghu-hsr': ['CR400AF', 'CR400BF', 'CRH380B', 'CRH380C'],
 };
 
 /** Model-major service lines for conventional 特急・通勤・気動車 registry models
  *  (fact-checked 2026-07-10; inverted into line profiles at module init). A model
  *  appears in a line's chip pads iff that line is listed here or in LINE_PROFILES.
- *  `ubiquitous` = nationwide workhorse family; its listed lines are only the iconic
- *  ones, and the suggestion gate additionally lets it pass as a RECENT on any
- *  conventional line of its country (never as a pad beyond the listed lines). */
+ *  `ubiquitous` = nationwide workhorse family whose listed lines are only the iconic
+ *  ones — DOCUMENTATION of deliberate incompleteness, not a gate bypass (the gate's
+ *  unprofiled-conventional country fallback already covers these families where we
+ *  lack data; on PROFILED lines the curated roster is the truth — review round). */
 interface ModelServiceEntry {
   readonly lines: readonly string[];
   readonly ubiquitous?: boolean;
@@ -163,14 +173,23 @@ const MODEL_SERVICE_LINES: Readonly<Record<string, ModelServiceEntry>> = {
 // append in MODEL_SERVICE_LINES declaration order (registry order: 特急 → 通勤 → 気動車).
 
 const profileByLine = new Map<string, string[]>();
+// Per-line membership Sets keep insertion O(1) as the dataset graduates past the
+// curated scale (review finding: includes() scans go quadratic with roster growth).
+const foldSeenByLine = new Map<string, Set<string>>();
 for (const [lineId, folds] of Object.entries(LINE_PROFILES)) {
   profileByLine.set(lineId, [...folds]);
+  foldSeenByLine.set(lineId, new Set(folds));
 }
 for (const [fold, entry] of Object.entries(MODEL_SERVICE_LINES)) {
   for (const lineId of entry.lines) {
-    const list = profileByLine.get(lineId);
-    if (list === undefined) profileByLine.set(lineId, [fold]);
-    else if (!list.includes(fold)) list.push(fold);
+    const seen = foldSeenByLine.get(lineId);
+    if (seen === undefined) {
+      profileByLine.set(lineId, [fold]);
+      foldSeenByLine.set(lineId, new Set([fold]));
+    } else if (!seen.has(fold)) {
+      seen.add(fold);
+      profileByLine.get(lineId)!.push(fold);
+    }
   }
 }
 

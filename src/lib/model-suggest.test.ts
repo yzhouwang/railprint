@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RideEvent } from '../contract/types';
-import { suggestModels } from './model-suggest';
+import { suggestModels, lineContexts, type LineContext } from './model-suggest';
 import { KNOWN_TRAIN_MODELS, foldKey } from './train-models';
 
 // model-suggest chips v2 (plan D8/5A/9A#4). The FIRST describe block is the migration
@@ -176,9 +176,9 @@ describe('suggestModels — raw spellings and empty fields', () => {
 describe('suggestModels — v3 plausibility gate (per-line service profiles)', () => {
   // Real profiled lines (line-profiles.ts, fact-checked 2026-07-10) + one synthetic
   // unprofiled id that will never gain a profile (stable regardless of data growth).
-  const TOKAIDO = { lineId: 'jp-東海旅客鉄道-東海道新幹線', country: 'JP', isHSR: true };
-  const JINGHU = { lineId: 'cn-中国铁路-京沪高速铁路', country: 'CN', isHSR: true };
-  const UNPROFILED_JP = { lineId: 'jp-テスト-未収録線', country: 'JP', isHSR: false };
+  const TOKAIDO: LineContext = { lineId: 'jp-東海旅客鉄道-東海道新幹線', country: 'JP', isHSR: true };
+  const JINGHU: LineContext = { lineId: 'cn-中国铁路-京沪高速铁路', country: 'CN', isHSR: true };
+  const UNPROFILED_JP: LineContext = { lineId: 'jp-テスト-未収録線', country: 'JP', isHSR: false };
 
   it('empty-history 東海道: pads are EXACTLY the fact-checked roster — no CR, no E5 (the user-reported bug)', () => {
     const out = suggestModels([], { contexts: [TOKAIDO] });
@@ -239,19 +239,29 @@ describe('suggestModels — v3 plausibility gate (per-line service profiles)', (
 
   it('profile pads dedupe against recents by CARD (an alias recent suppresses its pad entry)', () => {
     // 'N700系7000番台' resolves to the N700 card; on 山陽 the pad list contains N700 — one chip.
-    const SANYO = { lineId: 'jp-西日本旅客鉄道-山陽新幹線', country: 'JP', isHSR: true };
+    const SANYO: LineContext = { lineId: 'jp-西日本旅客鉄道-山陽新幹線', country: 'JP', isHSR: true };
     const out = suggestModels([ev('N700系7000番台', at(0))], { contexts: [SANYO] });
     expect(out.filter((m) => foldKey(m) === 'N700')).toHaveLength(1);
     expect(out).toContain('500系'); // rest of the 山陽 roster still pads
   });
 
-  it('an empty contexts array is the fail-open path — exact v1/v2 pad behavior (degraded editor rows)', () => {
-    expect(suggestModels([], { contexts: [] })).toEqual(KNOWN_TRAIN_MODELS.slice(0, 8));
+  it('an empty contexts array is KNOWN-EMPTY: gate on, recents pass ungated, NO legacy pads (outside-voice P1)', () => {
+    // Degraded rows / search-before-route: we know nothing about the line, so we must not
+    // pretend — no CN-first legacy pads, but the user's own recents (even registry cards
+    // we cannot country-check) stay.
+    expect(suggestModels([], { contexts: [] })).toEqual([]);
+    expect(suggestModels([ev('E353', at(0)), ev('CR400AF', at(1))], { contexts: [] })).toEqual([
+      'CR400AF', 'E353系',
+    ]);
+  });
+
+  it('OMITTED contexts remain the pinned v1/v2 fail-open (the only legacy path left)', () => {
+    expect(suggestModels([])).toEqual(KNOWN_TRAIN_MODELS.slice(0, 8));
   });
 
   // ── conventional 特急/通勤 profiles (model-major data, inverted) ──
-  const YAMANOTE = { lineId: 'jp-東日本旅客鉄道-山手線', country: 'JP', isHSR: false };
-  const CHUO_EAST = { lineId: 'jp-東日本旅客鉄道-中央線', country: 'JP', isHSR: false };
+  const YAMANOTE: LineContext = { lineId: 'jp-東日本旅客鉄道-山手線', country: 'JP', isHSR: false };
+  const CHUO_EAST: LineContext = { lineId: 'jp-東日本旅客鉄道-中央線', country: 'JP', isHSR: false };
 
   it('山手線 pads its real stock (E235系) — never a Shinkansen or CN token (the second half of the user report)', () => {
     const out = suggestModels([], { contexts: [YAMANOTE] });
@@ -268,18 +278,99 @@ describe('suggestModels — v3 plausibility gate (per-line service profiles)', (
     expect(out).not.toContain('383系'); // 383 serves jp-東海旅客鉄道-中央線 (木曽), a different lineId
   });
 
-  it('ubiquitous workhorse (キハ40): passes as a recent on any JP conventional line, still gated off HSR lines', () => {
+  it('nationwide workhorse (キハ40): passes as a recent on UNPROFILED conventional lines, gated where a roster exists', () => {
+    // Outside-voice round: the earlier ubiquitous bypass let キハ40 chip on the profiled
+    // 山手線 — recreating confidently-wrong suggestions. On profiled lines the curated
+    // roster is the truth; the country fallback only covers lines we lack data for.
     const events = [ev('キハ40', at(0))];
     expect(suggestModels(events, { contexts: [UNPROFILED_JP] })).toContain('キハ40系');
-    expect(suggestModels(events, { contexts: [YAMANOTE] })).toContain('キハ40系'); // profiled conventional, ubiquitous passes
+    expect(suggestModels(events, { contexts: [YAMANOTE] })).not.toContain('キハ40系');
     expect(suggestModels(events, { contexts: [TOKAIDO] })).not.toContain('キハ40系');
   });
 
+  it('shinkansen/cn-hsr cards never pass the unprofiled-conventional country fallback (their hosts are all profiled)', () => {
+    // Outside-voice P2: an N700A recent must not chip on a random unprofiled metro line.
+    const out = suggestModels([ev('N700A', at(0)), ev('E353', at(1))], { contexts: [UNPROFILED_JP] });
+    expect(out).not.toContain('N700A');
+    expect(out).toContain('E353系');
+  });
+
+  it('legacy lineId alongside contexts: an event on that line is OWN FACTS and surfaces (G4)', () => {
+    // StatsScreen passes lineId = lineIds[0] even when that line is geo-unresolvable and
+    // hence absent from contexts — it is still a line of THIS trip, so a model the user
+    // logged on it is their own record, never called implausible.
+    const lineOf = (sid: string): string | undefined => (sid === 's-own' ? 'jp-未解決-線' : undefined);
+    const out = suggestModels([ev('CR200J', at(0), 's-own')], {
+      lineId: 'jp-未解決-線',
+      contexts: [TOKAIDO],
+      lineOfSegment: lineOf,
+    });
+    expect(out[0]).toBe('CR200J');
+  });
+
+  it('lineContexts drops unresolvable ids and preserves order (the editor/search derivation, unit-tested)', () => {
+    const lines = new Map<string, { lineId: string; country: 'JP'; isHSR: boolean; name: string }>([
+      ['a', { lineId: 'a', country: 'JP', isHSR: false, name: 'A' }],
+      ['c', { lineId: 'c', country: 'JP', isHSR: true, name: 'C' }],
+    ]);
+    // Structural: the lookup returns RailLine-shaped records; extra fields are fine.
+    const got = lineContexts(['a', 'b', 'c'], (id) => lines.get(id) as never);
+    expect(got.map((c) => c.lineId)).toEqual(['a', 'c']);
+    expect(lineContexts(['b'], (id) => lines.get(id) as never)).toEqual([]);
+  });
+
   it('curated line-major + inverted model-major MERGE (奥羽線: mini-shinkansen first, then its DMU)', () => {
-    const OU = { lineId: 'jp-東日本旅客鉄道-奥羽線', country: 'JP', isHSR: false };
+    const OU: LineContext = { lineId: 'jp-東日本旅客鉄道-奥羽線', country: 'JP', isHSR: false };
     const out = suggestModels([], { contexts: [OU] });
     expect(out.slice(0, 2)).toEqual(['E8系', 'E6系']); // curated order leads
     expect(out).toContain('GV-E400系'); // inverted conventional data appends
+  });
+});
+
+describe('suggestModels — v3 gate edge branches (ship coverage audit)', () => {
+  const JINGHU: LineContext = { lineId: 'cn-中国铁路-京沪高速铁路', country: 'CN', isHSR: true };
+  const YAMANOTE: LineContext = { lineId: 'jp-東日本旅客鉄道-山手線', country: 'JP', isHSR: false };
+  const SANYO: LineContext = { lineId: 'jp-西日本旅客鉄道-山陽新幹線', country: 'JP', isHSR: true };
+
+  it('a PROFILED conventional line gates a same-country NON-ubiquitous off-profile recent (883 on 山手線)', () => {
+    // The cardEligible fall-through: conventional + country matches + line IS profiled +
+    // not ubiquitous ⇒ ineligible. Without this rule a 九州 ソニック recent would chip on 山手線.
+    const out = suggestModels([ev('883', at(0))], { contexts: [YAMANOTE] });
+    expect(out).not.toContain('883系');
+    expect(out).toEqual(['E259系', 'E235系']); // the 山手線 profile still pads, in profile order
+  });
+
+  it('profile pads truncate at max (山陽 5-fold roster, max 3 keeps profile order)', () => {
+    const out = suggestModels([], { contexts: [SANYO], max: 3 });
+    expect(out).toEqual(['N700S', 'N700A', 'N700系']);
+  });
+
+  it('two PROFILED contexts union without duplicates, first context order leading (東北+北海道 share E5/H5)', () => {
+    const TOHOKU: LineContext = { lineId: 'jp-東日本旅客鉄道-東北新幹線', country: 'JP', isHSR: true };
+    const HOKKAIDO: LineContext = { lineId: 'jp-北海道旅客鉄道-北海道新幹線', country: 'JP', isHSR: true };
+    const out = suggestModels([], { contexts: [TOHOKU, HOKKAIDO] });
+    // 東北 profile [E5,E6,E8,E2,H5]; 北海道's [E5,H5] adds nothing new — 5 chips, no dupes.
+    expect(out).toEqual(['E5系', 'E6系', 'E8系', 'E2系', 'H5系']);
+  });
+
+  it('a segment the lookup cannot resolve is NOT on-context — the gate still applies (quarantined events)', () => {
+    const noLine = (): string | undefined => undefined;
+    const out = suggestModels([ev('CR200J', at(0), 'orphan-seg')], { contexts: [JINGHU], lineOfSegment: noLine });
+    expect(out).not.toContain('CR200J'); // no accidental G4 bypass through an unresolvable segment
+    // Sanity: without contexts the same recent is untouched (fail-open).
+    expect(suggestModels([ev('CR200J', at(0), 'orphan-seg')], { lineOfSegment: noLine })[0]).toBe('CR200J');
+  });
+
+  it('the legacy lineId still flags on-line when contexts are present but do not include it (degraded editor rows)', () => {
+    // StatsScreen passes lineId = lineIds[0] even when that line is unresolvable and thus
+    // absent from contexts — an event resolving to it must still count as the user's own fact.
+    const lineOf = (): string | undefined => 'jp-未解決-孤立線';
+    const out = suggestModels([ev('CR200J', at(0), 's1')], {
+      lineId: 'jp-未解決-孤立線',
+      lineOfSegment: lineOf,
+      contexts: [JINGHU],
+    });
+    expect(out[0]).toBe('CR200J'); // G4 via the legacy lineId disjunct
   });
 });
 

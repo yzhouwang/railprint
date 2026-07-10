@@ -17,14 +17,17 @@
 //      the user's own record is never called implausible.
 //   G5 unknown free text — a recent that doesn't resolve in the registry is never gated.
 //   G1 registry-resolved recents must be plausible in SOME context: in that line's
-//      profile, OR (line unprofiled AND conventional AND country matches), OR a
-//      ubiquitous nationwide family on a conventional line of its country.
+//      profile, OR (line unprofiled AND conventional AND country matches AND the card
+//      is not shinkansen/cn-hsr — those categories' host lines are all profiled, so
+//      off-profile they are implausible everywhere).
 //   Pads come ONLY from context-line profiles (profile order = pad order). No profiled
 //      context ⇒ NO default pads — an honest empty state beats confidently-wrong chips.
 //      (This also fail-closes non-card pad tokens like bare 'CR400' whenever a context
 //      exists: pads are profile folds, and profiles only hold registry cards.)
-//   Fail-open — no contexts supplied (or none resolvable): exact v2 behavior, pinned by
-//      the 9A#4 baseline test. Gating never applies to what the user TYPES.
+//   contexts: [] (known-but-empty — degraded editor rows, search before a route) keeps
+//      the gate ON: recents pass ungated (no line info) and there are NO pads.
+//   Fail-open — contexts omitted entirely: exact v2 behavior, pinned by the 9A#4
+//      baseline test. Gating never applies to what the user TYPES.
 //
 // Complexity (the v1 no-full-log-sort rule, kept): ONE O(events) pass collects per-fold
 // maxima — latest createdAt, the raw spelling at that createdAt, an on-context-line flag —
@@ -32,17 +35,41 @@
 // quota is consumed (an ineligible newer model must not evict an eligible older one).
 // Guarded by a benchmark-style test (5k events).
 
+import type { Country, RailLine } from '../contract/rail-package';
 import type { RideEvent } from '../contract/types';
 import { foldKey, modelByFold, KNOWN_TRAIN_MODELS } from './train-models';
-import { lineProfile, isUbiquitousFold } from './line-profiles';
+import { lineProfile } from './line-profiles';
 
-/** The marking/editing context of ONE line a trip touches (plausibility-gate input). */
+/** The marking/editing context of ONE line a trip touches (plausibility-gate input).
+ *  RailLine satisfies this structurally — call sites may pass line records directly. */
 export interface LineContext {
   lineId: string;
-  /** Owning package country ('JP' | 'CN'). */
-  country: string;
+  /** Owning package country — the Country union, so a typo'd caller fails to compile
+   *  instead of silently failing the country gate (review finding). */
+  country: Country;
   /** N02 事業者種別==1 — the 9 full Shinkansen lines (strict rosters). */
   isHSR: boolean;
+}
+
+/** Empty-state copy shared by BOTH chip surfaces (map capture field + diary editor) —
+ *  one constant so the strings cannot drift (review finding). The MULTI variant covers
+ *  diary rows spanning several lines, where 「この路線」 would claim a single one. */
+export const NO_PROFILE_HINT = 'この路線の候補は未収録です。自由入力で記録できます。';
+export const NO_PROFILE_HINT_MULTI = 'この旅の路線には候補が未収録です。自由入力で記録できます。';
+
+/** LineContext[] for a trip's lineIds via a line lookup; unresolvable ids drop out.
+ *  Shared by the diary editor and the map's search-mode route flow, and unit-testable
+ *  (review finding: the derivation was untested UI glue). */
+export function lineContexts(
+  lineIds: readonly string[],
+  lineById: (id: string) => RailLine | undefined,
+): LineContext[] {
+  const out: LineContext[] = [];
+  for (const id of lineIds) {
+    const l = lineById(id);
+    if (l !== undefined) out.push(l);
+  }
+  return out;
 }
 
 export interface SuggestOptions {
@@ -54,8 +81,13 @@ export interface SuggestOptions {
    */
   lineOfSegment?: (segmentId: string) => string | undefined;
   /**
-   * Line context(s) for the plausibility gate — ONE for the map's selected line, one per
-   * trip line in the diary editor (eligible-in-ANY-context). Omit/empty ⇒ fail-open v2.
+   * Line context(s) for the plausibility gate — ONE for the map's selected line, the
+   * candidate routes' lines in search mode, one per trip line in the diary editor
+   * (eligible-in-ANY-context). Omit (undefined) ⇒ fail-open v2 (pinned legacy). An
+   * EMPTY array means "context known, but no line resolvable" (degraded rows, search
+   * before a route exists): recents pass ungated (no country to gate on) and there are
+   * NO default pads — the CN-first legacy pad list must never surface once a caller
+   * has opted into the gate (outside-voice P1: search mode was fail-opening).
    */
   contexts?: LineContext[];
   /** Chip cap (default 8 — the v1 cap). */
@@ -77,11 +109,16 @@ const RECENT_CAP = 6;
 export function suggestModels(events: RideEvent[], opts?: SuggestOptions): string[] {
   const max = opts?.max ?? 8;
   if (max <= 0) return [];
-  const contexts = opts?.contexts !== undefined && opts.contexts.length > 0 ? opts.contexts : undefined;
+  // undefined = legacy fail-open; [] = known-but-empty (gate on, no line info) — see SuggestOptions.
+  const contexts = opts?.contexts;
   const lineId = opts?.lineId;
   // On-line flags need the lookup when EITHER the legacy single line or gate contexts exist.
-  const lineOf = lineId !== undefined || contexts !== undefined ? opts?.lineOfSegment : undefined;
-  const contextIds = contexts === undefined ? undefined : new Set(contexts.map((c) => c.lineId));
+  const lineOf =
+    lineId !== undefined || (contexts !== undefined && contexts.length > 0)
+      ? opts?.lineOfSegment
+      : undefined;
+  const contextIds =
+    contexts === undefined || contexts.length === 0 ? undefined : new Set(contexts.map((c) => c.lineId));
   const isOnContext = (sid: string): boolean => {
     if (lineOf === undefined) return false;
     const l = lineOf(sid);
@@ -120,15 +157,23 @@ export function suggestModels(events: RideEvent[], opts?: SuggestOptions): strin
 
   // ── plausibility gate (v3) — computed once per call, O(contexts) ──
   // allowedFolds: union of the context lines' profiles, first context's order first
-  // (this union is ALSO the pad list, so order matters).
+  // (this union is ALSO the pad list, so order matters). Per-context invariants are
+  // precomputed here so cardEligible is pure Set checks (review finding: lineProfile
+  // was re-looked-up O(distinctFolds × contexts) inside the ranked loop).
   let allowedFolds: string[] | undefined;
   let anyProfiled = false;
+  // Countries with at least one UNPROFILED conventional context line — the only case
+  // where the gate falls back to country-level judgment (no roster to consult).
+  const unprofiledConvCountries = new Set<Country>();
   if (contexts !== undefined) {
     allowedFolds = [];
     const seen = new Set<string>();
     for (const c of contexts) {
       const p = lineProfile(c.lineId);
-      if (p === undefined) continue;
+      if (p === undefined) {
+        if (!c.isHSR) unprofiledConvCountries.add(c.country);
+        continue;
+      }
       anyProfiled = true;
       for (const f of p) {
         if (!seen.has(f)) {
@@ -141,16 +186,18 @@ export function suggestModels(events: RideEvent[], opts?: SuggestOptions): strin
   const allowedSet = allowedFolds === undefined ? undefined : new Set(allowedFolds);
 
   /** G-rules for a registry-resolved recent (card fold, not raw fold). */
-  const cardEligible = (cardFold: string, cardCountry: string): boolean => {
-    if (contexts === undefined) return true; // fail-open
+  const cardEligible = (cardFold: string, cardCountry: Country, cardCategory: string): boolean => {
+    if (contexts === undefined) return true; // legacy fail-open
+    if (contexts.length === 0) return true; // known-but-empty: no line info to gate on
     if (allowedSet !== undefined && allowedSet.has(cardFold)) return true;
-    for (const c of contexts) {
-      if (c.isHSR) continue; // profiled-or-not, HSR lines admit ONLY their profile
-      if (cardCountry !== c.country) continue;
-      if (lineProfile(c.lineId) === undefined) return true; // unprofiled conventional: country gate only
-      if (isUbiquitousFold(cardFold)) return true; // nationwide workhorse on its home country
-    }
-    return false;
+    // Unprofiled conventional line of the card's country: pass — EXCEPT shinkansen/cn-hsr
+    // cards, whose host lines are ALL profiled (9 isHSR + 4 shared-track hosts + 京沪), so
+    // off-profile they are implausible everywhere (outside-voice P2: an N700A recent must
+    // not chip on a random metro line). This also subsumes the old `ubiquitous` bypass:
+    // the nationwide DMU/commuter families pass here on the lines we lack data for, and
+    // on PROFILED lines the curated roster — not a flag — is the truth.
+    if (cardCategory === 'shinkansen' || cardCategory === 'cn-hsr') return false;
+    return unprofiledConvCountries.has(cardCountry);
   };
 
   // Rank ONLY the distinct folds: line-matched first, then latest createdAt desc.
@@ -167,7 +214,7 @@ export function suggestModels(events: RideEvent[], opts?: SuggestOptions): strin
     const card = modelByFold(fold);
     // Gate registry-resolved recents (G1) unless the user logged one on a context line
     // (G4). Unknown free text is never gated (G5). Skipping does NOT consume the quota.
-    if (card !== undefined && !s.onLine && !cardEligible(card.fold, card.country)) continue;
+    if (card !== undefined && !s.onLine && !cardEligible(card.fold, card.country, card.category)) continue;
     const display = card?.name ?? s.raw;
     // A registry ALIAS fold ('N700系7000番台') and the card's own fold ('N700') are distinct
     // fold keys resolving to ONE card — dedupe on the display's fold too, or the card would
@@ -180,8 +227,9 @@ export function suggestModels(events: RideEvent[], opts?: SuggestOptions): strin
   }
 
   if (contexts !== undefined) {
-    // Pads come ONLY from context profiles; no profiled context ⇒ no default pads (the
-    // UI shows its honest empty-state line instead of confidently-wrong chips).
+    // Pads come ONLY from context profiles; no profiled context (or an empty context
+    // set) ⇒ no default pads — the UI shows its honest empty-state line instead of
+    // confidently-wrong chips.
     if (anyProfiled && allowedFolds !== undefined) {
       for (const f of allowedFolds) {
         if (out.length >= max) break;
