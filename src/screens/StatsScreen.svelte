@@ -14,12 +14,70 @@
   import Diorama from '../components/Diorama.svelte';
   import QuarantineCard from '../components/QuarantineCard.svelte';
   import QuarantineSheet from '../components/QuarantineSheet.svelte';
-  import { headline, coverages, geo, events, orphanCount, closedLineKm, closedLineCount } from '../lib/store';
+  import CollectionSheet from '../components/CollectionSheet.svelte';
+  import TrainSilhouette from '../components/TrainSilhouette.svelte';
+  import ProgressBar from '../components/ProgressBar.svelte';
+  import {
+    headline,
+    coverages,
+    geo,
+    events,
+    packages,
+    orphanCount,
+    closedLineKm,
+    closedLineCount,
+    setTripTrainModel,
+    restoreEvents,
+    collection,
+  } from '../lib/store';
+  import { canonicalizeTrainModel, sameModel, collectionFold, foldPreview, resolveModel } from '../lib/train-models';
+  import { suggestModels } from '../lib/model-suggest';
+  import type { RideEvent } from '../contract/types';
 
   // Phase 4 — the quarantine review sheet opens from the QuarantineCard below the coverage cards.
   let quarantineOpen = $state(false);
   import { summarizeDiary } from '../lib/trips';
-  import { toast } from '../lib/ui';
+  import { toast, dismissToast, collectionSheetRequest } from '../lib/ui';
+
+  // ── 車両図鑑 (v0.13) — the DD1 single-job shelf + the sheet it opens ──
+  let dexOpen = $state(false);
+  let dexInitialFold = $state<string | undefined>(undefined);
+  let dexShelfEl: HTMLButtonElement | undefined = $state();
+
+  function openDexSheet(fold: string | undefined): void {
+    dexInitialFold = fold;
+    dexOpen = true;
+  }
+  function closeDexSheet(): void {
+    dexOpen = false;
+    dexInitialFold = undefined;
+    dexShelfEl?.focus(); // DD13: focus returns to the opener
+  }
+
+  // DD4 deep-link consumer: the first-collect toast (map tab) requests the sheet; consume the
+  // request whenever this screen is mounted (mobile mounts stats AFTER goToTab, so this effect
+  // is the reliable rendezvous, not a direct call).
+  $effect(() => {
+    const req = $collectionSheetRequest;
+    if (req) {
+      collectionSheetRequest.set(null);
+      openDexSheet(req.fold);
+    }
+  });
+
+  /** Shelf hero meter: the first metered section the user has progress in (CN-only riders get
+   *  the 京沪 meter instead of a dispiriting JP 0/13 — DD15). */
+  const shelfMeter = $derived.by(() => {
+    const metered = $collection.sections.filter((s) => s.meter);
+    return metered.find((s) => s.meter!.collected > 0)?.meter;
+  });
+  /** Three most recently ridden collected models — the shelf's mini-silhouette strip. */
+  const shelfRecent = $derived.by(() =>
+    $collection.sections
+      .flatMap((s) => s.collected)
+      .sort((a, b) => (b.lastRidden ?? '').localeCompare(a.lastRidden ?? ''))
+      .slice(0, 3),
+  );
   import { buildWrappedData, renderWrappedBlobSync } from '../lib/wrapped/card';
   import { ensureWrappedFonts } from '../lib/wrapped/font';
   import { shareCard } from '../lib/wrapped/share';
@@ -27,13 +85,20 @@
   // Derive the resolved superlatives from the SAME pure shaper the canvas uses, so the
   // on-screen list and the exported card never drift.
   const wrapped = $derived(
-    buildWrappedData({ headline: $headline, coverages: $coverages, geo: $geo }),
+    buildWrappedData({ headline: $headline, coverages: $coverages, geo: $geo, collection: $collection }),
   );
 
   // 旅の記録 — the journey diary (D2: date-led rows; a repeat ride is just another dated row,
   // never collapsed). Built from summarizeDiary over each loaded package's events, then sorted
   // newest-first. Endpoints + line/model names are resolved against the geo index here so the
   // pure trips lib stays geometry-faithful and name-free.
+  /** One tappable diary pill = one FOLD-GROUP of the trip's rows (5A/13A: per-pill edit scope). */
+  interface ModelPillGroup {
+    fold: string;
+    /** registry 形式 name when matched, else the most recent raw spelling (verbatim その他). */
+    label: string;
+    eventIds: string[];
+  }
   interface DiaryRow {
     /** unique across packages (a tripId can repeat across JP/CN once China lands). */
     key: string;
@@ -44,9 +109,38 @@
     km: number;
     segCount: number;
     lineLabel: string;
-    trainModels: string[];
+    /** first lineId — seeds the editor's line-aware chip ranking (D8). */
+    lineId?: string;
+    modelGroups: ModelPillGroup[];
+    /** rows with NO model — the ＋車両 target (13A: fills blanks only). */
+    blankIds: string[];
     createdAt: string;
   }
+
+  // trip bucket → its raw event rows, keyed exactly like trips.ts (tripId ?? solo:<id>) so the
+  // editor can hand setTripTrainModel EVENT IDS (D7: never a country-prefixed diary key).
+  const tripEventRows = $derived.by(() => {
+    const buckets = new Map<string, RideEvent[]>();
+    for (const ev of $events) {
+      const key = ev.tripId ?? `solo:${ev.id}`;
+      const list = buckets.get(key);
+      if (list) list.push(ev);
+      else buckets.set(key, [ev]);
+    }
+    return buckets;
+  });
+
+  // segmentId → owning country, across ALL loaded packages. Needed because tripIds can repeat
+  // across JP/CN (the diary row key is country-prefixed for exactly this reason) — a bucket
+  // keyed on bare tripId would leak the OTHER country's rows into this row's pills and, worse,
+  // hand their event ids to setTripTrainModel (ship review P1). Unresolved segments (quarantine/
+  // orphan/CN-404) belong to NO package and stay with every candidate row — D16 generosity.
+  const segCountry = $derived.by(() => {
+    const map = new Map<string, string>();
+    for (const p of $packages) for (const seg of p.segments) map.set(seg.segmentId, p.country);
+    return map;
+  });
+
   const diaryRows = $derived.by(() => {
     const idx = $geo;
     const stationName = (id: string) => idx.stationById.get(id)?.name ?? '?';
@@ -58,6 +152,37 @@
           const n = idx.lineById.get(id)?.name;
           if (n) lineNames.push(n);
         }
+        // Fold-dedupe the trip's models at RENDER (5A) — E5系 + e5 become ONE pill; stored
+        // strings stay untouched (D4). Each pill carries the event ids of its fold-group.
+        const groups = new Map<string, { label: string; labelAt: string; eventIds: string[] }>();
+        const blankIds: string[] = [];
+        for (const ev of tripEventRows.get(t.tripId) ?? []) {
+          // Cross-package guard (ship review P1): only rows belonging to THIS package's trip —
+          // or unresolved anywhere (D16) — may surface as pills / edit targets here.
+          const owner = segCountry.get(ev.segmentId);
+          if (owner !== undefined && owner !== pkg.country) continue;
+          if (!ev.trainModel) {
+            blankIds.push(ev.id);
+            continue;
+          }
+          // Registry-resolved: two alias spellings of one card must be ONE pill, and the
+          // per-pill edit scope must cover both (review finding, alias class).
+          const fold = collectionFold(ev.trainModel);
+          const g = groups.get(fold);
+          if (g) {
+            g.eventIds.push(ev.id);
+            if (ev.createdAt > g.labelAt) {
+              g.label = resolveModel(ev.trainModel)?.name ?? ev.trainModel;
+              g.labelAt = ev.createdAt;
+            }
+          } else {
+            groups.set(fold, {
+              label: resolveModel(ev.trainModel)?.name ?? ev.trainModel,
+              labelAt: ev.createdAt,
+              eventIds: [ev.id],
+            });
+          }
+        }
         rows.push({
           key: `${pkg.country}:${t.tripId}`,
           tripId: t.tripId,
@@ -67,7 +192,9 @@
           km: t.km,
           segCount: t.segmentIds.length,
           lineLabel: lineNames.length === 1 ? lineNames[0] : `${t.lineIds.length}路線`,
-          trainModels: t.trainModels,
+          lineId: t.lineIds[0],
+          modelGroups: [...groups.entries()].map(([fold, g]) => ({ fold, label: g.label, eventIds: g.eventIds })),
+          blankIds,
           createdAt: t.createdAt,
         });
       }
@@ -76,6 +203,89 @@
     rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     return rows;
   });
+
+  // ── 未記録 funnel (DD1/DD3): the enrichment badge lives HERE, next to where editing happens.
+  let unrecordedOnly = $state(false);
+  const unrecordedCount = $derived(diaryRows.filter((r) => r.modelGroups.length === 0).length);
+  // Draining the LAST untagged trip while the filter is active must return the full diary,
+  // not a blank list with the (now-hidden) toggle unreachable (review finding).
+  $effect(() => {
+    if (unrecordedCount === 0 && unrecordedOnly) unrecordedOnly = false;
+  });
+  const visibleDiaryRows = $derived(
+    unrecordedOnly ? diaryRows.filter((r) => r.modelGroups.length === 0) : diaryRows,
+  );
+
+  // ── inline 車両 editor (DD5): ONE open editor at a time; per-pill scope; stale-undo
+  //    invalidation (8A: a new edit dismisses this trip's earlier undo toast).
+  let editing = $state<null | { key: string; fold: string | null; draft: string }>(null);
+  let editBusy = $state(false);
+  let editorReturnEl: HTMLElement | null = null;
+  const lastEditToast = new Map<string, number>();
+
+  const draftCanon = $derived(editing ? canonicalizeTrainModel(editing.draft) : '');
+  const draftPreview = $derived(editing ? foldPreview(editing.draft) : null);
+
+  // Memoized on (editing.key, events, geo) — reading editing.key alone means keystrokes on
+  // editing.draft do NOT re-trigger this O(events) pass (ship review, perf).
+  const editorChipList = $derived.by(() => {
+    if (!editing) return [];
+    const row = diaryRows.find((r) => r.key === editing!.key);
+    if (!row) return [];
+    const idx = $geo;
+    return suggestModels($events, {
+      lineId: row.lineId,
+      lineOfSegment: (sid) => idx.segmentById.get(sid)?.lineId,
+      max: 6,
+    });
+  });
+
+  function openEditor(e: MouseEvent, row: DiaryRow, fold: string | null, current: string): void {
+    if (editBusy) return;
+    editorReturnEl = e.currentTarget as HTMLElement;
+    editing = { key: row.key, fold, draft: current };
+  }
+
+  function closeEditor(): void {
+    editing = null;
+    editorReturnEl?.focus();
+    editorReturnEl = null;
+  }
+
+  function autofocus(node: HTMLInputElement): void {
+    node.focus();
+  }
+
+  async function saveEditor(row: DiaryRow): Promise<void> {
+    if (!editing || editBusy) return; // busy guard (8A): a double-tap can't interleave writes
+    const target =
+      editing.fold === null
+        ? row.blankIds
+        : (row.modelGroups.find((g) => g.fold === editing!.fold)?.eventIds ?? []);
+    if (target.length === 0) {
+      closeEditor();
+      return;
+    }
+    editBusy = true;
+    try {
+      const { prior, updated } = await setTripTrainModel(target, editing.draft);
+      if (updated > 0) {
+        // 8A: invalidate this trip's PREVIOUS undo toast — its snapshot is now stale and
+        // restoring it would silently discard this newer edit.
+        const prev = lastEditToast.get(row.key);
+        if (prev !== undefined) dismissToast(prev);
+        const label = draftCanon || '車両なし';
+        const id = toast(`車両を「${label}」に更新しました`, 'success', 3200, {
+          label: '元に戻す',
+          fn: () => void restoreEvents(prior),
+        });
+        lastEditToast.set(row.key, id);
+      }
+      closeEditor();
+    } finally {
+      editBusy = false;
+    }
+  }
 
   // "2025-11-03" → "2025.11.03"; undated imports read 日付なし rather than an empty cell.
   const dateLabel = (d: string | undefined): string =>
@@ -104,6 +314,7 @@
         headline: get(headline),
         coverages: get(coverages),
         geo: get(geo),
+        collection: get(collection),
       });
       const blob = renderWrappedBlobSync(data);
       const outcome = await shareCard(blob, 'railprint-wrapped.png', {
@@ -126,7 +337,7 @@
   <!-- Phase 4: the quarantine entry must survive an all-orphaned log (riddenKm 0 → !hasRides), so the
        stats body renders whenever there are rides OR orphans OR kept closed-line rides. The coverage
        cards, diary, and Wrapped still need real resolved rides, so they stay behind hasRides. -->
-  {#if $headline.hasRides || $orphanCount > 0 || $closedLineCount > 0}
+  {#if $headline.hasRides || $orphanCount > 0 || $closedLineCount > 0 || $collection.totalModels > 0}
     {#if $headline.hasRides}
       <CountryStatCards />
     {/if}
@@ -165,11 +376,57 @@
       </FolderTabCard>
     {/if}
 
+    {#if $headline.hasRides || $collection.totalModels > 0}
+    <!-- DD1: the 車両図鑑 shelf — ONE job (show collection progress, invite one tap); the whole
+         shelf is the button. 未記録 enrichment lives on the diary card below, not here.
+         Gated on rides OR collected models (not hasRides alone): D16 keeps the collection
+         alive through CN-404/quarantine/orphan states, so its shelf must survive them too
+         (review finding). -->
+    <button class="dex-shelf" bind:this={dexShelfEl} onclick={() => openDexSheet(undefined)}>
+      <span class="dex-body">
+        <span class="dex-title">
+          車両図鑑
+          {#if $collection.totalModels > 0}
+            <span class="dex-sub u-muted">{$collection.totalModels}車両を記録</span>
+          {/if}
+        </span>
+        {#if $collection.totalModels === 0}
+          <span class="dex-invite u-muted">車両を記録すると図鑑が育ちます</span>
+        {:else if shelfMeter}
+          <span class="dex-meter">
+            <span class="dex-meter-num">
+              <span class="dex-big">{shelfMeter.collected}</span><span class="dex-den u-muted">/{shelfMeter.total}</span>
+            </span>
+            <span class="dex-meter-bar"><ProgressBar value={shelfMeter.total > 0 ? (shelfMeter.collected / shelfMeter.total) * 100 : 0} label={shelfMeter.label} /></span>
+            <span class="dex-meter-label u-muted">{shelfMeter.label}</span>
+          </span>
+        {/if}
+        {#if shelfRecent.length > 0}
+          <span class="dex-minis" aria-hidden="true">
+            {#each shelfRecent as s (s.fold)}
+              <TrainSilhouette variant={s.info?.silhouette ?? 'commuter'} fill={s.info?.accentColor ?? 'var(--rail-lit)'} width={44} />
+            {/each}
+          </span>
+        {/if}
+      </span>
+      <span class="dex-chevron u-muted" aria-hidden="true">›</span>
+    </button>
+    {/if}
+
     {#if $headline.hasRides}
     <FolderTabCard label="旅の記録">
+      {#if unrecordedCount > 0}
+        <!-- DD3: the 未記録 funnel — the toggle narrows the diary to model-less trips so
+             draining the count is visible progress (each edit removes a row). -->
+        <div class="diary-tools">
+          <Pill active={unrecordedOnly} onclick={() => (unrecordedOnly = !unrecordedOnly)}>
+            未記録のみ {unrecordedCount}
+          </Pill>
+        </div>
+      {/if}
       {#if diaryRows.length > 0}
         <ul class="trips">
-          {#each diaryRows as t (t.key)}
+          {#each visibleDiaryRows as t (t.key)}
             <li class="trip">
               <div class="trip-head">
                 <span class="trip-date">{dateLabel(t.date)}</span>
@@ -180,8 +437,54 @@
               </div>
               <div class="trip-meta">
                 <span class="u-muted">{t.lineLabel} · {t.segCount}区間</span>
-                {#each t.trainModels as m (m)}<Pill>{m}</Pill>{/each}
+                {#each t.modelGroups as g (g.fold)}
+                  <!-- per-PILL edit scope (13A): this pill edits ONLY its fold-group's rows -->
+                  <Pill variant="compact" onclick={(e) => openEditor(e, t, g.fold, g.label)}>{g.label}</Pill>
+                {/each}
+                {#if t.blankIds.length > 0}
+                  <Pill variant="ghost-add" onclick={(e) => openEditor(e, t, null, '')}>＋車両</Pill>
+                {/if}
               </div>
+              {#if editing?.key === t.key}
+                <!-- DD5: the inline expansion editor — capture and edit share one input language -->
+                <div class="editor" role="group" aria-label="車両を編集">
+                  <label class="editor-label u-label" for="dex-edit-input">車両</label>
+                  <input
+                    id="dex-edit-input"
+                    class="editor-input"
+                    type="text"
+                    placeholder="例: N700S / E5系 / CR400AF"
+                    autocomplete="off"
+                    use:autofocus
+                    bind:value={editing.draft}
+                    onkeydown={(e) => {
+                      if (e.key === 'Enter') void saveEditor(t);
+                      else if (e.key === 'Escape') closeEditor();
+                    }}
+                  />
+                  {#if draftPreview !== null}
+                    <p class="editor-preview u-muted">→ {draftPreview} として記録</p>
+                  {/if}
+                  <div class="editor-chips">
+                    {#each editorChipList as chip (chip)}
+                      <Pill
+                        active={editing !== null && sameModel(editing.draft, chip)}
+                        onclick={() => {
+                          if (editing) editing.draft = sameModel(editing.draft, chip) ? '' : chip;
+                        }}
+                      >{chip}</Pill>
+                    {/each}
+                  </div>
+                  <div class="editor-actions">
+                    <button class="ebtn primary" type="button" disabled={editBusy} onclick={() => void saveEditor(t)}>
+                      保存
+                    </button>
+                    <button class="ebtn" type="button" disabled={editBusy} onclick={closeEditor}>
+                      キャンセル
+                    </button>
+                  </div>
+                </div>
+              {/if}
             </li>
           {/each}
         </ul>
@@ -221,6 +524,10 @@
 
 {#if quarantineOpen}
   <QuarantineSheet onclose={() => (quarantineOpen = false)} />
+{/if}
+
+{#if dexOpen}
+  <CollectionSheet onclose={closeDexSheet} initialFold={dexInitialFold} />
 {/if}
 
 <style>
@@ -332,5 +639,152 @@
     flex-wrap: wrap;
     gap: var(--space-sm);
     font-size: var(--size-label);
+  }
+  .diary-tools {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: var(--space-sm);
+  }
+  /* DD1 shelf — folder-card chrome, but a single full-width tap target with one job. */
+  .dex-shelf {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    width: 100%;
+    text-align: left;
+    background: var(--white);
+    border: 1px solid var(--rail-dim);
+    border-radius: var(--radius-card);
+    box-shadow: 0 2px 10px rgba(26, 26, 26, 0.05);
+    padding: var(--space-lg);
+    min-height: 44px;
+    color: var(--ink);
+    font: inherit;
+    cursor: pointer;
+  }
+  .dex-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    min-width: 0;
+  }
+  .dex-title {
+    font-size: 15px;
+    font-weight: var(--weight-display);
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-sm);
+  }
+  .dex-sub {
+    font-size: var(--size-label);
+    font-weight: var(--weight-label);
+  }
+  .dex-invite {
+    font-size: var(--size-body);
+  }
+  .dex-meter {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+  }
+  .dex-meter-num {
+    display: flex;
+    align-items: baseline;
+    font-variant-numeric: tabular-nums;
+  }
+  /* DD2 idiom at shelf scale: the meter numerals are the anchor. */
+  .dex-big {
+    font-size: 26px;
+    font-weight: var(--weight-display);
+    color: var(--rail-lit);
+    line-height: 1;
+  }
+  .dex-den {
+    font-size: 14px;
+  }
+  .dex-meter-bar {
+    flex: 1;
+    min-width: 60px;
+  }
+  .dex-meter-label {
+    font-size: var(--size-label);
+    white-space: nowrap;
+  }
+  .dex-minis {
+    display: flex;
+    gap: var(--space-xs);
+    align-items: center;
+  }
+  .dex-chevron {
+    font-size: 22px;
+    flex-shrink: 0;
+  }
+  /* DD5 inline expansion editor — opens under its trip row, list shifts smoothly. */
+  .editor {
+    margin-top: var(--space-sm);
+    padding: var(--space-md);
+    background: var(--rail-bg);
+    border-radius: var(--radius-button);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    animation: editor-open 180ms ease-out;
+  }
+  @keyframes editor-open {
+    from {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .editor {
+      animation: none;
+    }
+  }
+  .editor-label {
+    font-size: var(--size-label);
+  }
+  .editor-input {
+    width: 100%;
+    min-height: 44px;
+    padding: var(--space-sm) var(--space-md);
+    border: 1px solid var(--rail-dim);
+    border-radius: var(--radius-button);
+    font-size: 16px; /* >=16px keeps iOS from zooming the focused field */
+    background: var(--white);
+    color: var(--ink);
+  }
+  .editor-preview {
+    font-size: var(--size-label);
+    margin: 0;
+  }
+  .editor-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+  }
+  .editor-actions {
+    display: flex;
+    gap: var(--space-sm);
+    justify-content: flex-end;
+  }
+  .ebtn {
+    min-height: 44px;
+    padding: 0 var(--space-lg);
+    border-radius: var(--radius-button);
+    border: 1px solid var(--rail-dim);
+    background: var(--white);
+    color: var(--ink);
+    font-size: var(--size-label);
+    font-weight: var(--weight-label);
+  }
+  .ebtn.primary {
+    background: var(--rail-text);
+    border-color: var(--rail-text);
+    color: var(--white);
+  }
+  .ebtn:disabled {
+    opacity: 0.5;
   }
 </style>

@@ -9,6 +9,12 @@ import {
   addEvents,
   removeImportBatch,
   replaceEvents,
+  setTripTrainModel,
+  restoreEvents,
+  collectedModelKeys,
+  seedCelebratedMilestones,
+  celebrateNewMilestones,
+  hasCelebratedSeed,
   events,
   headline,
   litSegmentIds,
@@ -252,5 +258,222 @@ describe('markRoute (cross-line, one trip)', () => {
   it('canonicalizes trainModel on route events', async () => {
     await markRoute(route(['jr-kururi:0-1']), { trainModel: 'N700 S系' });
     expect(get(events)[0].trainModel).toBe('N700S');
+  });
+});
+
+// ─────────────────── setTripTrainModel (v0.13 D7 — edit-in-place) ───────────────────
+
+describe('setTripTrainModel', () => {
+  /** A trip whose rows carry every at-risk field: km snapshot, quarantine, importBatchId. */
+  const richTrip = (): RideEvent[] => [
+    {
+      id: 'trip-a:jr-kururi:0-1',
+      segmentId: 'jr-kururi:0-1',
+      railGeoVersion: JP_PACKAGE.version,
+      km: 5.5, // the v0.12.2.0 bug-class field — must survive an edit byte-identically
+      date: '2025-03-01',
+      trainModel: 'E5',
+      source: 'import',
+      tripId: 'trip-a',
+      importBatchId: 'batch-1',
+      createdAt: '2025-03-01T00:00:00.000Z',
+    },
+    {
+      id: 'trip-a:jr-kururi:1-2',
+      segmentId: 'jr-kururi:1-2',
+      railGeoVersion: JP_PACKAGE.version,
+      km: 3.25,
+      date: '2025-03-01',
+      trainModel: 'キハ261',
+      source: 'import',
+      tripId: 'trip-a',
+      importBatchId: 'batch-1',
+      quarantine: 'kept', // a kept 廃線 row must never re-quarantine
+      createdAt: '2025-03-01T00:00:00.000Z',
+    },
+    {
+      id: 'trip-a:jr-kururi:2-3',
+      segmentId: 'jr-kururi:2-3',
+      railGeoVersion: JP_PACKAGE.version,
+      km: 2.75,
+      date: '2025-03-01',
+      // no trainModel — the ＋車両 target row
+      source: 'import',
+      tripId: 'trip-a',
+      importBatchId: 'batch-1',
+      createdAt: '2025-03-01T00:00:00.000Z',
+    },
+  ];
+
+  it('CRITICAL: every row is byte-identical EXCEPT trainModel (7A all-fields invariance)', async () => {
+    await addEvents(richTrip());
+    const before = get(events);
+    const coverageBefore = resolveCoverage(before, JP_PACKAGE);
+    const litBefore = get(litSegmentIds);
+
+    const target = before.filter((e) => e.trainModel === 'E5').map((e) => e.id);
+    const res = await setTripTrainModel(target, 'H5系');
+    expect(res.updated).toBe(1);
+
+    const after = get(events);
+    for (const prior of before) {
+      const now = after.find((e) => e.id === prior.id)!;
+      if (target.includes(prior.id)) {
+        // ONLY trainModel differs — km snapshot, quarantine, batch id, version, source,
+        // date, createdAt, tripId, id all pinned.
+        expect(now).toEqual({ ...prior, trainModel: 'H5' });
+      } else {
+        expect(now).toEqual(prior);
+      }
+    }
+    const coverageAfter = resolveCoverage(after, JP_PACKAGE);
+    expect(coverageAfter.riddenKm).toBe(coverageBefore.riddenKm);
+    expect(coverageAfter.pctNational).toBe(coverageBefore.pctNational);
+    expect(get(litSegmentIds)).toEqual(litBefore);
+  });
+
+  it('is per-pill scoped (13A): editing the E5 pill never touches the キハ261 row', async () => {
+    await addEvents(richTrip());
+    const rows = get(events);
+    const e5Ids = rows.filter((e) => e.trainModel === 'E5').map((e) => e.id);
+    await setTripTrainModel(e5Ids, 'N700S');
+    const after = get(events);
+    expect(after.find((e) => e.id === 'trip-a:jr-kururi:1-2')!.trainModel).toBe('キハ261');
+    expect(after.find((e) => e.id === 'trip-a:jr-kururi:2-3')!.trainModel).toBeUndefined();
+  });
+
+  it('＋車両 fills only the blank rows the caller scoped', async () => {
+    await addEvents(richTrip());
+    const blanks = get(events).filter((e) => !e.trainModel).map((e) => e.id);
+    const res = await setTripTrainModel(blanks, 'e7系');
+    expect(res.updated).toBe(1);
+    const after = get(events);
+    expect(after.find((e) => e.id === 'trip-a:jr-kururi:2-3')!.trainModel).toBe('E7'); // canonicalized at write
+    expect(after.find((e) => e.id === 'trip-a:jr-kururi:0-1')!.trainModel).toBe('E5');
+  });
+
+  it('handles solo (trip-less) events by id, clears on empty input, no-ops on same value', async () => {
+    await addEvents([
+      {
+        id: 'solo-1',
+        segmentId: 'jr-kururi:0-1',
+        railGeoVersion: JP_PACKAGE.version,
+        trainModel: 'E6',
+        source: 'manual',
+        createdAt: '2025-04-01T00:00:00.000Z',
+      },
+    ]);
+    // same value → no write
+    const noop = await setTripTrainModel(['solo-1'], 'E6系');
+    expect(noop.updated).toBe(0);
+    // clear via empty string → undefined
+    const cleared = await setTripTrainModel(['solo-1'], '  ');
+    expect(cleared.updated).toBe(1);
+    expect(get(events).find((e) => e.id === 'solo-1')!.trainModel).toBeUndefined();
+    // unknown ids → safe no-op
+    const ghost = await setTripTrainModel(['does-not-exist'], 'E5');
+    expect(ghost.updated).toBe(0);
+    expect(ghost.prior).toHaveLength(0);
+  });
+
+  it('undo restores the exact prior rows (restoreEvents round-trip)', async () => {
+    await addEvents(richTrip());
+    const before = get(events);
+    const target = before.filter((e) => e.trainModel === 'E5').map((e) => e.id);
+    const { prior } = await setTripTrainModel(target, 'W7');
+    expect(get(events).find((e) => e.id === target[0])!.trainModel).toBe('W7');
+    await restoreEvents(prior);
+    // byte-identical restoration, including untouched siblings
+    expect(get(events).sort((a, b) => a.id.localeCompare(b.id))).toEqual(
+      before.sort((a, b) => a.id.localeCompare(b.id)),
+    );
+  });
+
+  it('two sequential edits: undo of the FIRST restores its snapshot — the UI must invalidate it (8A)', async () => {
+    await addEvents(richTrip());
+    const target = get(events).filter((e) => e.trainModel === 'E5').map((e) => e.id);
+    const first = await setTripTrainModel(target, 'H5');
+    const second = await setTripTrainModel(target, 'E8');
+    expect(get(events).find((e) => e.id === target[0])!.trainModel).toBe('E8');
+    // Restoring the FIRST snapshot silently discards the E8 edit — this documented hazard is
+    // exactly why the diary dismisses a trip's earlier undo toast on every new edit (8A).
+    await restoreEvents(first.prior);
+    expect(get(events).find((e) => e.id === target[0])!.trainModel).toBe('E5');
+    void second;
+  });
+});
+
+// ─────────── collectedModelKeys (D14 membership — registry-resolved folds) ───────────
+
+describe('collectedModelKeys', () => {
+  it('keys alias spellings by their REGISTRY fold, matching summarizeCollection (review fix)', async () => {
+    await addEvents([
+      {
+        id: 'a1',
+        segmentId: 'jr-kururi:0-1',
+        railGeoVersion: JP_PACKAGE.version,
+        trainModel: 'N700系7000番台', // registry alias — its own foldKey ≠ the card fold
+        source: 'manual',
+        createdAt: '2025-05-01T00:00:00.000Z',
+      },
+      {
+        id: 'a2',
+        segmentId: 'jr-kururi:1-2',
+        railGeoVersion: JP_PACKAGE.version,
+        trainModel: 'おもちゃ', // unknown free text — keys by its own fold, never dropped
+        source: 'manual',
+        createdAt: '2025-05-01T00:00:00.000Z',
+      },
+    ]);
+    const keys = get(collectedModelKeys);
+    expect(keys.has('N700')).toBe(true); // the CARD fold — so marking 'N700系' is NOT "new"
+    expect(keys.has('N700系7000番台')).toBe(false); // raw alias fold never leaks as an identity
+    expect(keys.has('おもちゃ')).toBe(true);
+  });
+});
+
+// ──────── celebration meta (D11/6A — once per device EVER; seeds are silent) ────────
+
+describe('celebration meta (seed / celebrate / dedupe)', () => {
+  /** Ride an E5 so the collection earns 初車両 + 320km/hクラブ. */
+  const rideE5 = () =>
+    addEvents([
+      {
+        id: 'cel-1',
+        segmentId: 'jr-kururi:0-1',
+        railGeoVersion: JP_PACKAGE.version,
+        trainModel: 'E5系',
+        source: 'manual',
+        tripId: 'cel-t1',
+        createdAt: '2025-06-01T00:00:00.000Z',
+      },
+    ]);
+
+  it('hasCelebratedSeed is false on a fresh device and true after any seed', async () => {
+    expect(await hasCelebratedSeed()).toBe(false);
+    await seedCelebratedMilestones();
+    expect(await hasCelebratedSeed()).toBe(true);
+  });
+
+  it('celebrates a fresh crossing ONCE — the second call returns [] (once per device, ever)', async () => {
+    await rideE5();
+    const first = await celebrateNewMilestones();
+    expect(first.map((m) => m.id).sort()).toEqual(['club-320', 'first-model']);
+    const second = await celebrateNewMilestones();
+    expect(second).toEqual([]); // the dedupe: no repeat toast for the same stamps
+  });
+
+  it('a SEED suppresses the burst: restore-then-celebrate yields [] (6A — no stale-stamp burst)', async () => {
+    await rideE5(); // "restored history" — earned before this device ever celebrated
+    await seedCelebratedMilestones(); // import/boot-upgrade path seeds silently
+    expect(await celebrateNewMilestones()).toEqual([]);
+  });
+
+  it('concurrent celebrate calls are serialized — the same crossing never double-toasts', async () => {
+    await rideE5();
+    const [a, b] = await Promise.all([celebrateNewMilestones(), celebrateNewMilestones()]);
+    // exactly ONE of the racing calls wins the fresh stamps; the other sees them celebrated
+    expect(a.length + b.length).toBe(2);
+    expect(a.length === 0 || b.length === 0).toBe(true);
   });
 });

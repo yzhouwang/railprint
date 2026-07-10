@@ -18,8 +18,23 @@
       in:fly={{ y: 16, duration: 200 }}
       out:fade={{ duration: 150 }}
     >
-      <Icon name={icons[t.kind]} size={18} />
-      <span class="msg">{t.message}</span>
+      {#if t.tap}
+        <!-- DD4: the toast BODY taps through (first-collect → the 図鑑 at the new card);
+             the action button and ✕ stop propagation so undo/close never navigate. -->
+        <button
+          class="body-tap"
+          onclick={() => {
+            t.tap!();
+            dismissToast(t.id);
+          }}
+        >
+          <Icon name={icons[t.kind]} size={18} />
+          <span class="msg">{t.message}</span>
+        </button>
+      {:else}
+        <Icon name={icons[t.kind]} size={18} />
+        <span class="msg">{t.message}</span>
+      {/if}
       {#if t.action}
         <button
           class="action"
@@ -70,6 +85,19 @@
   }
   .msg {
     flex: 1;
+  }
+  .body-tap {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    background: none;
+    border: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    padding: 0;
+    min-height: 44px;
   }
   .action {
     background: none;

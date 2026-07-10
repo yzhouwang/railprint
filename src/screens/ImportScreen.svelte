@@ -16,7 +16,15 @@
   import Icon from '../components/Icon.svelte';
   import ProgressBar from '../components/ProgressBar.svelte';
   import EmptyState from '../components/EmptyState.svelte';
-  import { events, geo, packages, headline, requestPersistence, removeEvents } from '../lib/store';
+  import {
+    events,
+    geo,
+    packages,
+    headline,
+    requestPersistence,
+    removeEvents,
+    seedCelebratedMilestones,
+  } from '../lib/store';
   import { toast, goToTab } from '../lib/ui';
   import * as db from '../lib/db';
   import { parseImport, type ParseResult } from '../lib/import/parse';
@@ -249,6 +257,18 @@
       if (!(await db.getMeta<boolean>(PERSIST_KEY))) {
         await requestPersistence();
         await db.setMeta(PERSIST_KEY, true);
+      }
+
+      // v0.13 6A: an import/restore SEEDS the celebrated-milestone set silently — a backup
+      // restore on a fresh device must never burst years-old achievement toasts. BEST-EFFORT
+      // and isolated (ship review): the import above already committed durably, so a transient
+      // IndexedDB failure in this cosmetic seed must never relabel a successful import as
+      // failed, skip the persistence request, or eat the undo toast. Worst case on failure:
+      // one stale celebration later — the accepted over/under-remember tradeoff.
+      try {
+        await seedCelebratedMilestones();
+      } catch (err) {
+        console.warn('[import] celebration seed failed (non-fatal)', err);
       }
 
       if (written.length === 0) {

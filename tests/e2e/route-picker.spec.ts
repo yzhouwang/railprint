@@ -104,7 +104,9 @@ test('captures the train model on a recorded route and surfaces it in the diary'
   const routeChip = page.locator('.route-chip').first();
   await expect(routeChip).toBeVisible({ timeout: 15_000 });
   await routeChip.click();
-  await expect(page.getByText(/経路を記録しました/)).toBeVisible({ timeout: 10_000 });
+  // v0.13 D14: a mark that collects a NEW model replaces the plain coverage toast with the
+  // first-collect beat (undo stays as the action) — this used to assert 経路を記録しました.
+  await expect(page.getByText(/N700Sを図鑑に追加しました/)).toBeVisible({ timeout: 10_000 });
 
   // The captured model rides through to the diary row on 統計.
   await page.getByRole('button', { name: /統計/ }).first().click();

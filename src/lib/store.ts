@@ -19,7 +19,14 @@ import { MANIFEST_SCHEMA_VERSION } from '../contract/types';
 import { coverageWarnings, resolveCoverage, segmentsBetween, type CoverageWarning } from './resolver';
 import * as db from './db';
 import { JP_PACKAGE, STUB_VERSION } from './fallback-package';
-import { canonicalizeTrainModel } from './train-models';
+import { canonicalizeTrainModel, collectionFold } from './train-models';
+import {
+  summarizeCollection,
+  deriveMilestones,
+  earnedMilestoneIds,
+  type CollectionSummary,
+  type Milestone,
+} from './collection';
 
 // ───────────────────────────────── state ────────────────────────────────────
 
@@ -247,6 +254,77 @@ export const closedLineKm: Readable<number> = derived(events, ($events) =>
   round2($events.reduce((sum, ev) => sum + (ev.quarantine === 'kept' ? ev.km ?? 0 : 0), 0)),
 );
 
+// ─────────────────────────── 車両図鑑 (v0.13) ────────────────────────────────
+// Collection state is a pure DERIVATION over the event log (D16: membership from raw
+// events — the summarizer itself enforces the identity rule). Nothing here persists
+// except the celebration-dedupe meta key, which is device-local and recomputable.
+
+export const collection: Readable<CollectionSummary> = derived(
+  [events, packages],
+  ([$events, $packages]) => summarizeCollection($events, $packages),
+);
+
+/** Folds the user has collected — the first-collect toast's O(1) membership check (D14).
+ *  Keys are REGISTRY-resolved (alias spellings land on their card fold, matching how
+ *  summarizeCollection keys standings) — otherwise marking 'N700系' after having collected
+ *  'N700系7000番台' would false-positive as a brand-new model (review finding). */
+export const collectedModelKeys: Readable<Set<string>> = derived(events, ($events) => {
+  const folds = new Set<string>();
+  for (const ev of $events) {
+    const k = collectionFold(ev.trainModel);
+    if (k) folds.add(k);
+  }
+  return folds;
+});
+
+// Celebration dedupe (D11/6A): a milestone celebrates at most ONCE per device, EVER.
+// Live in-session marks celebrate; imports/restores/boot-upgrades seed silently. The set
+// may OVER-remember after an undo — accepted by design (14A): undo never un-celebrates,
+// and no reconciliation logic exists.
+const CELEBRATED_META_KEY = 'celebratedMilestones';
+
+// All celebrated-set read-modify-writes are SERIALIZED through one promise chain (ship
+// review): a live mark's celebrate must run AFTER the boot/import seed settles (or it reads
+// prior=[] and bursts years-old stamps), and two rapid marks must not interleave their RMW.
+let celebrationChain: Promise<unknown> = Promise.resolve();
+function serializeCelebration<T>(fn: () => Promise<T>): Promise<T> {
+  const next = celebrationChain.then(fn, fn);
+  celebrationChain = next.catch(() => undefined);
+  return next;
+}
+
+/** Silently mark every currently-earned milestone as celebrated (import/restore/upgrade seed). */
+export function seedCelebratedMilestones(): Promise<void> {
+  return serializeCelebration(async () => {
+    const earned = earnedMilestoneIds(get(collection));
+    const prior = (await db.getMeta<string[]>(CELEBRATED_META_KEY)) ?? [];
+    await db.setMeta(CELEBRATED_META_KEY, [...new Set([...prior, ...earned])]);
+  });
+}
+
+/**
+ * After a LIVE mark: which milestones just crossed and have never been celebrated on this
+ * device? Marks them celebrated and returns them for the one-beat toast (DD6).
+ */
+export function celebrateNewMilestones(): Promise<Milestone[]> {
+  return serializeCelebration(async () => {
+    const summary = get(collection);
+    const prior = new Set((await db.getMeta<string[]>(CELEBRATED_META_KEY)) ?? []);
+    const fresh = deriveMilestones(summary).filter((m) => m.earned && !prior.has(m.id));
+    if (fresh.length > 0) {
+      await db.setMeta(CELEBRATED_META_KEY, [
+        ...new Set([...prior, ...earnedMilestoneIds(summary)]),
+      ]);
+    }
+    return fresh;
+  });
+}
+
+/** True once the celebrated set exists — absent means pre-v0.13 data or a fresh device. */
+export async function hasCelebratedSeed(): Promise<boolean> {
+  return (await db.getMeta<string[]>(CELEBRATED_META_KEY)) !== undefined;
+}
+
 export const closedLineCount: Readable<number> = derived(events, ($events) =>
   $events.filter((ev) => ev.quarantine === 'kept').length,
 );
@@ -404,7 +482,7 @@ function bindFallbackRetry(): void {
       if (ok) {
         packages.set(pkgs); // swap in whatever loaded (JP, or JP+CN); usingFallback clears off the stub
         usingFallback.set(false);
-        void migrateEventsIfNeeded(pkgs); // the real (versioned) package just arrived — migrate now,
+        migrationSettled = migrateEventsIfNeeded(pkgs).catch(() => {}); // the real (versioned) package just arrived — migrate now,
         // since init()'s one migration pass ran against the stub and saw nothing to do
       }
       // Only stop retrying once EVERY package is present — a JP-ok/CN-fail round keeps listening.
@@ -485,7 +563,7 @@ function bindMigrationRetry(pkgs: RailGeoPackage[]): void {
   const handler = (): void => {
     migrationRetryBound = false;
     for (const t of triggers) window.removeEventListener(t, handler);
-    void migrateEventsIfNeeded(pkgs);
+    migrationSettled = migrateEventsIfNeeded(pkgs).catch(() => {});
   };
   for (const t of triggers) window.addEventListener(t, handler);
 }
@@ -520,6 +598,12 @@ async function adoptStubPinnedEvents(pkgs: RailGeoPackage[]): Promise<void> {
   await db.putEvents(adopted); // in-place by stable id, same as the migration runner
   await refresh();
 }
+
+/** In-flight migration barrier: the edit paths await this so their row snapshots can never
+ *  interleave with a concurrent migration bulk-write (ship review: an edit during the boot
+ *  migration window could revert migrated segmentId/railGeoVersion/km, or the migration
+ *  could erase a just-written trainModel). Always resolves; errors are the migration's own. */
+let migrationSettled: Promise<void> = Promise.resolve();
 
 async function migrateEventsIfNeeded(pkgs: RailGeoPackage[]): Promise<void> {
   if (typeof fetch === 'undefined') return;
@@ -622,7 +706,15 @@ export async function init(): Promise<void> {
     window.addEventListener('offline', sync);
   }
   ready.set(true);                  // render immediately (non-blocking)
-  void migrateEventsIfNeeded(pkgs); // re-point any version-stale events off the first-paint path
+  migrationSettled = migrateEventsIfNeeded(pkgs).catch(() => {}); // re-point any version-stale events off the first-paint path
+  // v0.13 celebration seed (6A): a device whose celebrated-set is ABSENT (fresh install, or
+  // an upgrade from pre-図鑑 data with years of history) seeds every already-earned milestone
+  // silently — historical achievements were not crossed by a live mark and must never burst.
+  // Off the first-paint path; ordering vs a concurrent first mark is harmless (over-remember
+  // is accepted by design).
+  void (async () => {
+    if (!(await hasCelebratedSeed())) await seedCelebratedMilestones();
+  })();
 }
 
 /** Swap in explicit RailGeoPackage(s) — used by tests and the importer's package override. */
@@ -791,6 +883,52 @@ export async function keepAsOrphan(ids: string[]): Promise<void> {
     .map((ev) => (ev.quarantine === 'kept' ? ev : { ...ev, quarantine: 'kept' as const }));
   if (updates.length === 0) return;
   await db.putEvents(updates);
+  await refresh();
+}
+
+/**
+ * Edit-in-place for a trip's 車両 (v0.13 D7, review 7A/13A/14A). Takes EVENT IDS straight from
+ * the rendered trip — never a tripKey — because diary row keys are country-prefixed
+ * (`${pkg.country}:${tripId}`, StatsScreen) and tripIds can theoretically repeat across
+ * packages; ids sidestep the namespace class entirely and cover `solo:<id>` singletons for free.
+ *
+ * Granularity is the CALLER'S per-pill scope (13A): the diary passes only the rows whose model
+ * folds to the tapped pill (or the model-less rows for ＋車両) — this mutation never
+ * blanket-overwrites rows carrying a different model.
+ *
+ * Implementation is a row SPREAD, never a rebuild (7A): `{...ev, trainModel}` so the km
+ * snapshot, quarantine flag, importBatchId, railGeoVersion — the fields the v0.12.2.0
+ * km-snapshot bug class silently dropped — are byte-preserved (CRITICAL invariance test).
+ * The new manual value is canonicalized at write, mirroring markRide; stored strings of
+ * OTHER rows are never rewritten (D4).
+ *
+ * Returns the prior rows so the caller can offer snapshot undo (a NEW edit on the same trip
+ * must invalidate the previous undo toast — review 8A — which is UI state, owned by the diary).
+ */
+export async function setTripTrainModel(
+  eventIds: string[],
+  model: string,
+): Promise<{ prior: RideEvent[]; updated: number }> {
+  if (eventIds.length === 0) return { prior: [], updated: 0 };
+  await migrationSettled; // never snapshot rows a migration is concurrently rewriting
+  const wanted = new Set(eventIds);
+  const prior = get(events).filter((ev) => wanted.has(ev.id));
+  if (prior.length === 0) return { prior: [], updated: 0 };
+  const trainModel = canonicalizeTrainModel(model) || undefined;
+  const updates = prior
+    .filter((ev) => ev.trainModel !== trainModel)
+    .map((ev) => ({ ...ev, trainModel }));
+  if (updates.length === 0) return { prior, updated: 0 };
+  await db.putEvents(updates);
+  await refresh();
+  return { prior, updated: updates.length };
+}
+
+/** Undo for setTripTrainModel: restore the exact prior rows (ids unchanged → in-place put). */
+export async function restoreEvents(prior: RideEvent[]): Promise<void> {
+  if (prior.length === 0) return;
+  await migrationSettled; // same barrier as setTripTrainModel — see above
+  await db.putEvents(prior);
   await refresh();
 }
 

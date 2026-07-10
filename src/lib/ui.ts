@@ -24,15 +24,24 @@ export interface Toast {
   kind: ToastKind;
   message: string;
   action?: ToastAction;
+  /** DD4: whole-body tap-through (first-collect toast opens the 図鑑 at the new card).
+   *  Coexists with `action` — the action button stops propagation, the body taps through. */
+  tap?: () => void;
 }
 
 export const toasts = writable<Toast[]>([]);
 
 let nextToastId = 1;
 
-export function toast(message: string, kind: ToastKind = 'info', ttlMs = 3200, action?: ToastAction): number {
+export function toast(
+  message: string,
+  kind: ToastKind = 'info',
+  ttlMs = 3200,
+  action?: ToastAction,
+  tap?: () => void,
+): number {
   const id = nextToastId++;
-  toasts.update((list) => [...list, { id, kind, message, action }]);
+  toasts.update((list) => [...list, { id, kind, message, action, tap }]);
   if (ttlMs > 0 && typeof window !== 'undefined') {
     window.setTimeout(() => dismissToast(id), ttlMs);
   }
@@ -46,3 +55,10 @@ export function dismissToast(id: number): void {
 export function goToTab(tab: Tab): void {
   activeTab.set(tab);
 }
+
+/**
+ * DD4 cross-tab deep-link: the first-collect toast (fired on the map) asks the stats screen
+ * to open the 図鑑 sheet, optionally at a specific model card. StatsScreen consumes and
+ * clears the request; null = no pending request.
+ */
+export const collectionSheetRequest = writable<{ fold?: string } | null>(null);

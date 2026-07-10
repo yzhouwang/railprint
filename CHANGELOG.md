@@ -2,6 +2,62 @@
 
 All notable changes to RailPrint are documented here.
 
+## [0.13.0.0] - 2026-07-10
+
+**車両図鑑.** The optional 車両 field grows into the collection loop the founding design
+deferred: every model you log becomes a collected card in a Pokédex-style vehicle
+encyclopedia — honest meters, no gacha. Plan: docs/plans/vehicle-dex.md (eng + design
+reviewed; built against the approved variant-A board).
+
+### Added
+- **車両図鑑 (vehicle dex)**: a 統計 shelf (hero 新幹線 X/13 meter + your three latest
+  silhouettes) opening a full-screen collection sheet — category sections, claymation
+  silhouette cards (collected = livery-tinted fill, unridden = ghost want-list with names
+  visible), model detail view (operator / top speed / 愛称 / your trips on that model),
+  typographic milestone stamps (初車両・新幹線コンプリート・320km/hクラブ・日中両国・
+  引退前に乗った), and a ロースター基準: 2026年 footer. Fully keyboard-navigable
+  (focus trap, Escape, roving arrow keys), 100dvh on mobile / wide panel on desktop.
+- **Curated model registry** (63 形式, facts only, per-entry provenance, web
+  fact-checked): 13 active 新幹線 (E2 restored by the 2026-03 改正 — honest denominator),
+  京沪 corridor roster (CR400AF/BF + CRH380B/C — the CN meter counts only what the app's
+  corridor can actually deliver), 特急 flagships incl. 285系 サンライズ, iconic 通勤 and
+  気動車. Facts corrected in review: N700 family 300 km/h (山陽), CRH380A off the 京沪
+  regular roster. Retiring stock carries honest urgency (500系 「2027年1月引退予定」),
+  never invented rarity.
+- **Edit a trip's 車両 after the fact**: diary pills are now tappable — an inline editor
+  (suggestion chips + free text + live 「→ E5 として記録」 preview + 保存/キャンセル)
+  edits per pill, so a two-model trip never loses one model to editing the other. Undo per
+  edit; a newer edit invalidates the older undo. A 未記録のみ toggle narrows the diary to
+  untagged trips so enriching an imported history is visible progress.
+- **First-collect beat**: marking a ride with a new-to-you model turns the success toast
+  into 「◯◯を図鑑に追加しました · 新幹線 8/13」 — tap it to land on the new card; undo
+  stays on the toast. Milestones celebrate once per device, ever: live marks only —
+  imports, backup restores, and upgrades seed silently (no stale-achievement toast burst).
+- **Smarter capture chips**: fold-deduplicated (E5系 + e5 = one chip), ranked by YOUR
+  history on the selected line first, with a live canonical preview under the input.
+  Full-width input (Ｅ５系) folds correctly (NFKC).
+- **Wrapped**: a 記録した車両 row (count + 新幹線 meter) joins the share card.
+
+### Changed
+- 最速の車両 now resolves real speeds from the registry (E8 finally counts; CR400AF's 350
+  beats E5's 320).
+- The diary's model pills render fold-deduplicated (one pill per model, however it was
+  spelled), with registry display names.
+
+### Internal
+- One definition of model equality (`foldKey`/`sameModel` in train-models.ts) shared by
+  chips, pills, collection keying, and the speed lookup; a new 車両 value canonicalizes
+  once at write (mirroring markRide) and existing/imported `trainModel` strings are never
+  rewritten — all folding is read-time (export fidelity; re-import idempotency is
+  guaranteed by the dedup nets, asserted per identity class in commit.test.ts).
+- `setTripTrainModel(eventIds)` is a row spread — a CRITICAL test pins every
+  non-trainModel field byte-identical (the v0.12.2.0 km-snapshot bug class can't recur).
+- Collection membership derives from RAW events (quarantined 廃線 rides, a CN-package
+  404, or migration orphans can never un-collect a model or un-earn a milestone); only
+  km/linesSeen need resolved segments.
+- Registry gates: fold-collision-free roster, pinned denominators, per-entry provenance —
+  a roster edit must consciously update the pins and this changelog.
+
 ## [0.12.2.0] - 2026-07-07
 
 Quality-sweep release: a 51-agent adversarially-verified audit confirmed 28 findings; this
