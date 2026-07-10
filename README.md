@@ -43,6 +43,8 @@ the 京沪 corridor, any backend.
 ## Docs
 
 - [CHANGELOG.md](CHANGELOG.md) — release-by-release history.
+- [RAILNET.md](RAILNET.md) — how the app vendors and verifies the railnet data package (the producer↔consumer contract).
+- [TODOS.md](TODOS.md) — tracked follow-ups: what's deferred, why, and what unblocks it.
 
 ## Attribution
 
