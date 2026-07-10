@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { get } from 'svelte/store';
 import { buildWrappedData } from './card';
+import { summarizeCollection } from '../collection';
 import { resolveCoverage } from '../resolver';
 import { headline as headlineStore, coverages as coveragesStore, geo as geoStore, loadPackages, replaceEvents, clearAllRides } from '../store';
 import { JP_PACKAGE, STUB_PACKAGES } from '../fallback-package';
@@ -133,6 +134,50 @@ describe('buildWrappedData (pure superlative shaping)', () => {
 
 // Keep the shared fake-indexeddb clean for any other suite.
 import { afterAll } from 'vitest';
+// ─────────── D10 記録した車両 row — BOTH branches unit-tested (9A#3) ───────────
+
+describe('buildWrappedData — 車両図鑑 superlative (D10)', () => {
+  const seed = async () => {
+    const rows = JP_PACKAGE.segments
+      .filter((s) => s.lineId === 'jr-tokaido-shinkansen')
+      .map((s) => event(s.segmentId, { tripId: 'trip-hsr', trainModel: 'N700S' }));
+    const inputs = await inputsFor(rows);
+    const collection = summarizeCollection(rows, STUB_PACKAGES);
+    return { inputs, collection };
+  };
+
+  it('PRIMARY branch: adds the 記録した車両 row with the 新幹線 meter sub', async () => {
+    const { inputs, collection } = await seed();
+    const data = buildWrappedData({ ...inputs, collection }, { vehicleRow: true });
+    const row = data.superlatives.find((s) => s.label === '記録した車両');
+    expect(row).toBeDefined();
+    expect(row!.value).toBe('1車両');
+    expect(row!.sub).toBe('新幹線 1/13');
+    // the fastest-model row stays sub-less on this branch
+    expect(data.superlatives.find((s) => s.label === '最速の車両')!.sub).toBeUndefined();
+  });
+
+  it('FALLBACK branch: no 4th row; 最速の車両 gains the km/h sub instead (zero layout risk)', async () => {
+    const { inputs, collection } = await seed();
+    const data = buildWrappedData({ ...inputs, collection }, { vehicleRow: false });
+    expect(data.superlatives.find((s) => s.label === '記録した車両')).toBeUndefined();
+    const fastest = data.superlatives.find((s) => s.label === '最速の車両');
+    expect(fastest!.sub).toBe('300 km/h'); // N700S — fact-check-corrected 山陽 top speed
+  });
+
+  it('is zero-safe: no collection input or an empty collection adds no row (old callers untouched)', async () => {
+    const { inputs } = await seed();
+    expect(
+      buildWrappedData(inputs, { vehicleRow: true }).superlatives.find((s) => s.label === '記録した車両'),
+    ).toBeUndefined();
+    const empty = summarizeCollection([], STUB_PACKAGES);
+    expect(
+      buildWrappedData({ ...inputs, collection: empty }, { vehicleRow: true }).superlatives
+        .find((s) => s.label === '記録した車両'),
+    ).toBeUndefined();
+  });
+});
+
 afterAll(async () => {
   await clearAllRides();
 });

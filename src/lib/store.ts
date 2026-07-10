@@ -19,7 +19,14 @@ import { MANIFEST_SCHEMA_VERSION } from '../contract/types';
 import { coverageWarnings, resolveCoverage, segmentsBetween, type CoverageWarning } from './resolver';
 import * as db from './db';
 import { JP_PACKAGE, STUB_VERSION } from './fallback-package';
-import { canonicalizeTrainModel } from './train-models';
+import { canonicalizeTrainModel, foldKey } from './train-models';
+import {
+  summarizeCollection,
+  deriveMilestones,
+  earnedMilestoneIds,
+  type CollectionSummary,
+  type Milestone,
+} from './collection';
 
 // ───────────────────────────────── state ────────────────────────────────────
 
@@ -246,6 +253,60 @@ export const orphanCount: Readable<number> = derived(orphanGroups, ($groups) =>
 export const closedLineKm: Readable<number> = derived(events, ($events) =>
   round2($events.reduce((sum, ev) => sum + (ev.quarantine === 'kept' ? ev.km ?? 0 : 0), 0)),
 );
+
+// ─────────────────────────── 車両図鑑 (v0.13) ────────────────────────────────
+// Collection state is a pure DERIVATION over the event log (D16: membership from raw
+// events — the summarizer itself enforces the identity rule). Nothing here persists
+// except the celebration-dedupe meta key, which is device-local and recomputable.
+
+export const collection: Readable<CollectionSummary> = derived(
+  [events, packages],
+  ([$events, $packages]) => summarizeCollection($events, $packages),
+);
+
+/** Folds the user has collected — the first-collect toast's O(1) membership check (D14). */
+export const collectedModelKeys: Readable<Set<string>> = derived(events, ($events) => {
+  const folds = new Set<string>();
+  for (const ev of $events) {
+    const k = foldKey(ev.trainModel);
+    if (k) folds.add(k);
+  }
+  return folds;
+});
+
+// Celebration dedupe (D11/6A): a milestone celebrates at most ONCE per device, EVER.
+// Live in-session marks celebrate; imports/restores/boot-upgrades seed silently. The set
+// may OVER-remember after an undo — accepted by design (14A): undo never un-celebrates,
+// and no reconciliation logic exists.
+const CELEBRATED_META_KEY = 'celebratedMilestones';
+
+/** Silently mark every currently-earned milestone as celebrated (import/restore/upgrade seed). */
+export async function seedCelebratedMilestones(): Promise<void> {
+  const earned = earnedMilestoneIds(get(collection));
+  const prior = (await db.getMeta<string[]>(CELEBRATED_META_KEY)) ?? [];
+  await db.setMeta(CELEBRATED_META_KEY, [...new Set([...prior, ...earned])]);
+}
+
+/**
+ * After a LIVE mark: which milestones just crossed and have never been celebrated on this
+ * device? Marks them celebrated and returns them for the one-beat toast (DD6).
+ */
+export async function celebrateNewMilestones(): Promise<Milestone[]> {
+  const summary = get(collection);
+  const prior = new Set((await db.getMeta<string[]>(CELEBRATED_META_KEY)) ?? []);
+  const fresh = deriveMilestones(summary).filter((m) => m.earned && !prior.has(m.id));
+  if (fresh.length > 0) {
+    await db.setMeta(CELEBRATED_META_KEY, [
+      ...new Set([...prior, ...earnedMilestoneIds(summary)]),
+    ]);
+  }
+  return fresh;
+}
+
+/** True once the celebrated set exists — absent means pre-v0.13 data or a fresh device. */
+export async function hasCelebratedSeed(): Promise<boolean> {
+  return (await db.getMeta<string[]>(CELEBRATED_META_KEY)) !== undefined;
+}
 
 export const closedLineCount: Readable<number> = derived(events, ($events) =>
   $events.filter((ev) => ev.quarantine === 'kept').length,
@@ -623,6 +684,14 @@ export async function init(): Promise<void> {
   }
   ready.set(true);                  // render immediately (non-blocking)
   void migrateEventsIfNeeded(pkgs); // re-point any version-stale events off the first-paint path
+  // v0.13 celebration seed (6A): a device whose celebrated-set is ABSENT (fresh install, or
+  // an upgrade from pre-図鑑 data with years of history) seeds every already-earned milestone
+  // silently — historical achievements were not crossed by a live mark and must never burst.
+  // Off the first-paint path; ordering vs a concurrent first mark is harmless (over-remember
+  // is accepted by design).
+  void (async () => {
+    if (!(await hasCelebratedSeed())) await seedCelebratedMilestones();
+  })();
 }
 
 /** Swap in explicit RailGeoPackage(s) — used by tests and the importer's package override. */
@@ -791,6 +860,50 @@ export async function keepAsOrphan(ids: string[]): Promise<void> {
     .map((ev) => (ev.quarantine === 'kept' ? ev : { ...ev, quarantine: 'kept' as const }));
   if (updates.length === 0) return;
   await db.putEvents(updates);
+  await refresh();
+}
+
+/**
+ * Edit-in-place for a trip's 車両 (v0.13 D7, review 7A/13A/14A). Takes EVENT IDS straight from
+ * the rendered trip — never a tripKey — because diary row keys are country-prefixed
+ * (`${pkg.country}:${tripId}`, StatsScreen) and tripIds can theoretically repeat across
+ * packages; ids sidestep the namespace class entirely and cover `solo:<id>` singletons for free.
+ *
+ * Granularity is the CALLER'S per-pill scope (13A): the diary passes only the rows whose model
+ * folds to the tapped pill (or the model-less rows for ＋車両) — this mutation never
+ * blanket-overwrites rows carrying a different model.
+ *
+ * Implementation is a row SPREAD, never a rebuild (7A): `{...ev, trainModel}` so the km
+ * snapshot, quarantine flag, importBatchId, railGeoVersion — the fields the v0.12.2.0
+ * km-snapshot bug class silently dropped — are byte-preserved (CRITICAL invariance test).
+ * The new manual value is canonicalized at write, mirroring markRide; stored strings of
+ * OTHER rows are never rewritten (D4).
+ *
+ * Returns the prior rows so the caller can offer snapshot undo (a NEW edit on the same trip
+ * must invalidate the previous undo toast — review 8A — which is UI state, owned by the diary).
+ */
+export async function setTripTrainModel(
+  eventIds: string[],
+  model: string,
+): Promise<{ prior: RideEvent[]; updated: number }> {
+  if (eventIds.length === 0) return { prior: [], updated: 0 };
+  const wanted = new Set(eventIds);
+  const prior = get(events).filter((ev) => wanted.has(ev.id));
+  if (prior.length === 0) return { prior: [], updated: 0 };
+  const trainModel = canonicalizeTrainModel(model) || undefined;
+  const updates = prior
+    .filter((ev) => ev.trainModel !== trainModel)
+    .map((ev) => ({ ...ev, trainModel }));
+  if (updates.length === 0) return { prior, updated: 0 };
+  await db.putEvents(updates);
+  await refresh();
+  return { prior, updated: updates.length };
+}
+
+/** Undo for setTripTrainModel: restore the exact prior rows (ids unchanged → in-place put). */
+export async function restoreEvents(prior: RideEvent[]): Promise<void> {
+  if (prior.length === 0) return;
+  await db.putEvents(prior);
   await refresh();
 }
 

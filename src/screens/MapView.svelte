@@ -13,11 +13,23 @@
 
   import { onMount, tick } from 'svelte';
   import { get } from 'svelte/store';
-  import { packages, litSegmentIds, geo, events, markRide, markRoute, removeTrip } from '../lib/store';
+  import {
+    packages,
+    litSegmentIds,
+    geo,
+    events,
+    markRide,
+    markRoute,
+    removeTrip,
+    collection,
+    collectedModelKeys,
+    celebrateNewMilestones,
+  } from '../lib/store';
   import { SearchSeq, sameStation, classifyRoutes, type RouteOutcome } from '../lib/marking';
   import Pill from '../components/Pill.svelte';
-  import { KNOWN_TRAIN_MODELS } from '../lib/train-models';
-  import { markMode, toast } from '../lib/ui';
+  import { canonicalizeTrainModel, foldKey, resolveModel } from '../lib/train-models';
+  import { suggestModels } from '../lib/model-suggest';
+  import { markMode, toast, goToTab, collectionSheetRequest } from '../lib/ui';
   import { tokens } from '../design/tokens';
   import type { RailGeoPackage, RailLine, RouteCandidate } from '../contract/types';
   import {
@@ -126,31 +138,80 @@
     resetSearch();
   }
 
-  // Recent-then-known train models for the optional capture chips. The user's most-recently
-  // tagged models first, padded with the canonical known models. A single O(events) pass tracks
-  // each model's latest timestamp, then only the (few) DISTINCT models are ranked — never a sort
-  // over the whole event log just to surface a handful of chips ($events is id-ordered, not by date).
-  const modelSuggestions = $derived.by(() => {
-    const latest = new Map<string, string>();
-    for (const e of $events) {
-      if (!e.trainModel) continue;
-      const prev = latest.get(e.trainModel);
-      if (prev === undefined || e.createdAt > prev) latest.set(e.trainModel, e.createdAt);
-    }
-    const out = [...latest.entries()]
-      .sort((a, b) => b[1].localeCompare(a[1]))
-      .slice(0, 6)
-      .map(([m]) => m);
-    const seen = new Set(out);
-    for (const m of KNOWN_TRAIN_MODELS) {
-      if (out.length >= 8) break;
-      if (!seen.has(m)) {
-        seen.add(m);
-        out.push(m);
+  // Chips v2 (D8): fold-deduped recents ranked line-aware from the user's OWN history, padded
+  // from the known list — all inside the pure model-suggest lib (same O(events) single-pass
+  // discipline as v1; the pre-migration behavior is pinned in model-suggest.test.ts).
+  const modelSuggestions = $derived.by(() =>
+    suggestModels($events, {
+      lineId: selectedLine?.lineId,
+      lineOfSegment: (sid) => $geo.segmentById.get(sid)?.lineId,
+      max: 8,
+    }),
+  );
+
+  // D15: live canonical preview (feedback, not validation — free text is always accepted).
+  const markModelCanon = $derived(canonicalizeTrainModel(markTrainModel));
+  const showModelPreview = $derived(
+    markTrainModel.trim().length > 0 && markModelCanon !== markTrainModel.trim(),
+  );
+
+  // ── first-collect reward beat (D14/DD4) + milestone celebration (D11/DD6) ──
+
+  /** ` · 新幹線 8/12` when the fold's section carries an honest meter, else ''. */
+  function meterSuffix(fold: string): string {
+    for (const section of get(collection).sections) {
+      if (!section.meter) continue;
+      if (section.collected.some((s) => s.fold === fold)) {
+        return ` · ${section.meter.label} ${section.meter.collected}/${section.meter.total}`;
       }
     }
-    return out;
-  });
+    return '';
+  }
+
+  /** DD4: tap-through target — the 図鑑 sheet on the stats tab, opened at the new card. */
+  function openDex(fold: string | undefined): void {
+    collectionSheetRequest.set({ fold });
+    goToTab('stats');
+  }
+
+  /**
+   * The success toast for a mark (one toast, never a stack): a first-collect beat replaces the
+   * plain coverage message (undo stays as the action, the body taps through to the 図鑑 —
+   * DD4), and freshly-crossed milestones follow as ONE extra beat (celebrated at most once
+   * per device, ever — 6A).
+   */
+  function rewardToast(opts: {
+    isNewModel: boolean;
+    fold: string;
+    modelRaw: string;
+    fallback: string;
+    undo: { label: string; fn: () => void };
+  }): void {
+    if (opts.isNewModel) {
+      const label = resolveModel(opts.modelRaw)?.name ?? opts.fold;
+      toast(
+        `${label}を図鑑に追加しました${meterSuffix(opts.fold)}`,
+        'success',
+        6000,
+        opts.undo,
+        () => openDex(opts.fold),
+      );
+    } else {
+      toast(opts.fallback, 'success', 6000, opts.undo);
+    }
+    void (async () => {
+      const fresh = await celebrateNewMilestones();
+      if (fresh.length > 0) {
+        toast(
+          `${fresh.map((m) => m.label).join('・')} を達成しました`,
+          'success',
+          6000,
+          undefined,
+          () => openDex(opts.fold || undefined),
+        );
+      }
+    })();
+  }
 
   function resetSearch(): void {
     cancelPendingResolves(); // a queued debounce must not repopulate hits after a reset
@@ -623,12 +684,17 @@
     busy = true;
     try {
       const before = new Set(get(litSegmentIds));
+      // D14: capture BEFORE the mark whether this model is new to the collection — after the
+      // write the derived set already contains it.
+      const modelRaw = markTrainModel.trim();
+      const modelFold = foldKey(modelRaw);
+      const isNewModel = modelFold !== '' && !get(collectedModelKeys).has(modelFold);
       const res = await markRide({
         lineId: selectedLine.lineId,
         fromStationId: from,
         toStationId: to,
         pkg,
-        trainModel: markTrainModel.trim() || undefined,
+        trainModel: modelRaw || undefined,
       });
       if (res.sliceLength === 0) {
         toast('同じ駅が選ばれています', 'info');
@@ -640,12 +706,11 @@
       // Undo rolls back exactly the trip just appended (markRide returns its tripId; removeTrip
       // deletes every event of that trip). Longer ttl so the undo is actually reachable.
       const undo = { label: '元に戻す', fn: () => void removeTrip(res.tripId) };
-      if (newlyLit.length === 0) {
-        toast(`もう一度記録しました（${res.sliceLength}区間）`, 'success', 6000, undo);
-      } else {
-        const km = kmOf(newlyLit);
-        toast(`区間を記録しました（+${newlyLit.length}区間 / +${km.toFixed(1)} km）`, 'success', 6000, undo);
-      }
+      const fallback =
+        newlyLit.length === 0
+          ? `もう一度記録しました（${res.sliceLength}区間）`
+          : `区間を記録しました（+${newlyLit.length}区間 / +${kmOf(newlyLit).toFixed(1)} km）`;
+      rewardToast({ isNewModel, fold: modelFold, modelRaw, fallback, undo });
       // A >= MIN_WAVE_SIZE grow takes the D5 flood path, which owns the glow layer's
       // line-opacity for its whole sweep — pulse's 120ms rewrites would fight the ~23ms wave
       // frames and its final repaint would snap the wave early. Pulse only on the small-mark
@@ -837,18 +902,20 @@
     busy = true;
     try {
       const before = new Set(get(litSegmentIds));
-      const res = await markRoute(r, { trainModel: markTrainModel.trim() || undefined });
+      const modelRaw = markTrainModel.trim();
+      const modelFold = foldKey(modelRaw);
+      const isNewModel = modelFold !== '' && !get(collectedModelKeys).has(modelFold);
+      const res = await markRoute(r, { trainModel: modelRaw || undefined });
       // E1: the route is always recorded as a new trip. Report newly-lit coverage; a full
       // repeat (every leg already ridden) says so instead of dead-ending.
       const newlyLit = r.segmentIds.filter((id) => !before.has(id));
       // Undo rolls back exactly the trip just appended (markRoute returns its tripId). Longer ttl.
       const undo = { label: '元に戻す', fn: () => void removeTrip(res.tripId) };
-      if (newlyLit.length === 0) {
-        toast(`もう一度記録しました（${r.segmentIds.length}区間 / ${res.totalKm.toFixed(1)} km）`, 'success', 6000, undo);
-      } else {
-        const km = kmOf(newlyLit);
-        toast(`経路を記録しました（+${newlyLit.length}区間 / +${km.toFixed(1)} km）`, 'success', 6000, undo);
-      }
+      const fallback =
+        newlyLit.length === 0
+          ? `もう一度記録しました（${r.segmentIds.length}区間 / ${res.totalKm.toFixed(1)} km）`
+          : `経路を記録しました（+${newlyLit.length}区間 / +${kmOf(newlyLit).toFixed(1)} km）`;
+      rewardToast({ isNewModel, fold: modelFold, modelRaw, fallback, undo });
       // Same wave/pulse exclusivity as doMark: a big grow floods, a small one pulses.
       if (newlyLit.length < MIN_WAVE_SIZE) pulse(r.segmentIds);
       markTrainModel = '';
@@ -1159,12 +1226,17 @@
             bind:value={markTrainModel}
             autocomplete="off"
           />
+          {#if showModelPreview}
+            <!-- D15: feedback, not validation — shows what the fold will record -->
+            <p class="train-preview u-muted">→ {markModelCanon} として記録</p>
+          {/if}
           {#if modelSuggestions.length > 0}
             <div class="train-chips" role="group" aria-label="車両の候補">
               {#each modelSuggestions as m (m)}
+                <!-- 5A: highlight by FOLD so typed 'E5系' lights the E5 chip (preview and chip agree) -->
                 <Pill
-                  active={markTrainModel.trim() === m}
-                  onclick={() => (markTrainModel = markTrainModel.trim() === m ? '' : m)}
+                  active={markModelCanon !== '' && markModelCanon === foldKey(m)}
+                  onclick={() => (markTrainModel = markModelCanon === foldKey(m) ? '' : m)}
                 >{m}</Pill>
               {/each}
             </div>
@@ -1509,6 +1581,10 @@
   }
   .opt {
     font-weight: 400;
+  }
+  .train-preview {
+    margin: 4px 0 0;
+    font-size: var(--size-label);
   }
   .train-chips {
     display: flex;

@@ -14,7 +14,17 @@ import type { CoverageResult } from '../../contract/types';
 import { tokens } from '../../design/tokens';
 import type { GeoIndex } from '../geo-index';
 import type { Headline } from '../store';
+import type { CollectionSummary } from '../collection';
+import { topSpeedKmh } from '../train-models';
 import { CANVAS_FONT_FAMILY, ensureWrappedFonts } from './font';
+
+/**
+ * D10 smoke gate: `true` ships the 4th superlative row (記録した車両). The canvas is a FIXED
+ * 1080×1920 — if the visual smoke shows the extra row crowding it, flip to `false`, which
+ * ships the PRE-APPROVED fallback instead (a `NNN km/h` sub enriching the existing 最速の車両
+ * row, zero layout risk). Both branches stay implemented and unit-tested regardless.
+ */
+export const WRAPPED_VEHICLE_ROW = true;
 
 // ───────────────────────────── pure data shaping ────────────────────────────
 
@@ -45,6 +55,9 @@ export interface WrappedInputs {
   headline: Headline;
   coverages: { result: CoverageResult }[];
   geo: GeoIndex;
+  /** v0.13 車両図鑑 rollup — OPTIONAL so the builder stays pure/sync and old callers/tests
+   *  are untouched (the iOS-gesture share path passes a store snapshot, never awaits). */
+  collection?: CollectionSummary;
   /** Injected for determinism in tests; defaults to now. */
   now?: Date;
 }
@@ -75,7 +88,11 @@ function lineName(geo: GeoIndex, id: string): string {
  * single dominant package, and the contract gives us a per-package winner, not a global
  * km-by-line map. Documented so the lead can tighten it if multi-package stats matter.
  */
-export function buildWrappedData(inputs: WrappedInputs): WrappedData {
+export function buildWrappedData(
+  inputs: WrappedInputs,
+  opts?: { vehicleRow?: boolean }, // test seam so BOTH D10 branches stay unit-tested (9A#3)
+): WrappedData {
+  const vehicleRow = opts?.vehicleRow ?? WRAPPED_VEHICLE_ROW;
   const { headline, coverages, geo } = inputs;
   const now = inputs.now ?? new Date();
 
@@ -119,10 +136,28 @@ export function buildWrappedData(inputs: WrappedInputs): WrappedData {
 
   // Fastest train model: first named one across packages (speed already resolved by the
   // kernel — every package returns the same fastest model from the shared event log).
+  // D10 fallback branch: when the 4th-row gate is OFF, this row carries the km/h sub instead
+  // (zero layout risk) so the 図鑑 work still enriches the card.
   const fastestTrainModel = coverages.find((c) => c.result.fastestTrainModel)?.result
     .fastestTrainModel;
   if (fastestTrainModel) {
-    superlatives.push({ label: '最速の車両', value: fastestTrainModel });
+    const speed = !vehicleRow ? topSpeedKmh(fastestTrainModel) : undefined;
+    superlatives.push({
+      label: '最速の車両',
+      value: fastestTrainModel,
+      sub: speed !== undefined ? `${speed} km/h` : undefined,
+    });
+  }
+
+  // D10 primary branch: the 記録した車両 row — count + the 新幹線 meter as the sub. Only when
+  // the collection rollup was supplied and has anything to say (zero-safe: no row at 0).
+  if (vehicleRow && inputs.collection && inputs.collection.totalModels > 0) {
+    const shink = inputs.collection.sections.find((s) => s.category === 'shinkansen')?.meter;
+    superlatives.push({
+      label: '記録した車両',
+      value: `${inputs.collection.totalModels}車両`,
+      sub: shink && shink.collected > 0 ? `${shink.label} ${shink.collected}/${shink.total}` : undefined,
+    });
   }
 
   return {

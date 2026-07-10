@@ -397,3 +397,72 @@ describe('commitImport — cross-existing dedup (merge mode)', () => {
     expect(all.some((e) => e.id === 'old:jr-kururi:0-1')).toBe(false);
   });
 });
+
+// ─────────── export → EDIT → re-import round-trip (v0.13 4A — three identity classes) ───────────
+//
+// After a 車両 edit (setTripTrainModel), re-importing an OLD backup of the same rides must
+// (a) write nothing (no duplicate diary rows) and (b) leave the EDIT in place. Ids are NOT
+// stable across all classes — trip-less contentEventId hashes trainModel — so idempotency is
+// guaranteed by the dedup NETS (ownRestoreKey for manual/corridor, logicalRideKey for import),
+// never by id equality. A future refactor of dropEventsAlreadyInLog is what this suite guards.
+describe('re-import after a trainModel edit (dedup-net behavior, all identity classes)', () => {
+  beforeEach(async () => {
+    await db.clearAll();
+  });
+
+  const ownCsv = (opts: { tripId: string; source: string; model: string }) =>
+    [
+      'segmentId,lineId,railGeoVersion,rode,source,tripId,createdAt,date,trainModel',
+      `jr-kururi:0-1,久留里線,${JP_PACKAGE.version},1,${opts.source},${opts.tripId},2025-05-01T08:00:00.000Z,2025-05-01,${opts.model}`,
+    ].join('\n');
+
+  const importAndCommit = async (csv: string): Promise<RideEvent[]> => {
+    const p = parseImport(csv, STUB_PACKAGES, geo);
+    const res: ImportResolution = { importBatchId: p.report.importBatchId, confirmed: [], skipped: [] };
+    return commitImport(p.resolved, res, STUB_PACKAGES, 'merge');
+  };
+
+  /** Simulate setTripTrainModel: spread-edit the stored row in place (same id). */
+  const editModelInPlace = async (newModel: string): Promise<void> => {
+    const rows = await db.getAllEvents();
+    await db.putEvents(rows.map((e) => ({ ...e, trainModel: newModel })));
+  };
+
+  it('tripful MANUAL row: old backup re-import is dropped by ownRestoreKey — edit survives', async () => {
+    const backup = ownCsv({ tripId: 'trip-m', source: 'manual', model: 'E5' });
+    await importAndCommit(backup);
+    await editModelInPlace('H5');
+    const written = await importAndCommit(backup); // the OLD file, carrying the OLD model
+    expect(written).toHaveLength(0);
+    const log = await db.getAllEvents();
+    expect(log).toHaveLength(1);
+    expect(log[0].trainModel).toBe('H5');
+    expect(log[0].id).toBe('trip-m:jr-kururi:0-1'); // this class DOES rebuild the same id
+  });
+
+  it('TRIP-LESS row: content id hashes trainModel — ONLY ownRestoreKey prevents a revert/double', async () => {
+    const backup = ownCsv({ tripId: '', source: 'manual', model: 'キハ' });
+    const first = await importAndCommit(backup);
+    expect(first[0].id.startsWith('evt-')).toBe(true); // content-addressed (no tripId to rebuild)
+    await editModelInPlace('キハ40');
+    const written = await importAndCommit(backup);
+    // The old file would mint evt-hash(キハ) — the SAME id as the stored row, whose bulkPut
+    // overwrite would silently REVERT the edit. The ownRestoreKey net (segmentId|source|createdAt,
+    // trainModel-free) must drop it BEFORE the write.
+    expect(written).toHaveLength(0);
+    const log = await db.getAllEvents();
+    expect(log).toHaveLength(1);
+    expect(log[0].trainModel).toBe('キハ40');
+  });
+
+  it('IMPORT-source row: old backup re-import is dropped by logicalRideKey — edit survives', async () => {
+    const backup = ownCsv({ tripId: 'batch:trip:0', source: 'import', model: 'E353' });
+    await importAndCommit(backup);
+    await editModelInPlace('E257');
+    const written = await importAndCommit(backup);
+    expect(written).toHaveLength(0);
+    const log = await db.getAllEvents();
+    expect(log).toHaveLength(1);
+    expect(log[0].trainModel).toBe('E257');
+  });
+});

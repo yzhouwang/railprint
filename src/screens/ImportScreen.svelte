@@ -16,7 +16,15 @@
   import Icon from '../components/Icon.svelte';
   import ProgressBar from '../components/ProgressBar.svelte';
   import EmptyState from '../components/EmptyState.svelte';
-  import { events, geo, packages, headline, requestPersistence, removeEvents } from '../lib/store';
+  import {
+    events,
+    geo,
+    packages,
+    headline,
+    requestPersistence,
+    removeEvents,
+    seedCelebratedMilestones,
+  } from '../lib/store';
   import { toast, goToTab } from '../lib/ui';
   import * as db from '../lib/db';
   import { parseImport, type ParseResult } from '../lib/import/parse';
@@ -244,6 +252,11 @@
       const resolution = buildResolution();
       const committedMode = mode; // capture before reset() clears it
       const written = await commitImport(parsed.resolved, resolution, get(packages), mode);
+
+      // v0.13 6A: an import/restore SEEDS the celebrated-milestone set silently — a backup
+      // restore on a fresh device must never burst years-old achievement toasts; only a live
+      // in-session mark celebrates.
+      await seedCelebratedMilestones();
 
       // Durability: first ever import asks the browser to make storage persistent.
       if (!(await db.getMeta<boolean>(PERSIST_KEY))) {
