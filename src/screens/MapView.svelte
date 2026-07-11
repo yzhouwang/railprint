@@ -28,7 +28,7 @@
   import { SearchSeq, sameStation, classifyRoutes, type RouteOutcome } from '../lib/marking';
   import Pill from '../components/Pill.svelte';
   import { sameModel, collectionFold, foldPreview, resolveModel, modelByFold } from '../lib/train-models';
-  import { suggestModels } from '../lib/model-suggest';
+  import { suggestModels, lineContexts, NO_PROFILE_HINT } from '../lib/model-suggest';
   import { markMode, toast, goToTab, collectionSheetRequest } from '../lib/ui';
   import { tokens } from '../design/tokens';
   import type { RailGeoPackage, RailLine, RouteCandidate } from '../contract/types';
@@ -138,13 +138,31 @@
     resetSearch();
   }
 
-  // Chips v2 (D8): fold-deduped recents ranked line-aware from the user's OWN history, padded
-  // from the known list — all inside the pure model-suggest lib (same O(events) single-pass
-  // discipline as v1; the pre-migration behavior is pinned in model-suggest.test.ts).
+  // Chips v3 (plausibility gate): fold-deduped recents ranked line-aware from the user's OWN
+  // history, padded from the context lines' fact-checked service profiles — all inside the
+  // pure model-suggest lib (line-profiles.ts holds the data; the no-context v2 behavior stays
+  // pinned in model-suggest.test.ts). Zero chips is a legitimate state now: unprofiled lines
+  // show the honest free-text hint instead of implausible pads.
+  //
+  // BOTH mark flows supply contexts (outside-voice P1: search mode was falling open to the
+  // CN-first legacy pads): tap mode = the selected line; search mode = the union of lines
+  // across the found route candidates (the user is about to ride one of them). Search mode
+  // NEVER reads selectedLine — switchEntry keeps it when leaving tap mode, so it can be a
+  // stale, unrelated line (adversarial-review finding: a lingering 山手線 pick must not
+  // gate a searched Shinkansen route). Before a route exists the context is KNOWN-EMPTY
+  // ([]), not absent — recents only, no pads, and no hint (we cannot name a line yet).
+  const markContexts = $derived.by(() =>
+    entryMode === 'search'
+      ? lineContexts([...new Set(routeChoices.flatMap((r) => r.lines))], (id) => $geo.lineById.get(id))
+      : selectedLine
+        ? [selectedLine] // RailLine satisfies LineContext structurally
+        : [],
+  );
   const modelSuggestions = $derived.by(() =>
     suggestModels($events, {
-      lineId: selectedLine?.lineId,
+      lineId: entryMode === 'tap' ? selectedLine?.lineId : undefined,
       lineOfSegment: (sid) => $geo.segmentById.get(sid)?.lineId,
+      contexts: markContexts,
       max: 8,
     }),
   );
@@ -1248,6 +1266,14 @@
                 >{m}</Pill>
               {/each}
             </div>
+          {:else if markTrainModel.trim() === '' && markContexts.length > 0}
+            <!-- Honest empty state (v3 gate): an unprofiled line pads nothing — free text
+                 is the capture path, and suggestions never pretend to be eligibility.
+                 Yields to the fold preview once the user types (design-lite: the two muted
+                 lines otherwise stack); role="status" matches the blessed .no-hit pattern.
+                 Requires a KNOWN line — 「この路線」 must not render before search mode has
+                 found a route (adversarial-review copy finding). -->
+            <p class="train-preview u-muted" role="status">{NO_PROFILE_HINT}</p>
           {/if}
         </div>
       {/if}

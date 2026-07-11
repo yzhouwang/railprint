@@ -167,6 +167,32 @@ test('zero models but rides exist: the shelf invites instead of shaming; the she
   await expect(sheet.getByText('未乗車').first()).toBeVisible();
 });
 
+test('editor chips are plausibility-gated: profile stock on 山手線, honest hint on an unprofiled line', async ({ page }) => {
+  // v0.13.1 v3 gate regression pin (user report 2026-07-10): the v2 editor padded the CN-first
+  // KNOWN list (CR400AF…) on EVERY trip. Now chips come from the trip lines' service profiles,
+  // and an unprofiled line shows the free-text hint instead of confidently-wrong chips.
+  const GINZA_SEG = 'jp-東京地下鉄-3号線銀座線:003922-003883'; // real segment; 銀座線 has no profile
+  await bootToStats(page, [
+    { id: 't1:' + JP_SEG, segmentId: JP_SEG, railGeoVersion: '2025.2.0', source: 'import', tripId: 't1', date: '2026-01-15', createdAt: '2026-01-15T00:00:00.000Z' },
+    { id: 't2:' + GINZA_SEG, segmentId: GINZA_SEG, railGeoVersion: '2025.2.0', source: 'import', tripId: 't2', date: '2026-02-01', createdAt: '2026-02-01T00:00:00.000Z' },
+  ]);
+  await expect(page.locator('.trip')).toHaveCount(2, { timeout: 15_000 });
+
+  // Unprofiled 銀座線 trip (date-led row identity, diary.spec idiom): zero chips + the hint.
+  await page.locator('.trip', { hasText: '2026.02.01' }).getByRole('button', { name: /＋車両/ }).click();
+  await expect(page.getByText('この路線の候補は未収録です。自由入力で記録できます。')).toBeVisible();
+  await expect(page.locator('.editor-chips')).toHaveCount(0);
+
+  // 山手線 trip: its real stock pads (profile order), and the old CN-first pad is gone.
+  await page.locator('.trip', { hasText: '2026.01.15' }).getByRole('button', { name: /＋車両/ }).click();
+  const chips = page.locator('.editor-chips');
+  await expect(chips.getByRole('button', { name: 'E235系', exact: true })).toBeVisible();
+  await expect(chips).not.toContainText('CR400AF');
+  // Tapping a gated-in chip still drives the capture loop end to end (DD5 unchanged).
+  await chips.getByRole('button', { name: 'E235系', exact: true }).click();
+  await expect(page.locator('#dex-edit-input')).toHaveValue('E235系');
+});
+
 test('live mark with a new model: first-collect toast (D14) taps through to the sheet (DD4)', async ({ page }) => {
   // Boot with one ride so the map mounts and the mark FAB is reachable (route-picker idiom).
   await page.goto('/?e2e=1');
