@@ -61,9 +61,11 @@ describe('MODEL_REGISTRY roster pins (D6 honest denominators)', () => {
     expect(corridor.every((m) => m.country === 'CN' && m.active)).toBe(true);
   });
 
-  it('roster size stays in the curated band (~50-70, plan 15A)', () => {
-    expect(MODEL_REGISTRY.length).toBeGreaterThanOrEqual(50);
-    expect(MODEL_REGISTRY.length).toBeLessThanOrEqual(70);
+  it('roster size stays in the curated band (~150-200; re-pinned for the 2026-07-11 full-roster expansion)', () => {
+    // Deliberate re-pin (knob≠constant rule): the original ~50-70 band was plan 15A's launch
+    // scope; the expansion sweep grew the roster to the full active universe (166 entries).
+    expect(MODEL_REGISTRY.length).toBeGreaterThanOrEqual(150);
+    expect(MODEL_REGISTRY.length).toBeLessThanOrEqual(200);
   });
 });
 
