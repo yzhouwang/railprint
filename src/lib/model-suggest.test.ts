@@ -337,7 +337,7 @@ describe('suggestModels — v3 gate edge branches (ship coverage audit)', () => 
     // not ubiquitous ⇒ ineligible. Without this rule a 九州 ソニック recent would chip on 山手線.
     const out = suggestModels([ev('883', at(0))], { contexts: [YAMANOTE] });
     expect(out).not.toContain('883系');
-    expect(out).toEqual(['E259系', 'E235系']); // the 山手線 profile still pads, in profile order
+    expect(out).toEqual(['E235系', 'E259系']); // the 山手線 profile still pads, in profile order
   });
 
   it('profile pads truncate at max (山陽 5-fold roster, max 3 keeps profile order)', () => {
