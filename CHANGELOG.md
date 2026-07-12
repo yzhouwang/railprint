@@ -16,7 +16,7 @@ would name, from はるかの281系 to 加古川線の最後の103系.
   MSE, りょうもう, 京阪プレミアムカー, PRiVACE…), heritage survivors (近鉄16000系,
   長野電鉄の元ロマンスカー/成田エクスプレス), and the remaining CRH families. Each entry
   carries provenance, real top speeds, 愛称, and retirement honesty (103系・500系…).
-- **99 new per-line service maps** — the line-aware suggestion chips now work across
+- **100 new per-line service maps** — the line-aware suggestion chips now work across
   the whole network: mark 播但線 and get the 103系 chip, 伯備線 gets やくも273系.
 - Anything you already typed free-text (E531, マリンライナー…) resolves to its new card
   automatically — collections upgrade retroactively on next load.
@@ -25,7 +25,7 @@ would name, from はるかの281系 to 加古川線の最後の103系.
 - **Suggestion chips now lead with the trains you most likely rode**: daily stock first,
   特急 second, DMU third (previously an implementation accident could put a rare relic
   first and push ソニック off the list entirely).
-- 図鑑の特急 section is now a 70-card want-list; rendering stays flat via lazy paint.
+- 図鑑の特急 section is now a 71-card want-list; rendering stays flat via lazy paint.
 
 ### Fixed
 - Free-text collection could silently mis-file other operators' trains (typing 8000系
