@@ -2,6 +2,37 @@
 
 All notable changes to RailPrint are documented here.
 
+## [0.13.2.0] - 2026-07-12
+
+**The full roster.** The 車両図鑑's curated registry grows from 63 to 166 形式 — the
+complete set of vehicles in regular scheduled passenger service (mid-2026) that a rider
+would name, from はるかの281系 to 加古川線の最後の103系.
+
+### Added
+- **+103 fact-checked 形式**: every JR 特急 gap closed (281系 はるか, E257系 踊り子,
+  JR四国8000系 しおかぜ…), the commuter workhorses riders actually board every day
+  (223/225系 新快速, E531系, 315系, 721〜737系…), the DMU families (H100 DECMO,
+  キハ283系 オホーツク, 四国1000/1500形…), the private-railway 特急 bench (アーバンライナー,
+  MSE, りょうもう, 京阪プレミアムカー, PRiVACE…), heritage survivors (近鉄16000系,
+  長野電鉄の元ロマンスカー/成田エクスプレス), and the remaining CRH families. Each entry
+  carries provenance, real top speeds, 愛称, and retirement honesty (103系・500系…).
+- **100 new per-line service maps** — the line-aware suggestion chips now work across
+  the whole network: mark 播但線 and get the 103系 chip, 伯備線 gets やくも273系.
+- Anything you already typed free-text (E531, マリンライナー…) resolves to its new card
+  automatically — collections upgrade retroactively on next load.
+
+### Changed
+- **Suggestion chips now lead with the trains you most likely rode**: daily stock first,
+  特急 second, DMU third (previously an implementation accident could put a rare relic
+  first and push ソニック off the list entirely).
+- 図鑑の特急 section is now a 71-card want-list; rendering stays flat via lazy paint.
+
+### Fixed
+- Free-text collection could silently mis-file other operators' trains (typing 8000系
+  after a 東武 ride landed on JR四国's card) — private-railway and JR四国 numeric 形式
+  are now operator-scoped, and a dozen factual slips from the research pass (wrong lines,
+  a 代走-only service, one merged 形式 pair) were corrected under cross-model review.
+
 ## [0.13.1.0] - 2026-07-11
 
 **Chips that know the line.** The 車両 suggestion chips now understand which trains

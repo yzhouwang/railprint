@@ -660,6 +660,10 @@
     }
   }
   .card {
+    /* 166-entry roster renders ~150 ghost cards eagerly on open — content-visibility keeps
+       offscreen cards unpainted so first paint stays flat as the roster grows (perf review). */
+    content-visibility: auto;
+    contain-intrinsic-size: auto 132px;
     position: relative;
     display: flex;
     flex-direction: column;

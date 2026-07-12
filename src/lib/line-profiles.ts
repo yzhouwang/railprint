@@ -1,4 +1,4 @@
-// Per-line service profiles (v0.13.1 plausibility gate) — PURE DATA + init-time inversion.
+// Per-line service profiles (v0.13.1 plausibility gate) — PURE DATA + init-time inversion (imports only the pure-data registry for pad ordering).
 //
 // WHY THIS FILE EXISTS: the v0.13 capture chips padded from the flat KNOWN_TRAIN_MODELS
 // list, so an empty-history rider marking 東海道新幹線 saw CR400AF…CR200J chips (user
@@ -16,6 +16,8 @@
 //  • This gates SUGGESTIONS ONLY. Free-text entry is never validated against it, and
 //    a rider's own on-this-line history always outranks it (model-suggest G4).
 //
+import { MODEL_REGISTRY } from './model-registry';
+
 // Graduation path: these tables are the curated v1 seed of the D13 line→model capture
 // hints; the Wikidata registry pipeline (TODOS) absorbs them as an overrides file.
 
@@ -166,11 +168,217 @@ const MODEL_SERVICE_LINES: Readonly<Record<string, ModelServiceEntry>> = {
   'GVE400': { lines: ['jp-東日本旅客鉄道-五能線', 'jp-東日本旅客鉄道-羽越線', 'jp-東日本旅客鉄道-信越線', 'jp-東日本旅客鉄道-磐越西線', 'jp-東日本旅客鉄道-奥羽線', 'jp-東日本旅客鉄道-米坂線'] },
   // キハ100/110 family across JR East rural lines; 大船渡線 fully キハ110 since Mar 2025 — ja.wikipedia キハ100系・キハ110系 + RailLab, checked 2026-07
   'キハ110': { lines: ['jp-東日本旅客鉄道-小海線', 'jp-東日本旅客鉄道-飯山線', 'jp-東日本旅客鉄道-磐越東線', 'jp-東日本旅客鉄道-陸羽東線', 'jp-東日本旅客鉄道-石巻線', 'jp-東日本旅客鉄道-只見線', 'jp-東日本旅客鉄道-気仙沼線', 'jp-東日本旅客鉄道-大船渡線', 'jp-東日本旅客鉄道-北上線', 'jp-東日本旅客鉄道-山田線', 'jp-東日本旅客鉄道-花輪線', 'jp-東日本旅客鉄道-陸羽西線', 'jp-アイジーアールいわて銀河鉄道-いわて銀河鉄道線'], ubiquitous: true },
+
+  // ── 2026-07-11 expansion sweep (see model-registry.ts expansion header) ──
+  // キハ283系（オホーツク） — roster provenance on the card: jp-jrh-kiha283
+  'キハ283': { lines: ['jp-北海道旅客鉄道-函館線', 'jp-北海道旅客鉄道-石北線'] },
+  // E257系（踊り子） — roster provenance on the card: jp-jre-e257
+  'E257': { lines: ['jp-東日本旅客鉄道-京葉線', 'jp-東日本旅客鉄道-高崎線', 'jp-東日本旅客鉄道-上越線', 'jp-東日本旅客鉄道-吾妻線', 'jp-東日本旅客鉄道-東北線', 'jp-東日本旅客鉄道-外房線', 'jp-東日本旅客鉄道-内房線', 'jp-東日本旅客鉄道-総武線', 'jp-伊豆急行-伊豆急行線', 'jp-東日本旅客鉄道-東海道線', 'jp-伊豆箱根鉄道-駿豆線'] },
+  // 373系（ふじかわ） — roster provenance on the card: jp-jrc-373
+  '373': { lines: ['jp-東海旅客鉄道-東海道線', 'jp-東海旅客鉄道-身延線', 'jp-東海旅客鉄道-飯田線'] },
+  // 281系（はるか） — roster provenance on the card: jp-jrw-281
+  '281': { lines: ['jp-西日本旅客鉄道-東海道線', 'jp-西日本旅客鉄道-大阪環状線', 'jp-西日本旅客鉄道-阪和線', 'jp-西日本旅客鉄道-関西空港線'] },
+  // 681系（しらさぎ） — roster provenance on the card: jp-jrw-681
+  '681': { lines: ['jp-東海旅客鉄道-東海道線', 'jp-西日本旅客鉄道-北陸線'] },
+  // キハ189系（はまかぜ） — roster provenance on the card: jp-jrw-kiha189
+  'キハ189': { lines: ['jp-西日本旅客鉄道-東海道線', 'jp-西日本旅客鉄道-山陽線', 'jp-西日本旅客鉄道-播但線', 'jp-西日本旅客鉄道-山陰線'] },
+  // キハ187系（スーパーおき） — roster provenance on the card: jp-jrw-kiha187
+  'キハ187': { lines: ['jp-西日本旅客鉄道-山陰線', 'jp-西日本旅客鉄道-山陽線', 'jp-西日本旅客鉄道-山口線', 'jp-智頭急行-智頭線', 'jp-西日本旅客鉄道-因美線'] },
+  // HOT7000系（スーパーはくと） — roster provenance on the card: jp-chizu-hot7000
+  'HOT7000': { lines: ['jp-西日本旅客鉄道-東海道線', 'jp-西日本旅客鉄道-山陽線', 'jp-智頭急行-智頭線', 'jp-西日本旅客鉄道-山陰線', 'jp-西日本旅客鉄道-因美線'] },
+  // 四国8000系（しおかぜ） — roster provenance on the card: jp-jrs-8000
+  '四国8000': { lines: ['jp-四国旅客鉄道-予讃線', 'jp-四国旅客鉄道-本四備讃線', 'jp-西日本旅客鉄道-宇野線', 'jp-西日本旅客鉄道-本四備讃線'] },
+  // 四国2600系（うずしお） — roster provenance on the card: jp-jrs-2600
+  '四国2600': { lines: ['jp-四国旅客鉄道-高徳線'] },
+  // キハ185系（剣山） — roster provenance on the card: jp-jrs-kiha185
+  'キハ185': { lines: ['jp-四国旅客鉄道-徳島線', 'jp-四国旅客鉄道-高徳線'] },
+  // 783系（みどり） — roster provenance on the card: jp-jrk-783
+  '783': { lines: ['jp-九州旅客鉄道-長崎線', 'jp-九州旅客鉄道-佐世保線', 'jp-九州旅客鉄道-大村線', 'jp-九州旅客鉄道-鹿児島線'] },
+  // キハ71系（ゆふいんの森） — roster provenance on the card: jp-jrk-kiha71
+  'キハ71': { lines: ['jp-九州旅客鉄道-久大線', 'jp-九州旅客鉄道-鹿児島線', 'jp-九州旅客鉄道-日豊線'] },
+  // キハ72系（ゆふいんの森） — roster provenance on the card: jp-jrk-kiha72
+  'キハ72': { lines: ['jp-九州旅客鉄道-久大線', 'jp-九州旅客鉄道-鹿児島線', 'jp-九州旅客鉄道-日豊線'] },
+  // 東武500系（リバティ） — roster provenance on the card: jp-tobu-500
+  '東武500': { lines: ['jp-東武鉄道-伊勢崎線', 'jp-東武鉄道-日光線', 'jp-東武鉄道-鬼怒川線', 'jp-東武鉄道-桐生線', 'jp-野岩鉄道-会津鬼怒川線', 'jp-会津鉄道-会津線'] },
+  // 東武200系（りょうもう） — roster provenance on the card: jp-tobu-200
+  '東武200': { lines: ['jp-東武鉄道-伊勢崎線', 'jp-東武鉄道-桐生線'] },
+  // 東武100系（スペーシア） — roster provenance on the card: jp-tobu-100
+  '東武100': { lines: ['jp-東武鉄道-日光線', 'jp-東武鉄道-鬼怒川線', 'jp-東武鉄道-伊勢崎線'] },
+  // 小田急30000形（EXE） — roster provenance on the card: jp-odakyu-30000
+  '小田急30000': { lines: ['jp-小田急電鉄-小田原線', 'jp-小田急電鉄-江ノ島線', 'jp-小田急箱根-鉄道線'] },
+  // 小田急60000形（MSE） — roster provenance on the card: jp-odakyu-60000
+  '小田急60000': { lines: ['jp-小田急電鉄-小田原線', 'jp-小田急電鉄-江ノ島線', 'jp-東京地下鉄-9号線千代田線', 'jp-東海旅客鉄道-御殿場線', 'jp-小田急箱根-鉄道線', 'jp-小田急電鉄-多摩線'] },
+  // 京急2100形（ドレミファインバータ） — roster provenance on the card: jp-keikyu-2100
+  '京急2100': { lines: ['jp-京浜急行電鉄-本線', 'jp-京浜急行電鉄-久里浜線', 'jp-京浜急行電鉄-空港線'] },
+  // 近鉄21000系（アーバンライナー） — roster provenance on the card: jp-kintetsu-21000
+  '近鉄21000': { lines: ['jp-近畿日本鉄道-難波線', 'jp-近畿日本鉄道-大阪線', 'jp-近畿日本鉄道-名古屋線'] },
+  // 近鉄30000系（ビスタEX） — roster provenance on the card: jp-kintetsu-30000
+  '近鉄30000': { lines: ['jp-近畿日本鉄道-大阪線', 'jp-近畿日本鉄道-名古屋線', 'jp-近畿日本鉄道-山田線', 'jp-近畿日本鉄道-鳥羽線', 'jp-近畿日本鉄道-志摩線', 'jp-近畿日本鉄道-京都線', 'jp-近畿日本鉄道-奈良線', 'jp-近畿日本鉄道-橿原線'] },
+  // 近鉄26000系（さくらライナー） — roster provenance on the card: jp-kintetsu-26000
+  '近鉄26000': { lines: ['jp-近畿日本鉄道-南大阪線', 'jp-近畿日本鉄道-吉野線'] },
+  // 近鉄23000系（伊勢志摩ライナー） — roster provenance on the card: jp-kintetsu-23000
+  '近鉄23000': { lines: ['jp-近畿日本鉄道-難波線', 'jp-近畿日本鉄道-大阪線', 'jp-近畿日本鉄道-名古屋線', 'jp-近畿日本鉄道-山田線', 'jp-近畿日本鉄道-鳥羽線', 'jp-近畿日本鉄道-志摩線', 'jp-近畿日本鉄道-京都線', 'jp-近畿日本鉄道-奈良線', 'jp-近畿日本鉄道-橿原線'] },
+  // 近鉄22000系（ACE） — roster provenance on the card: jp-kintetsu-22000
+  '近鉄22000': { lines: ['jp-近畿日本鉄道-大阪線', 'jp-近畿日本鉄道-名古屋線', 'jp-近畿日本鉄道-奈良線', 'jp-近畿日本鉄道-京都線', 'jp-近畿日本鉄道-橿原線'] },
+  // 近鉄16600系（Ace） — roster provenance on the card: jp-kintetsu-16600
+  '近鉄16600': { lines: ['jp-近畿日本鉄道-南大阪線', 'jp-近畿日本鉄道-吉野線'] },
+  // 南海30000系（こうや） — roster provenance on the card: jp-nankai-30000
+  '南海30000': { lines: ['jp-南海電気鉄道-高野線'] },
+  // 南海12000系（サザン・プレミアム） — roster provenance on the card: jp-nankai-12000
+  '南海12000': { lines: ['jp-南海電気鉄道-南海本線', 'jp-南海電気鉄道-和歌山港線', 'jp-南海電気鉄道-泉北線'] },
+  // 名鉄2200系 — roster provenance on the card: jp-meitetsu-2200
+  '名鉄2200': { lines: ['jp-名古屋鉄道-名古屋本線', 'jp-名古屋鉄道-犬山線', 'jp-名古屋鉄道-空港線', 'jp-名古屋鉄道-常滑線', 'jp-名古屋鉄道-河和線', 'jp-名古屋鉄道-知多新線', 'jp-名古屋鉄道-豊川線'] },
+  // 名鉄1200系（パノラマスーパー） — roster provenance on the card: jp-meitetsu-1200
+  '名鉄1200': { lines: ['jp-名古屋鉄道-名古屋本線'] },
+  // 京阪8000系（プレミアムカー） — roster provenance on the card: jp-keihan-8000
+  '京阪8000': { lines: ['jp-京阪電気鉄道-京阪本線', 'jp-京阪電気鉄道-鴨東線'] },
+  // 京阪3000系（洛楽） — roster provenance on the card: jp-keihan-3000
+  '京阪3000': { lines: ['jp-京阪電気鉄道-京阪本線', 'jp-京阪電気鉄道-鴨東線'] },
+  // 阪急2300系（PRiVACE） — roster provenance on the card: jp-hankyu-2300
+  '阪急2300': { lines: ['jp-阪急電鉄-京都線'] },
+  // 阪急9300系（PRiVACE） — roster provenance on the card: jp-hankyu-9300
+  '阪急9300': { lines: ['jp-阪急電鉄-京都線'] },
+  // 西鉄3000形（水都(柳川観光列車)） — roster provenance on the card: jp-nishitetsu-3000
+  '西鉄3000': { lines: ['jp-西日本鉄道-天神大牟田線', 'jp-西日本鉄道-太宰府線'] },
+  // 富士急8500系（富士山ビュー特急） — roster provenance on the card: jp-fujikyu-8500
+  '富士急8500': { lines: ['jp-富士山麓電気鉄道-大月線', 'jp-富士山麓電気鉄道-河口湖線'] },
+  // 富士急8000系（フジサン特急） — roster provenance on the card: jp-fujikyu-8000
+  '富士急8000': { lines: ['jp-富士山麓電気鉄道-大月線', 'jp-富士山麓電気鉄道-河口湖線'] },
+  // 長野電鉄2100系（スノーモンキー） — roster provenance on the card: jp-nagaden-2100
+  '長野電鉄2100': { lines: ['jp-長野電鉄-長野線'] },
+  // 長野電鉄1000系（ゆけむり） — roster provenance on the card: jp-nagaden-1000
+  '長野電鉄1000': { lines: ['jp-長野電鉄-長野線'] },
+  // KTR8000形（丹後の海） — roster provenance on the card: jp-tantetsu-ktr8000
+  'KTR8000': { lines: ['jp-WILLERTRAINS-宮福線', 'jp-WILLERTRAINS-宮津線', 'jp-西日本旅客鉄道-山陰線', 'jp-西日本旅客鉄道-舞鶴線'] },
+  // 四国2000系（宇和海） — roster provenance on the card: jp-jrs-2000
+  '四国2000': { lines: ['jp-四国旅客鉄道-予讃線', 'jp-四国旅客鉄道-内子線', 'jp-四国旅客鉄道-土讃線', 'jp-土佐くろしお鉄道-中村線', 'jp-土佐くろしお鉄道-宿毛線'] },
+  // 近鉄16000系（吉野特急） — roster provenance on the card: jp-kintetsu-16000
+  '近鉄16000': { lines: ['jp-近畿日本鉄道-南大阪線', 'jp-近畿日本鉄道-吉野線'] },
+  // 721系（快速エアポート） — roster provenance on the card: jp-jrh-721
+  '721': { lines: ['jp-北海道旅客鉄道-函館線', 'jp-北海道旅客鉄道-千歳線', 'jp-北海道旅客鉄道-札沼線'] },
+  // 731系 — roster provenance on the card: jp-jrh-731
+  '731': { lines: ['jp-北海道旅客鉄道-函館線', 'jp-北海道旅客鉄道-千歳線', 'jp-北海道旅客鉄道-札沼線'] },
+  // 733系（快速エアポート） — roster provenance on the card: jp-jrh-733
+  '733': { lines: ['jp-北海道旅客鉄道-函館線', 'jp-北海道旅客鉄道-千歳線', 'jp-北海道旅客鉄道-札沼線', 'jp-北海道旅客鉄道-室蘭線'] },
+  // 735系 — roster provenance on the card: jp-jrh-735
+  '735': { lines: ['jp-北海道旅客鉄道-函館線', 'jp-北海道旅客鉄道-札沼線'] },
+  // 737系 — roster provenance on the card: jp-jrh-737
+  '737': { lines: ['jp-北海道旅客鉄道-室蘭線', 'jp-北海道旅客鉄道-函館線'] },
+  // E131系 — roster provenance on the card: jp-jre-e131
+  'E131': { lines: ['jp-東日本旅客鉄道-相模線', 'jp-東日本旅客鉄道-東北線', 'jp-東日本旅客鉄道-日光線', 'jp-東日本旅客鉄道-内房線', 'jp-東日本旅客鉄道-外房線', 'jp-東日本旅客鉄道-鹿島線', 'jp-東日本旅客鉄道-成田線', 'jp-東日本旅客鉄道-鶴見線', 'jp-東日本旅客鉄道-仙石線'] },
+  // 701系 — roster provenance on the card: jp-jre-701
+  '701': { lines: ['jp-東日本旅客鉄道-東北線', 'jp-東日本旅客鉄道-奥羽線', 'jp-東日本旅客鉄道-常磐線', 'jp-東日本旅客鉄道-羽越線', 'jp-東日本旅客鉄道-田沢湖線', 'jp-東日本旅客鉄道-津軽線'] },
+  // E721系 — roster provenance on the card: jp-jre-e721
+  'E721': { lines: ['jp-東日本旅客鉄道-東北線', 'jp-東日本旅客鉄道-常磐線', 'jp-東日本旅客鉄道-仙山線', 'jp-仙台空港鉄道-仙台空港線'] },
+  // E129系 — roster provenance on the card: jp-jre-e129
+  'E129': { lines: ['jp-東日本旅客鉄道-信越線', 'jp-東日本旅客鉄道-白新線', 'jp-東日本旅客鉄道-越後線', 'jp-東日本旅客鉄道-弥彦線', 'jp-東日本旅客鉄道-羽越線', 'jp-東日本旅客鉄道-上越線'] },
+  // 209系 — roster provenance on the card: jp-jre-209
+  '209': { lines: ['jp-東日本旅客鉄道-武蔵野線', 'jp-東日本旅客鉄道-京葉線'] },
+  // 719系 — roster provenance on the card: jp-jre-719
+  '719': { lines: ['jp-東日本旅客鉄道-奥羽線'] },
+  // E501系 — roster provenance on the card: jp-jre-e501
+  'E501': { lines: ['jp-東日本旅客鉄道-常磐線'] },
+  // 315系 — roster provenance on the card: jp-jrc-315
+  '315': { lines: ['jp-東海旅客鉄道-中央線', 'jp-東海旅客鉄道-東海道線', 'jp-東海旅客鉄道-関西線', 'jp-東海旅客鉄道-武豊線'] },
+  // 223系（新快速） — roster provenance on the card: jp-jrw-223
+  '223': { lines: ['jp-西日本旅客鉄道-東海道線', 'jp-西日本旅客鉄道-山陽線', 'jp-西日本旅客鉄道-湖西線', 'jp-西日本旅客鉄道-北陸線', 'jp-西日本旅客鉄道-関西空港線', 'jp-西日本旅客鉄道-阪和線', 'jp-西日本旅客鉄道-赤穂線', 'jp-西日本旅客鉄道-福知山線', 'jp-西日本旅客鉄道-宇野線', 'jp-西日本旅客鉄道-本四備讃線', 'jp-四国旅客鉄道-本四備讃線'] },
+  // 225系（新快速） — roster provenance on the card: jp-jrw-225
+  '225': { lines: ['jp-西日本旅客鉄道-東海道線', 'jp-西日本旅客鉄道-山陽線', 'jp-西日本旅客鉄道-湖西線', 'jp-西日本旅客鉄道-北陸線', 'jp-西日本旅客鉄道-阪和線', 'jp-西日本旅客鉄道-関西空港線', 'jp-西日本旅客鉄道-赤穂線', 'jp-西日本旅客鉄道-福知山線'] },
+  // 221系（大和路快速） — roster provenance on the card: jp-jrw-221
+  '221': { lines: ['jp-西日本旅客鉄道-関西線', 'jp-西日本旅客鉄道-大阪環状線', 'jp-西日本旅客鉄道-奈良線', 'jp-西日本旅客鉄道-山陰線', 'jp-西日本旅客鉄道-草津線', 'jp-西日本旅客鉄道-湖西線', 'jp-西日本旅客鉄道-東海道線', 'jp-西日本旅客鉄道-おおさか東線'] },
+  // 321系（JR京都線） — roster provenance on the card: jp-jrw-321
+  '321': { lines: ['jp-西日本旅客鉄道-東海道線', 'jp-西日本旅客鉄道-山陽線', 'jp-西日本旅客鉄道-福知山線', 'jp-西日本旅客鉄道-JR東西線', 'jp-西日本旅客鉄道-片町線'] },
+  // 207系（学研都市線） — roster provenance on the card: jp-jrw-207
+  '207': { lines: ['jp-西日本旅客鉄道-JR東西線', 'jp-西日本旅客鉄道-片町線', 'jp-西日本旅客鉄道-福知山線', 'jp-西日本旅客鉄道-東海道線', 'jp-西日本旅客鉄道-山陽線'] },
+  // 521系（あいの風ライナー） — roster provenance on the card: jp-jrw-521
+  '521': { lines: ['jp-西日本旅客鉄道-北陸線', 'jp-西日本旅客鉄道-湖西線', 'jp-西日本旅客鉄道-七尾線', 'jp-あいの風とやま鉄道-あいの風とやま鉄道線', 'jp-IRいしかわ鉄道-IRいしかわ鉄道線', 'jp-ハピラインふくい-ハピラインふくい線'] },
+  // 115系（岡山地区普通） — roster provenance on the card: jp-jrw-115
+  '115': { lines: ['jp-西日本旅客鉄道-福塩線', 'jp-西日本旅客鉄道-山陽線'] },
+  // 113系 — roster provenance on the card: jp-jrw-113
+  '113': { lines: ['jp-西日本旅客鉄道-山陰線', 'jp-西日本旅客鉄道-舞鶴線'] },
+  // 105系（宇部線普通） — roster provenance on the card: jp-jrw-105
+  '105': { lines: ['jp-西日本旅客鉄道-福塩線', 'jp-西日本旅客鉄道-宇部線', 'jp-西日本旅客鉄道-小野田線', 'jp-西日本旅客鉄道-山陽線'] },
+  // 125系（加古川線普通） — roster provenance on the card: jp-jrw-125
+  '125': { lines: ['jp-西日本旅客鉄道-小浜線', 'jp-西日本旅客鉄道-加古川線', 'jp-西日本旅客鉄道-舞鶴線'] },
+  // 四国5000系（マリンライナー） — roster provenance on the card: jp-jrs-5000
+  '四国5000': { lines: ['jp-四国旅客鉄道-本四備讃線', 'jp-四国旅客鉄道-予讃線', 'jp-西日本旅客鉄道-宇野線', 'jp-西日本旅客鉄道-本四備讃線'] },
+  // 四国7000系 — roster provenance on the card: jp-jrs-7000
+  '四国7000': { lines: ['jp-四国旅客鉄道-予讃線', 'jp-四国旅客鉄道-土讃線'] },
+  // 813系（福北ゆたか線） — roster provenance on the card: jp-jrk-813
+  '813': { lines: ['jp-九州旅客鉄道-鹿児島線', 'jp-九州旅客鉄道-日豊線', 'jp-九州旅客鉄道-長崎線', 'jp-九州旅客鉄道-筑豊線', 'jp-九州旅客鉄道-篠栗線'] },
+  // 815系 — roster provenance on the card: jp-jrk-815
+  '815': { lines: ['jp-九州旅客鉄道-豊肥線', 'jp-九州旅客鉄道-鹿児島線', 'jp-九州旅客鉄道-日豊線'] },
+  // 817系（シーサイドライナー） — roster provenance on the card: jp-jrk-817
+  '817': { lines: ['jp-九州旅客鉄道-鹿児島線', 'jp-九州旅客鉄道-日豊線', 'jp-九州旅客鉄道-長崎線', 'jp-九州旅客鉄道-佐世保線', 'jp-九州旅客鉄道-筑豊線', 'jp-九州旅客鉄道-豊肥線'] },
+  // 821系 — roster provenance on the card: jp-jrk-821
+  '821': { lines: ['jp-九州旅客鉄道-鹿児島線', 'jp-九州旅客鉄道-筑豊線', 'jp-九州旅客鉄道-篠栗線', 'jp-九州旅客鉄道-豊肥線'] },
+  // 811系 — roster provenance on the card: jp-jrk-811
+  '811': { lines: ['jp-九州旅客鉄道-鹿児島線', 'jp-九州旅客鉄道-日豊線', 'jp-九州旅客鉄道-長崎線'] },
+  // 305系 — roster provenance on the card: jp-jrk-305
+  '305': { lines: ['jp-九州旅客鉄道-筑肥線', 'jp-九州旅客鉄道-唐津線'] },
+  // 303系 — roster provenance on the card: jp-jrk-303
+  '303': { lines: ['jp-九州旅客鉄道-筑肥線', 'jp-九州旅客鉄道-唐津線'] },
+  // 415系（関門仕様） — roster provenance on the card: jp-jrk-415
+  '415': { lines: ['jp-九州旅客鉄道-鹿児島線', 'jp-九州旅客鉄道-山陽線'] },
+  // 京急1000形（新1000形） — roster provenance on the card: jp-keikyu-1000
+  '京急1000': { lines: ['jp-京浜急行電鉄-本線', 'jp-京浜急行電鉄-空港線', 'jp-京浜急行電鉄-久里浜線', 'jp-京浜急行電鉄-逗子線', 'jp-京浜急行電鉄-大師線', 'jp-東京都-1号線浅草線', 'jp-京成電鉄-本線', 'jp-京成電鉄-押上線'] },
+  // 西鉄9000形 — roster provenance on the card: jp-nishitetsu-9000
+  '西鉄9000': { lines: ['jp-西日本鉄道-天神大牟田線', 'jp-西日本鉄道-太宰府線'] },
+  // SR1系（しなのサンライズ） — roster provenance on the card: jp-shinano-sr1
+  'SR1': { lines: ['jp-しなの鉄道-しなの鉄道線', 'jp-しなの鉄道-北しなの線', 'jp-東日本旅客鉄道-信越線'] },
+  // 富山地鉄16010形（アルプスエキスプレス） — roster provenance on the card: jp-chitetsu-16010
+  '富山地鉄16010': { lines: ['jp-富山地方鉄道-本線', 'jp-富山地方鉄道-立山線', 'jp-富山地方鉄道-上滝線', 'jp-富山地方鉄道-不二越線'] },
+  // 富山地鉄10030形 — roster provenance on the card: jp-chitetsu-10030
+  '富山地鉄10030': { lines: ['jp-富山地方鉄道-本線', 'jp-富山地方鉄道-立山線', 'jp-富山地方鉄道-上滝線'] },
+  // E531系 — roster provenance on the card: jp-jre-e531
+  'E531': { lines: ['jp-東日本旅客鉄道-常磐線', 'jp-東日本旅客鉄道-水戸線', 'jp-東日本旅客鉄道-東海道線', 'jp-東日本旅客鉄道-東北線'] },
+  // BEC819系（DENCHA） — roster provenance on the card: jp-jrk-bec819
+  'BEC819': { lines: ['jp-九州旅客鉄道-香椎線', 'jp-九州旅客鉄道-筑豊線', 'jp-九州旅客鉄道-鹿児島線'] },
+  // 103系 — roster provenance on the card: jp-jrw-103
+  '103': { lines: ['jp-西日本旅客鉄道-播但線', 'jp-西日本旅客鉄道-加古川線'] },
+  // H100形（DECMO） — roster provenance on the card: jp-jrh-h100
+  'H100': { lines: ['jp-北海道旅客鉄道-函館線', 'jp-北海道旅客鉄道-宗谷線', 'jp-北海道旅客鉄道-石北線', 'jp-北海道旅客鉄道-室蘭線', 'jp-北海道旅客鉄道-根室線', 'jp-北海道旅客鉄道-富良野線', 'jp-北海道旅客鉄道-釧網線'] },
+  // キハ150形 — roster provenance on the card: jp-jrh-kiha150
+  'キハ150': { lines: ['jp-北海道旅客鉄道-函館線', 'jp-北海道旅客鉄道-富良野線', 'jp-北海道旅客鉄道-宗谷線', 'jp-北海道旅客鉄道-石北線', 'jp-北海道旅客鉄道-根室線'] },
+  // キハ201系 — roster provenance on the card: jp-jrh-kiha201
+  'キハ201': { lines: ['jp-北海道旅客鉄道-函館線', 'jp-北海道旅客鉄道-千歳線'] },
+  // キハ54形 — roster provenance on the card: jp-jr-kiha54
+  'キハ54': { lines: ['jp-北海道旅客鉄道-根室線', 'jp-四国旅客鉄道-予土線', 'jp-四国旅客鉄道-予讃線', 'jp-四国旅客鉄道-内子線'] },
+  // HB-E210系（仙石東北ライン(特別快速)） — roster provenance on the card: jp-jre-hbe210
+  'HBE210': { lines: ['jp-東日本旅客鉄道-石巻線', 'jp-東日本旅客鉄道-仙石線', 'jp-東日本旅客鉄道-東北線'] },
+  // HB-E220系 — roster provenance on the card: jp-jre-hbe220
+  'HBE220': { lines: ['jp-東日本旅客鉄道-八高線', 'jp-東日本旅客鉄道-釜石線', 'jp-東日本旅客鉄道-東北線'] },
+  // キハ100系 — roster provenance on the card: jp-jre-kiha100
+  'キハ100': { lines: ['jp-東日本旅客鉄道-北上線', 'jp-東日本旅客鉄道-釜石線'] },
+  // キハ25系 — roster provenance on the card: jp-jrc-kiha25
+  'キハ25': { lines: ['jp-東海旅客鉄道-高山線', 'jp-東海旅客鉄道-太多線', 'jp-東海旅客鉄道-紀勢線', 'jp-東海旅客鉄道-参宮線'] },
+  // キハ75系（快速みえ） — roster provenance on the card: jp-jrc-kiha75
+  'キハ75': { lines: ['jp-東海旅客鉄道-紀勢線', 'jp-東海旅客鉄道-参宮線', 'jp-東海旅客鉄道-関西線', 'jp-東海旅客鉄道-高山線', 'jp-東海旅客鉄道-太多線'] },
+  // キハ120形（木次線） — roster provenance on the card: jp-jrw-kiha120
+  'キハ120': { lines: ['jp-西日本旅客鉄道-木次線', 'jp-西日本旅客鉄道-因美線', 'jp-西日本旅客鉄道-姫新線', 'jp-西日本旅客鉄道-芸備線', 'jp-西日本旅客鉄道-山陰線', 'jp-西日本旅客鉄道-津山線', 'jp-西日本旅客鉄道-美祢線', 'jp-西日本旅客鉄道-高山線', 'jp-西日本旅客鉄道-越美北線'] },
+  // キハ126系（山陰リレー号代走） — roster provenance on the card: jp-jrw-kiha126
+  'キハ126': { lines: ['jp-西日本旅客鉄道-山陰線', 'jp-西日本旅客鉄道-因美線', 'jp-西日本旅客鉄道-境線'] },
+  // キハ32形 — roster provenance on the card: jp-jrs-kiha32
+  'キハ32': { lines: ['jp-四国旅客鉄道-予土線', 'jp-四国旅客鉄道-内子線', 'jp-四国旅客鉄道-予讃線'] },
+  // YC1系 — roster provenance on the card: jp-jrk-yc1
+  'YC1': { lines: ['jp-九州旅客鉄道-佐世保線', 'jp-九州旅客鉄道-大村線', 'jp-九州旅客鉄道-長崎線'] },
+  // キハ200系（シーサイドライナー(初代)） — roster provenance on the card: jp-jrk-kiha200
+  'キハ200': { lines: ['jp-九州旅客鉄道-久大線', 'jp-九州旅客鉄道-豊肥線', 'jp-九州旅客鉄道-指宿枕崎線'] },
+  // HSOR100形（おれんじ食堂） — roster provenance on the card: jp-hisatsu-hsor100
+  'HSOR100': { lines: ['jp-肥薩おれんじ鉄道-肥薩おれんじ鉄道線'] },
+  // 四国1000形 — roster provenance on the card: jp-jrs-1000
+  '四国1000': { lines: ['jp-四国旅客鉄道-高徳線', 'jp-四国旅客鉄道-徳島線', 'jp-四国旅客鉄道-土讃線', 'jp-四国旅客鉄道-牟岐線', 'jp-四国旅客鉄道-鳴門線'] },
+  // 四国1500形 — roster provenance on the card: jp-jrs-1500
+  '四国1500': { lines: ['jp-四国旅客鉄道-高徳線', 'jp-四国旅客鉄道-徳島線', 'jp-四国旅客鉄道-牟岐線', 'jp-四国旅客鉄道-鳴門線', 'jp-四国旅客鉄道-土讃線'] },
 };
 
 // ── init-time inversion: lineId → ordered fold list ─────────────────────────
 // LINE_PROFILES entries come first (curated order = pad order); model-major entries
-// append in MODEL_SERVICE_LINES declaration order (registry order: 特急 → 通勤 → 気動車).
+// append in an EXPLICITLY sorted order (adversarial review: a plain object iterates
+// all-digit keys ('415', '105'…) in ASCENDING NUMERIC order before declaration order —
+// 鹿児島線 pads led with the 415系 関門 relic while ソニック fell out of the 8-chip
+// window). Pads are a user-visible contract, so sort deliberately: daily stock first
+// (commuter), then 特急, then DMU; registry declaration order breaks ties.
 
 const profileByLine = new Map<string, string[]>();
 // Per-line membership Sets keep insertion O(1) as the dataset graduates past the
@@ -180,7 +388,15 @@ for (const [lineId, folds] of Object.entries(LINE_PROFILES)) {
   profileByLine.set(lineId, [...folds]);
   foldSeenByLine.set(lineId, new Set(folds));
 }
-for (const [fold, entry] of Object.entries(MODEL_SERVICE_LINES)) {
+const CATEGORY_PAD_WEIGHT: Record<string, number> = { commuter: 0, 'ltd-express': 1, dmu: 2 };
+const registryIndexByFold = new Map(MODEL_REGISTRY.map((m, i) => [m.fold, i] as const));
+const orderedServiceEntries = Object.entries(MODEL_SERVICE_LINES).sort(([a], [b]) => {
+  const ca = MODEL_REGISTRY[registryIndexByFold.get(a) ?? 0]?.category ?? 'ltd-express';
+  const cb = MODEL_REGISTRY[registryIndexByFold.get(b) ?? 0]?.category ?? 'ltd-express';
+  const w = (CATEGORY_PAD_WEIGHT[ca] ?? 1) - (CATEGORY_PAD_WEIGHT[cb] ?? 1);
+  return w !== 0 ? w : (registryIndexByFold.get(a) ?? 0) - (registryIndexByFold.get(b) ?? 0);
+});
+for (const [fold, entry] of orderedServiceEntries) {
   for (const lineId of entry.lines) {
     const seen = foldSeenByLine.get(lineId);
     if (seen === undefined) {
