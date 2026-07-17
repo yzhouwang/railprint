@@ -15,6 +15,8 @@
   // Decorative internals are exempt from the cascade: window glass fills white, wheels a
   // fixed neutral, shading bands a translucent ink. Accent hues are permitted HERE ONLY
   // (DD8 livery-is-data carve-out); all chrome around this component stays emerald-system.
+  import type { SilhouetteSpec } from '../lib/silhouette-specs';
+
   interface Props {
     variant: 'shinkansen' | 'cn-hsr' | 'express' | 'commuter' | 'dmu';
     /** Body fill (collected card = registry accentColor ?? var(--rail-lit)); OMIT for ghost. */
@@ -23,8 +25,15 @@
     width?: number;
     /** Accessible name; omitted = decorative (aria-hidden). */
     label?: string;
+    /** D21 stage-2 per-model spec (silhouette-specs.ts); when present it REPLACES the
+     *  category variant shape. Livery bands render on collected cards only (fill set) —
+     *  ghosts stay monochrome — and are clipped inside the body (DD8 stays inside fills). */
+    spec?: SilhouetteSpec;
   }
-  let { variant, fill, width, label }: Props = $props();
+  let { variant, fill, width, label, spec }: Props = $props();
+
+  // clipPath ids must be document-unique — many silhouettes render at once in the dex grid.
+  const uid = $props.id();
 
   // Wheel x-positions per variant (wheels are decorative internals — fixed neutral fill).
   const WHEELS: Record<Props['variant'], [number, number]> = {
@@ -50,7 +59,34 @@
 
   <!-- DD10: the ONE place fill is set; every un-filled shape below inherits it -->
   <g fill={fill ?? 'var(--dex-ghost-fill, #DCE5DF)'}>
-    {#if variant === 'shinkansen'}
+    {#if spec}
+      <!-- D21 per-model shape: body inherits the cascade; bands are collected-only livery -->
+      <path d={spec.body} />
+      {#if fill && spec.bands}
+        <clipPath id="sil-clip-{uid}"><path d={spec.body} /></clipPath>
+        <g clip-path="url(#sil-clip-{uid})">
+          {#each spec.bands as b (b.y)}
+            <rect x="0" y={b.y} width="100" height={b.h} fill={b.color} />
+          {/each}
+        </g>
+      {/if}
+      <rect x="6" y="41.4" width={spec.wheels[1] + 20} height="2.4" rx="1.2" fill="#1A1A1A" opacity="0.12" />
+      <path d={spec.cab} fill="var(--white)" opacity="0.92" />
+      {#each Array.from({ length: spec.windows.count }, (_, i) => i) as i (i)}
+        <rect
+          x={spec.windows.x + i * spec.windows.pitch}
+          y={spec.windows.y}
+          width={spec.windows.w}
+          height={spec.windows.h}
+          rx={spec.windows.h / 2}
+          fill="var(--white)"
+        />
+      {/each}
+      {#each spec.wheels as cx (cx)}
+        <circle {cx} cy="45" r="4" fill="#39413C" />
+        <circle {cx} cy="45" r="1.5" fill="var(--white)" opacity="0.55" />
+      {/each}
+    {:else if variant === 'shinkansen'}
       <!-- long tapered nose to the right -->
       <path d="M6 29 q0 -3 3 -3 H54 q28 0 34 13 l1.2 2.8 q1.3 3.2 -2.7 3.2 H9 q-3 0 -3 -3 Z" />
       <rect x="6" y="41.4" width="84" height="2.6" rx="1.3" fill="#1A1A1A" opacity="0.12" />
@@ -96,11 +132,14 @@
       <rect x="72" y="28.5" width="8.5" height="5.5" rx="2" fill="var(--white)" />
     {/if}
 
-    <!-- wheels: fixed neutral (decorative internals, exempt from the DD10 cascade) -->
-    {#each WHEELS[variant] as cx (cx)}
-      <circle {cx} cy="45" r="4" fill="#39413C" />
-      <circle {cx} cy="45" r="1.5" fill="var(--white)" opacity="0.55" />
-    {/each}
+    <!-- wheels: fixed neutral (decorative internals, exempt from the DD10 cascade);
+         spec branch draws its own at spec.wheels positions -->
+    {#if !spec}
+      {#each WHEELS[variant] as cx (cx)}
+        <circle {cx} cy="45" r="4" fill="#39413C" />
+        <circle {cx} cy="45" r="1.5" fill="var(--white)" opacity="0.55" />
+      {/each}
+    {/if}
   </g>
 </svg>
 

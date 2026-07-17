@@ -28,6 +28,7 @@
   import FolderTabCard from './FolderTabCard.svelte';
   import ProgressBar from './ProgressBar.svelte';
   import TrainSilhouette from './TrainSilhouette.svelte';
+  import { silhouetteSpec } from '../lib/silhouette-specs';
   import { events, packages, geo, collection } from '../lib/store';
   import { deriveMilestones, type ModelStanding, type SectionMeter } from '../lib/collection';
   import { summarizeTrips } from '../lib/trips';
@@ -367,6 +368,7 @@
                     <TrainSilhouette
                       variant={s.info?.silhouette ?? 'commuter'}
                       fill={s.info?.accentColor ?? 'var(--rail-lit)'}
+                      spec={silhouetteSpec(s.fold)}
                     />
                     <span class="nm">{s.displayName}</span>
                     <span class="st">{cardSub(s)}</span>
@@ -383,7 +385,7 @@
                     onkeydown={gridNav}
                   >
                     {#if g.retiresNote}<span class="tag">引退迫る</span>{/if}
-                    <TrainSilhouette variant={g.silhouette} />
+                    <TrainSilhouette variant={g.silhouette} spec={silhouetteSpec(g.fold)} />
                     <span class="nm">{g.name}</span>
                     <span class="st">未乗車</span>
                   </button>
@@ -404,6 +406,7 @@
               fill={detail.standing ? (detail.info.accentColor ?? 'var(--rail-lit)') : undefined}
               width={220}
               label={detail.name}
+              spec={silhouetteSpec(detail.info.fold)}
             />
           </div>
         {/if}
