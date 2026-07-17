@@ -62,11 +62,11 @@
     {#if spec}
       <!-- D21 per-model shape: body inherits the cascade; bands are collected-only livery -->
       <path d={spec.body} />
-      {#if fill && spec.bands}
+      {#if fill && spec.livery}
         <clipPath id="sil-clip-{uid}"><path d={spec.body} /></clipPath>
         <g clip-path="url(#sil-clip-{uid})">
-          {#each spec.bands as b (b.y)}
-            <rect x="0" y={b.y} width="100" height={b.h} fill={b.color} />
+          {#each spec.livery as l (l.d)}
+            <path d={l.d} fill={l.color} />
           {/each}
         </g>
       {/if}

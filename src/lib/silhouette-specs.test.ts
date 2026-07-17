@@ -31,12 +31,12 @@ describe('SILHOUETTE_SPECS — structural gates', () => {
     }
   });
 
-  it('bands stay inside the 100×52 box and use 6-digit hex colors (DD8 carve-out is data)', () => {
+  it('livery paths are well-formed and use 6-digit hex colors (DD8 carve-out is data)', () => {
     for (const [fold, s] of Object.entries(SILHOUETTE_SPECS)) {
-      for (const b of s.bands ?? []) {
-        expect(b.y, fold).toBeGreaterThanOrEqual(0);
-        expect(b.y + b.h, fold).toBeLessThanOrEqual(52);
-        expect(b.color, fold).toMatch(/^#[0-9A-Fa-f]{6}$/);
+      for (const l of s.livery ?? []) {
+        expect(l.d, fold).toMatch(/^M[-\d .]/);
+        expect(l.d.trim().endsWith('Z'), `${fold} livery path not closed`).toBe(true);
+        expect(l.color, fold).toMatch(/^#[0-9A-Fa-f]{6}$/);
       }
     }
   });
