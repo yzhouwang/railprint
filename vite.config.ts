@@ -49,7 +49,9 @@ export default defineConfig({
         // canonical package to ship in this build. When the package later moves to a CDN
         // (VITE_RAIL_CDN_SECONDARY, store.ts), this needs a revisioned/runtime-warmed entry for that
         // origin or offline breaks — tracked in docs/designs/rail-geo-durable-package.md.
-        globPatterns: ['**/*.{js,css,html,svg,woff2}', 'rail/*.json', 'rail/migrations/**/*.json', 'basemap/*.json'],
+        // silhouettes/*.webp MUST precache: ghost cards fetch them via CSS mask, which
+        // ignores <img loading=lazy> semantics and must work offline like the rest of the dex.
+        globPatterns: ['**/*.{js,css,html,svg,woff2}', 'rail/*.json', 'rail/migrations/**/*.json', 'basemap/*.json', 'silhouettes/*.webp'],
         maximumFileSizeToCacheInBytes: 12 * 1024 * 1024,
         cleanupOutdatedCaches: true,
         clientsClaim: true,

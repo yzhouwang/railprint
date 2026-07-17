@@ -15,7 +15,14 @@
   // Decorative internals are exempt from the cascade: window glass fills white, wheels a
   // fixed neutral, shading bands a translucent ink. Accent hues are permitted HERE ONLY
   // (DD8 livery-is-data carve-out); all chrome around this component stays emerald-system.
-  import type { SilhouetteSpec } from '../lib/silhouette-specs';
+  //
+  // ── D21 stage-2 RASTER branch ────────────────────────────────────────────────────────
+  // When `raster` (silhouettes.ts asset URL) is present it replaces the SVG entirely:
+  // collected (fill set) = the WebP as a lazy <img> — the art carries its own livery, the
+  // accent fill is NOT applied on top; ghost (fill omitted) = the SAME WebP as a CSS mask
+  // over var(--dex-ghost-fill), which is the DD10 rule expressed in mask form. One asset,
+  // both states. Both render inside the same 100:52 letterbox the SVG uses, so raster and
+  // category cards keep an identical footprint in the grid.
 
   interface Props {
     variant: 'shinkansen' | 'cn-hsr' | 'express' | 'commuter' | 'dmu';
@@ -25,15 +32,10 @@
     width?: number;
     /** Accessible name; omitted = decorative (aria-hidden). */
     label?: string;
-    /** D21 stage-2 per-model spec (silhouette-specs.ts); when present it REPLACES the
-     *  category variant shape. Livery bands render on collected cards only (fill set) —
-     *  ghosts stay monochrome — and are clipped inside the body (DD8 stays inside fills). */
-    spec?: SilhouetteSpec;
+    /** Per-model raster art URL (silhouettes.ts); when present it REPLACES the SVG. */
+    raster?: string;
   }
-  let { variant, fill, width, label, spec }: Props = $props();
-
-  // clipPath ids must be document-unique — many silhouettes render at once in the dex grid.
-  const uid = $props.id();
+  let { variant, fill, width, label, raster }: Props = $props();
 
   // Wheel x-positions per variant (wheels are decorative internals — fixed neutral fill).
   const WHEELS: Record<Props['variant'], [number, number]> = {
@@ -45,6 +47,22 @@
   };
 </script>
 
+{#if raster}
+  <div
+    class="sil ras"
+    class:fluid={width === undefined}
+    style:width={width !== undefined ? `${width}px` : undefined}
+    role={label ? 'img' : undefined}
+    aria-label={label || undefined}
+    aria-hidden={label ? undefined : 'true'}
+  >
+    {#if fill}
+      <img src={raster} alt="" loading="lazy" decoding="async" />
+    {:else}
+      <div class="mask" style:--sil-mask="url('{raster}')"></div>
+    {/if}
+  </div>
+{:else}
 <svg
   class="sil"
   class:fluid={width === undefined}
@@ -59,34 +77,7 @@
 
   <!-- DD10: the ONE place fill is set; every un-filled shape below inherits it -->
   <g fill={fill ?? 'var(--dex-ghost-fill, #DCE5DF)'}>
-    {#if spec}
-      <!-- D21 per-model shape: body inherits the cascade; bands are collected-only livery -->
-      <path d={spec.body} />
-      {#if fill && spec.livery}
-        <clipPath id="sil-clip-{uid}"><path d={spec.body} /></clipPath>
-        <g clip-path="url(#sil-clip-{uid})">
-          {#each spec.livery as l (l.d)}
-            <path d={l.d} fill={l.color} />
-          {/each}
-        </g>
-      {/if}
-      <rect x="6" y="41.4" width={spec.wheels[1] + 20} height="2.4" rx="1.2" fill="#1A1A1A" opacity="0.12" />
-      <path d={spec.cab} fill="var(--white)" opacity="0.92" />
-      {#each Array.from({ length: spec.windows.count }, (_, i) => i) as i (i)}
-        <rect
-          x={spec.windows.x + i * spec.windows.pitch}
-          y={spec.windows.y}
-          width={spec.windows.w}
-          height={spec.windows.h}
-          rx={spec.windows.h / 2}
-          fill="var(--white)"
-        />
-      {/each}
-      {#each spec.wheels as cx (cx)}
-        <circle {cx} cy="45" r="4" fill="#39413C" />
-        <circle {cx} cy="45" r="1.5" fill="var(--white)" opacity="0.55" />
-      {/each}
-    {:else if variant === 'shinkansen'}
+    {#if variant === 'shinkansen'}
       <!-- long tapered nose to the right -->
       <path d="M6 29 q0 -3 3 -3 H54 q28 0 34 13 l1.2 2.8 q1.3 3.2 -2.7 3.2 H9 q-3 0 -3 -3 Z" />
       <rect x="6" y="41.4" width="84" height="2.6" rx="1.3" fill="#1A1A1A" opacity="0.12" />
@@ -132,16 +123,14 @@
       <rect x="72" y="28.5" width="8.5" height="5.5" rx="2" fill="var(--white)" />
     {/if}
 
-    <!-- wheels: fixed neutral (decorative internals, exempt from the DD10 cascade);
-         spec branch draws its own at spec.wheels positions -->
-    {#if !spec}
-      {#each WHEELS[variant] as cx (cx)}
-        <circle {cx} cy="45" r="4" fill="#39413C" />
-        <circle {cx} cy="45" r="1.5" fill="var(--white)" opacity="0.55" />
-      {/each}
-    {/if}
+    <!-- wheels: fixed neutral (decorative internals, exempt from the DD10 cascade) -->
+    {#each WHEELS[variant] as cx (cx)}
+      <circle {cx} cy="45" r="4" fill="#39413C" />
+      <circle {cx} cy="45" r="1.5" fill="var(--white)" opacity="0.55" />
+    {/each}
   </g>
 </svg>
+{/if}
 
 <style>
   .sil {
@@ -150,5 +139,22 @@
   }
   .sil.fluid {
     width: 100%;
+  }
+  /* raster letterbox: same 100:52 footprint as the SVG viewBox, art contained inside */
+  .ras {
+    aspect-ratio: 100 / 52;
+  }
+  .ras img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+  .ras .mask {
+    width: 100%;
+    height: 100%;
+    background-color: var(--dex-ghost-fill, #DCE5DF);
+    -webkit-mask: var(--sil-mask) center / contain no-repeat;
+    mask: var(--sil-mask) center / contain no-repeat;
   }
 </style>
