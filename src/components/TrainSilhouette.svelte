@@ -40,6 +40,13 @@
   }
   let { variant, fill, width, label, raster }: Props = $props();
 
+  // Raster self-heal: a failed <img> load (SW-less contexts — Lockdown Mode, private
+  // windows, first visit pre-precache — are supported degraded environments) falls back
+  // to the category SVG below instead of a broken box. The ghost CSS-mask path cannot
+  // self-heal (mask loads fire no DOM error event); a failed mask degrades to an
+  // invisible body with the card's text label still present.
+  let rasterFailed = $state(false);
+
   // Wheel x-positions per variant (wheels are decorative internals — fixed neutral fill).
   const WHEELS: Record<Props['variant'], [number, number]> = {
     shinkansen: [24, 64],
@@ -50,7 +57,7 @@
   };
 </script>
 
-{#if raster}
+{#if raster && !rasterFailed}
   <div
     class="sil ras"
     class:fluid={width === undefined}
@@ -59,8 +66,10 @@
     aria-label={label || undefined}
     aria-hidden={label ? undefined : 'true'}
   >
-    {#if fill}
-      <img src={raster} alt="" loading="lazy" decoding="async" />
+    <!-- presence check, not truthiness: an empty-string fill (latent data gap) must not
+         silently flip a collected card to the ghost state -->
+    {#if fill !== undefined}
+      <img src={raster} alt="" loading="lazy" decoding="async" onerror={() => (rasterFailed = true)} />
     {:else}
       <div class="mask" style:--sil-mask="url('{raster}')"></div>
     {/if}
@@ -153,11 +162,20 @@
     height: 100%;
     object-fit: contain;
   }
+  /* longhands, not the shorthand: old-WebKit `-webkit-mask` rejects the position/size
+     slash syntax, and a dropped declaration would paint the UNMASKED background as a
+     solid rectangle — longhands parse independently so the failure class disappears */
   .ras .mask {
     width: 100%;
     height: 100%;
     background-color: var(--dex-ghost-fill, #DCE5DF);
-    -webkit-mask: var(--sil-mask) center / contain no-repeat;
-    mask: var(--sil-mask) center / contain no-repeat;
+    -webkit-mask-image: var(--sil-mask);
+    -webkit-mask-position: center;
+    -webkit-mask-size: contain;
+    -webkit-mask-repeat: no-repeat;
+    mask-image: var(--sil-mask);
+    mask-position: center;
+    mask-size: contain;
+    mask-repeat: no-repeat;
   }
 </style>

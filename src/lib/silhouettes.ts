@@ -32,7 +32,6 @@ const FOLDS: ReadonlySet<string> = new Set(SILHOUETTE_FOLDS);
  *  (category-variant SVG remains the fallback). `base` is injectable for tests only —
  *  the asset-url.ts idiom — so subpath hosting (/railprint/) stays gate-testable. */
 export function silhouetteAsset(fold: string, base?: string): string | undefined {
-  if (!FOLDS.has(fold)) return undefined;
-  const path = `/silhouettes/${fold}.webp`;
-  return base === undefined ? assetUrl(path) : assetUrl(path, base);
+  // an undefined base falls through to assetUrl's default (import.meta.env.BASE_URL)
+  return FOLDS.has(fold) ? assetUrl(`/silhouettes/${fold}.webp`, base) : undefined;
 }
