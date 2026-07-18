@@ -29,7 +29,10 @@ export const SILHOUETTE_FOLDS = [
 const FOLDS: ReadonlySet<string> = new Set(SILHOUETTE_FOLDS);
 
 /** Raster silhouette URL for a fold, or undefined when the model has no per-model art
- *  (category-variant SVG remains the fallback). */
-export function silhouetteAsset(fold: string): string | undefined {
-  return FOLDS.has(fold) ? assetUrl(`/silhouettes/${fold}.webp`) : undefined;
+ *  (category-variant SVG remains the fallback). `base` is injectable for tests only —
+ *  the asset-url.ts idiom — so subpath hosting (/railprint/) stays gate-testable. */
+export function silhouetteAsset(fold: string, base?: string): string | undefined {
+  if (!FOLDS.has(fold)) return undefined;
+  const path = `/silhouettes/${fold}.webp`;
+  return base === undefined ? assetUrl(path) : assetUrl(path, base);
 }

@@ -2,10 +2,11 @@
   // T5 — category train silhouettes for the 車両図鑑 (plan D12, design DD8/DD10).
   //
   // Claymation-diorama style (Diorama.svelte's visual language): rounded everything, toy
-  // proportions, a soft ground shadow, white window glass. FIVE category shapes only — never
-  // per-model art in v0.13 (D12): shinkansen = long tapered nose · cn-hsr = rounded bullet
-  // nose + roof pantograph nub · express = raked front, bigger windows · commuter = boxy +
-  // door rectangles · dmu = boxy + roof exhaust stack.
+  // proportions, a soft ground shadow, white window glass. FIVE category shapes as the SVG
+  // FALLBACK (D12); per-model raster art replaces them where curated (D21 stage 2, raster
+  // branch below): shinkansen = long tapered nose · cn-hsr = rounded bullet nose + roof
+  // pantograph nub · express = raked front, bigger windows · commuter = boxy + door
+  // rectangles · dmu = boxy + roof exhaust stack.
   //
   // ── DD10 FILL RULE (LOUD — this trap was hit live during the mockup build) ──────────────
   // Body shape paths NEVER hardcode fill. The component sets fill ONCE on a wrapping <g>
@@ -26,7 +27,9 @@
 
   interface Props {
     variant: 'shinkansen' | 'cn-hsr' | 'express' | 'commuter' | 'dmu';
-    /** Body fill (collected card = registry accentColor ?? var(--rail-lit)); OMIT for ghost. */
+    /** Body fill (collected card = registry accentColor ?? var(--rail-lit)); OMIT for ghost.
+     *  For raster art the VALUE is ignored — presence alone means collected (art carries
+     *  its own livery); absence renders the ghost mask. */
     fill?: string;
     /** Fixed pixel width; omit to fill the parent (grid-card usage). */
     width?: number;

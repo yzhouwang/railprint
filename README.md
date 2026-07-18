@@ -37,9 +37,9 @@ One tap gives you a Spotify-Wrapped-style share card. **Japan, plus one China co
   runtime store; the exported CSV is the durable backup-of-record.
 - A vertical Wrapped-style share card via `<canvas>` → Web Share.
 
-Deferred: auto-import (QR/OCR), the rest of the collection loop (per-model silhouette
-pipeline, batch backfill stepper, GPS check-in), community heatmap, broad China beyond
-the 京沪 corridor, any backend.
+Deferred: auto-import (QR/OCR), the rest of the collection loop (per-model silhouettes
+beyond the 新幹線 batch, batch backfill stepper, GPS check-in), community heatmap, broad
+China beyond the 京沪 corridor, any backend.
 
 ## Docs
 

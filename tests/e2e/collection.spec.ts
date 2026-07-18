@@ -70,6 +70,16 @@ test('collect → shelf meter → sheet: collected card, ghost want-list, stamps
   const collected = sheet.getByRole('button', { name: /E5系/ });
   await expect(collected).toBeVisible();
   await expect(sheet.getByText('未乗車').first()).toBeVisible(); // ghost want-list (value+label, not hue alone)
+
+  // D21 raster art actually renders in BOTH states — a broken asset URL or mask rule
+  // would leave blank boxes while every other assertion here stays green.
+  const collectedArt = collected.locator('img[src*="silhouettes/"]');
+  await expect(collectedArt).toBeVisible();
+  expect(await collectedArt.evaluate((el) => (el as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+  const ghostMask = sheet.locator('.card.ghost .ras .mask').first();
+  await expect(ghostMask).toBeVisible();
+  const maskBox = await ghostMask.boundingBox();
+  expect(maskBox && maskBox.width > 10 && maskBox.height > 10).toBe(true);
   await expect(sheet.getByText('引退迫る').first()).toBeVisible(); // 500系 honest urgency tag
   await expect(sheet.getByText(`ロースター基準: 2026年`)).toBeVisible();
 

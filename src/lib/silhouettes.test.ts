@@ -1,4 +1,4 @@
-import { readFileSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { MODEL_REGISTRY } from './model-registry';
@@ -30,6 +30,15 @@ describe('silhouettes — raster asset gates', () => {
     expect([...SILHOUETTE_FOLDS].sort()).toEqual(active);
   });
 
+  // the workbox glob precaches every .webp in the directory, so a stray/orphan file
+  // would ship into the precache uncounted — gate strays in both directions
+  it('the asset directory holds EXACTLY the batch files', () => {
+    const onDisk = readdirSync(ASSET_DIR)
+      .filter((f) => f.endsWith('.webp'))
+      .sort();
+    expect(onDisk).toEqual([...SILHOUETTE_FOLDS].map((f) => `${f}.webp`).sort());
+  });
+
   it('every fold has a real WebP on disk, within the per-asset size budget', () => {
     let total = 0;
     for (const fold of SILHOUETTE_FOLDS) {
@@ -49,5 +58,10 @@ describe('silhouettes — raster asset gates', () => {
     expect(silhouetteAsset('E3')).toBeUndefined(); // inactive — never ghost-cards
     expect(silhouetteAsset('E353')).toBeUndefined(); // 特急 — later batch
     expect(silhouetteAsset('CR400AF')).toBeUndefined();
+  });
+
+  it('silhouetteAsset() prefixes the injected base — the GitHub-Pages subpath 404 class', () => {
+    expect(silhouetteAsset('E5', '/railprint/')).toBe('/railprint/silhouettes/E5.webp');
+    expect(silhouetteAsset('E5', '/')).toBe('/silhouettes/E5.webp');
   });
 });
