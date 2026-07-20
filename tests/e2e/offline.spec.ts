@@ -54,12 +54,14 @@ async function waitForPrecache(page: Page): Promise<void> {
       if (!navigator.serviceWorker?.controller) return false;
       let pkg = false;
       let manifest = false;
+      let silhouette = false; // ghost cards fetch these via CSS mask — must precache too
       for (const name of await caches.keys()) {
         const cache = await caches.open(name);
         if (await cache.match('/rail/jp-2025.json', { ignoreSearch: true })) pkg = true;
         if (await cache.match('/rail/manifest.json', { ignoreSearch: true })) manifest = true;
+        if (await cache.match('/silhouettes/E5.webp', { ignoreSearch: true })) silhouette = true;
       }
-      return pkg && manifest;
+      return pkg && manifest && silhouette;
     },
     null,
     { timeout: 45_000 },

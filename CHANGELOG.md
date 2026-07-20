@@ -2,6 +2,31 @@
 
 All notable changes to RailPrint are documented here.
 
+## [0.13.3.0] - 2026-07-19
+
+**Every 新幹線 gets its face.** The 13 active Shinkansen in the 車両図鑑 now carry
+real per-model artwork — the E5 duck-bill, the 500系 needle nose, the E7 sky-blue
+sweep — instead of one shared shape in different tints. Ghost cards show each
+model's actual nose profile, so the want-list finally reads like a spotter's guide.
+
+### Added
+- **Per-model 先頭 (lead-car) art for all 13 active 新幹線** — E5/H5/E6/E7/W7/E8/E2/
+  500/700/800/N700/N700A/N700S, each a front-crop side profile with its true livery
+  (E5's pink stripe, E6's crimson, E8's safflower yellow…). Collected cards show the
+  full-color art; 未乗車 ghost cards show the same silhouette in the ghost tone —
+  one lightweight image serves both states (~460KB for the whole set, all offline).
+- Structural gates keeping the art honest: the batch must exactly match the active
+  新幹線 roster, every file is validated on disk with size budgets, and offline tests
+  now verify the artwork is cached before the network is cut.
+
+### Changed
+- The five category silhouettes (新幹線/特急/通勤/気動車/中国高鉄) remain as the
+  fallback for the other 153 形式 until their art batches land.
+
+### Removed
+- The interim hand-drawn SVG spec system for per-model shapes — replaced wholesale
+  by the generated raster artwork after it outclassed every SVG approach.
+
 ## [0.13.2.0] - 2026-07-12
 
 **The full roster.** The 車両図鑑's curated registry grows from 63 to 166 形式 — the

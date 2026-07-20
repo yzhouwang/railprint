@@ -2,10 +2,11 @@
   // T5 — category train silhouettes for the 車両図鑑 (plan D12, design DD8/DD10).
   //
   // Claymation-diorama style (Diorama.svelte's visual language): rounded everything, toy
-  // proportions, a soft ground shadow, white window glass. FIVE category shapes only — never
-  // per-model art in v0.13 (D12): shinkansen = long tapered nose · cn-hsr = rounded bullet
-  // nose + roof pantograph nub · express = raked front, bigger windows · commuter = boxy +
-  // door rectangles · dmu = boxy + roof exhaust stack.
+  // proportions, a soft ground shadow, white window glass. FIVE category shapes as the SVG
+  // FALLBACK (D12); per-model raster art replaces them where curated (D21 stage 2, raster
+  // branch below): shinkansen = long tapered nose · cn-hsr = rounded bullet nose + roof
+  // pantograph nub · express = raked front, bigger windows · commuter = boxy + door
+  // rectangles · dmu = boxy + roof exhaust stack.
   //
   // ── DD10 FILL RULE (LOUD — this trap was hit live during the mockup build) ──────────────
   // Body shape paths NEVER hardcode fill. The component sets fill ONCE on a wrapping <g>
@@ -15,16 +16,36 @@
   // Decorative internals are exempt from the cascade: window glass fills white, wheels a
   // fixed neutral, shading bands a translucent ink. Accent hues are permitted HERE ONLY
   // (DD8 livery-is-data carve-out); all chrome around this component stays emerald-system.
+  //
+  // ── D21 stage-2 RASTER branch ────────────────────────────────────────────────────────
+  // When `raster` (silhouettes.ts asset URL) is present it replaces the SVG entirely:
+  // collected (fill set) = the WebP as a lazy <img> — the art carries its own livery, the
+  // accent fill is NOT applied on top; ghost (fill omitted) = the SAME WebP as a CSS mask
+  // over var(--dex-ghost-fill), which is the DD10 rule expressed in mask form. One asset,
+  // both states. Both render inside the same 100:52 letterbox the SVG uses, so raster and
+  // category cards keep an identical footprint in the grid.
+
   interface Props {
     variant: 'shinkansen' | 'cn-hsr' | 'express' | 'commuter' | 'dmu';
-    /** Body fill (collected card = registry accentColor ?? var(--rail-lit)); OMIT for ghost. */
+    /** Body fill (collected card = registry accentColor ?? var(--rail-lit)); OMIT for ghost.
+     *  For raster art the VALUE is ignored — presence alone means collected (art carries
+     *  its own livery); absence renders the ghost mask. */
     fill?: string;
     /** Fixed pixel width; omit to fill the parent (grid-card usage). */
     width?: number;
     /** Accessible name; omitted = decorative (aria-hidden). */
     label?: string;
+    /** Per-model raster art URL (silhouettes.ts); when present it REPLACES the SVG. */
+    raster?: string;
   }
-  let { variant, fill, width, label }: Props = $props();
+  let { variant, fill, width, label, raster }: Props = $props();
+
+  // Raster self-heal: a failed <img> load (SW-less contexts — Lockdown Mode, private
+  // windows, first visit pre-precache — are supported degraded environments) falls back
+  // to the category SVG below instead of a broken box. The ghost CSS-mask path cannot
+  // self-heal (mask loads fire no DOM error event); a failed mask degrades to an
+  // invisible body with the card's text label still present.
+  let rasterFailed = $state(false);
 
   // Wheel x-positions per variant (wheels are decorative internals — fixed neutral fill).
   const WHEELS: Record<Props['variant'], [number, number]> = {
@@ -36,6 +57,24 @@
   };
 </script>
 
+{#if raster && !rasterFailed}
+  <div
+    class="sil ras"
+    class:fluid={width === undefined}
+    style:width={width !== undefined ? `${width}px` : undefined}
+    role={label ? 'img' : undefined}
+    aria-label={label || undefined}
+    aria-hidden={label ? undefined : 'true'}
+  >
+    <!-- presence check, not truthiness: an empty-string fill (latent data gap) must not
+         silently flip a collected card to the ghost state -->
+    {#if fill !== undefined}
+      <img src={raster} alt="" loading="lazy" decoding="async" onerror={() => (rasterFailed = true)} />
+    {:else}
+      <div class="mask" style:--sil-mask="url('{raster}')"></div>
+    {/if}
+  </div>
+{:else}
 <svg
   class="sil"
   class:fluid={width === undefined}
@@ -103,6 +142,7 @@
     {/each}
   </g>
 </svg>
+{/if}
 
 <style>
   .sil {
@@ -111,5 +151,31 @@
   }
   .sil.fluid {
     width: 100%;
+  }
+  /* raster letterbox: same 100:52 footprint as the SVG viewBox, art contained inside */
+  .ras {
+    aspect-ratio: 100 / 52;
+  }
+  .ras img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+  /* longhands, not the shorthand: old-WebKit `-webkit-mask` rejects the position/size
+     slash syntax, and a dropped declaration would paint the UNMASKED background as a
+     solid rectangle — longhands parse independently so the failure class disappears */
+  .ras .mask {
+    width: 100%;
+    height: 100%;
+    background-color: var(--dex-ghost-fill, #DCE5DF);
+    -webkit-mask-image: var(--sil-mask);
+    -webkit-mask-position: center;
+    -webkit-mask-size: contain;
+    -webkit-mask-repeat: no-repeat;
+    mask-image: var(--sil-mask);
+    mask-position: center;
+    mask-size: contain;
+    mask-repeat: no-repeat;
   }
 </style>

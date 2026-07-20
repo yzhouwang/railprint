@@ -16,6 +16,7 @@
   import QuarantineSheet from '../components/QuarantineSheet.svelte';
   import CollectionSheet from '../components/CollectionSheet.svelte';
   import TrainSilhouette from '../components/TrainSilhouette.svelte';
+  import { silhouetteAsset } from '../lib/silhouettes';
   import ProgressBar from '../components/ProgressBar.svelte';
   import {
     headline,
@@ -410,7 +411,7 @@
         {#if shelfRecent.length > 0}
           <span class="dex-minis" aria-hidden="true">
             {#each shelfRecent as s (s.fold)}
-              <TrainSilhouette variant={s.info?.silhouette ?? 'commuter'} fill={s.info?.accentColor ?? 'var(--rail-lit)'} width={44} />
+              <TrainSilhouette variant={s.info?.silhouette ?? 'commuter'} fill={s.info?.accentColor ?? 'var(--rail-lit)'} width={44} raster={silhouetteAsset(s.fold)} />
             {/each}
           </span>
         {/if}
