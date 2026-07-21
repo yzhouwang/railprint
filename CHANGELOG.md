@@ -6,7 +6,7 @@ All notable changes to RailPrint are documented here.
 
 **Pick your train after you pick your route.** Station-name search no longer records
 the moment a route is found — a 経路を確認 step reads the route back and recommends
-the rolling stock that actually runs it, so the 車両 chips finally work in the flow
+the rolling stock that serves it, so the 車両 chips finally work in the flow
 where they matter most.
 
 ### Added
@@ -14,10 +14,11 @@ where they matter most.
   the route candidates) and the route reads back — lines, km, 区間 — with the 車両
   field right there and 「この経路で記録」 to commit. No more instant recording that
   raced past the train question; 「経路を選び直す」 hops back to the candidates.
-- **Through-service stock recommendation.** The suggestion chips now know what runs
-  the *whole* route: search 長野→金沢 and E7系/W7系 lead; 新大阪→鹿児島中央 leads with
-  N700系 (みずほ/さくら); 東京→新函館北斗 with E5系/H5系. Stock that only serves one
-  leg still appears — after the through-runners.
+- **Through-service stock recommendation.** The suggestion chips now lead with the
+  stock serving *every* line of the route: search 長野→金沢 and E7系/W7系 come first;
+  新大阪→鹿児島中央 leads with N700系 (みずほ/さくら); 東京→新函館北斗 with E5系/H5系.
+  Stock serving only one leg still appears — after (and your own ride history always
+  ranks above the suggestions).
 - **北陸新幹線 trains now suggest correctly on the shared 東京–大宮–高崎 stretch**
   (they run on 東北/上越新幹線 tracks there — the profiles now know).
 
