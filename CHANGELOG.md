@@ -2,6 +2,36 @@
 
 All notable changes to RailPrint are documented here.
 
+## [0.13.4.0] - 2026-07-21
+
+**Pick your train after you pick your route.** Station-name search no longer records
+the moment a route is found — a 経路を確認 step reads the route back and recommends
+the rolling stock that actually runs it, so the 車両 chips finally work in the flow
+where they matter most.
+
+### Added
+- **経路を確認 — a confirm step for searched routes.** Pin two stations (or pick from
+  the route candidates) and the route reads back — lines, km, 区間 — with the 車両
+  field right there and 「この経路で記録」 to commit. No more instant recording that
+  raced past the train question; 「経路を選び直す」 hops back to the candidates.
+- **Through-service stock recommendation.** The suggestion chips now know what runs
+  the *whole* route: search 長野→金沢 and E7系/W7系 lead; 新大阪→鹿児島中央 leads with
+  N700系 (みずほ/さくら); 東京→新函館北斗 with E5系/H5系. Stock that only serves one
+  leg still appears — after the through-runners.
+- **北陸新幹線 trains now suggest correctly on the shared 東京–大宮–高崎 stretch**
+  (they run on 東北/上越新幹線 tracks there — the profiles now know).
+
+### Fixed
+- A train model picked from the chips for one route no longer sticks around when you
+  switch to a different route, line, or entry mode (typed text still survives — your
+  own knowledge is never discarded).
+- Picking a station suggestion the instant results were still loading can no longer
+  silently un-pick it.
+- A transient save failure now keeps the confirm panel (with your route and 車両
+  intact) so you can simply tap 記録 again — and a stale "couldn't record" message
+  can no longer appear for a trip that actually saved.
+- Map taps can no longer record a ride while you're in station-search mode.
+
 ## [0.13.3.0] - 2026-07-19
 
 **Every 新幹線 gets its face.** The 13 active Shinkansen in the 車両図鑑 now carry
