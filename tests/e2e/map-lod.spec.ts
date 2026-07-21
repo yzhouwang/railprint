@@ -62,19 +62,31 @@ async function renderedSegments(
     async ({ center, zoom }) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const map = (window as any).__map;
-      // jumpTo is instantaneous → 'moveend' fires right away; then let the GeoJSON rail layers
-      // repaint for the new viewport over a few frames before querying. ('idle' is unusable
-      // here — the offline basemap keeps the map perpetually non-idle.)
+      // jumpTo is instantaneous → 'moveend' fires right away. Then wait for the RAIL SOURCE
+      // to finish retiling for the new viewport before querying — a fixed frame budget is
+      // NOT enough: on a degraded CI runner SwiftShader can need seconds to retile the
+      // national GeoJSON, and querying early returns the stale coverage (0 urban lines at
+      // z7 → the exact red that shipped three CI failures). isSourceLoaded('rp-segments')
+      // scopes the wait to the rail source; map-wide 'idle'/areTilesLoaded() are unusable
+      // here — the offline basemap keeps the map perpetually non-idle. A hard deadline
+      // keeps a wedged source an HONEST failure instead of a hang, and the trailing frames
+      // let the loaded tiles actually paint before queryRenderedFeatures.
       await new Promise<void>((res) => {
-        map.once('moveend', () => {
-          let frames = 0;
-          const tick = (): void => {
-            if (++frames >= 4) res();
-            else requestAnimationFrame(tick);
-          };
-          requestAnimationFrame(tick);
-        });
+        map.once('moveend', () => res());
         map.jumpTo({ center, zoom });
+      });
+      const deadline = Date.now() + 10_000;
+      while (Date.now() < deadline) {
+        if (map.isSourceLoaded('rp-segments')) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      await new Promise<void>((res) => {
+        let frames = 0;
+        const tick = (): void => {
+          if (++frames >= 4) res();
+          else requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
       });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return map.queryRenderedFeatures({ layers: ['rp-segments-line'] }).map((f: any) => ({

@@ -69,6 +69,18 @@ describe('line-profiles — structural gates', () => {
     expect(lineProfile('jp-西日本旅客鉄道-博多南線')).toContain('500');
   });
 
+  it('shared-running hosts carry the 北陸 through-guests E7/W7 after their line-own stock', () => {
+    // Every 北陸新幹線 train to 東京 traverses the 東北新幹線 lineId (東京–大宮) and the
+    // 上越新幹線 lineId (大宮–高崎) — shared running, so E7/W7 are appended as boardable
+    // through-guests. Order is a user-visible pad contract: line-own services first,
+    // guests last (and the 上越 line-own roster is E7-only since 2023-03-18).
+    expect(lineProfile('jp-東日本旅客鉄道-東北新幹線')).toEqual(['E5', 'E6', 'E8', 'E2', 'H5', 'E7', 'W7']);
+    expect(lineProfile('jp-東日本旅客鉄道-上越新幹線')).toEqual(['E7', 'W7']);
+    // Both operator halves of the 北陸 line itself keep the one shared E7/W7 pool.
+    expect(lineProfile('jp-東日本旅客鉄道-北陸新幹線')).toEqual(['E7', 'W7']);
+    expect(lineProfile('jp-西日本旅客鉄道-北陸新幹線')).toEqual(['E7', 'W7']);
+  });
+
   it('lineProfile of undefined or an unknown lineId is undefined (the no-pads signal)', () => {
     expect(lineProfile(undefined)).toBeUndefined();
     expect(lineProfile('jp-テスト-存在しない線')).toBeUndefined();

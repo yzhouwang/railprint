@@ -111,7 +111,7 @@ describe('classifyRoutes — no-route / single / multi decision (invariants #4, 
     expect(out.kind).toBe('no-route');
   });
 
-  it('single (auto-commit) when exactly one route exists on one line', () => {
+  it('single (auto-select into the confirm step) when exactly one route exists on one line', () => {
     const pkg = pkgFromLines([{ lineId: 'z', groups: ['A', 'B', 'C'], kms: [1, 1] }]);
     const out = classifyRoutes(pkg, hitOn(pkg, 'z', 'A'), hitOn(pkg, 'z', 'C'));
     expect(out.kind).toBe('single');

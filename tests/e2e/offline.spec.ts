@@ -104,14 +104,19 @@ test('OFFLINE record: a brand-new ride is marked and persisted with no signal', 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await page.evaluate(() => (window as any).__map?.fire('load'));
 
-  // Mark a NEW ride OFFLINE: search two real CN stations (only present if the real package came from
-  // cache) and let the single-line 京沪 route auto-record. The success toast confirms the offline write.
+  // Mark a NEW ride OFFLINE: search two real CN stations (only present if the real package came
+  // from cache) and record the single-line 京沪 route via the 経路を確認 panel.
   await page.getByRole('button', { name: '区間をマーク' }).first().click();
   await page.getByRole('tab', { name: '駅名で検索' }).click();
   await page.locator('#rp-q-a').fill('北京南');
   await page.locator('.hit').first().click();
   await page.locator('#rp-q-b').fill('上海虹桥');
   await page.locator('.hit').first().click();
+  // Single-candidate 京沪 route → the 経路を確認 panel appears; 「この経路で記録」 commits (a
+  // route no longer records on pick). The success toast confirms the offline write.
+  const confirm = page.locator('.route-confirm');
+  await expect(confirm).toBeVisible({ timeout: 15_000 });
+  await confirm.locator('.route-record').click();
   await expect(page.getByText(/経路を記録しました/)).toBeVisible({ timeout: 15_000 });
 
   // And it truly persisted to IndexedDB — survives offline with no network round-trip.

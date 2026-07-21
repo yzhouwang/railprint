@@ -226,10 +226,15 @@ test('live mark with a new model: first-collect toast (D14) taps through to the 
   await page.locator('.hit').first().click();
   await page.locator('#rp-q-b').fill('大阪難波');
   await page.locator('.hit').first().click();
-  await page.locator('#rp-train').fill('80000系'); // ひのとり — new to the collection
+  // Select the route into the 経路を確認 panel (a route no longer records on pick), then tag
+  // the train inside it and commit with 「この経路で記録」.
   const routeChip = page.locator('.route-chip').first();
   await expect(routeChip).toBeVisible({ timeout: 15_000 });
   await routeChip.click();
+  const confirm = page.locator('.route-confirm');
+  await expect(confirm).toBeVisible({ timeout: 10_000 });
+  await page.locator('#rp-train').fill('80000系'); // ひのとり — new to the collection
+  await confirm.locator('.route-record').click();
 
   // D14: the first-collect beat REPLACES the plain coverage toast; undo stays available.
   const collectToast = page.getByText(/80000系を図鑑に追加しました/);

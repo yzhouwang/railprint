@@ -165,6 +165,8 @@ export function suggestModels(events: RideEvent[], opts?: SuggestOptions): strin
   // Countries with at least one UNPROFILED conventional context line — the only case
   // where the gate falls back to country-level judgment (no roster to consult).
   const unprofiledConvCountries = new Set<Country>();
+  // Fold-sets of the PROFILED contexts only (for the through-service pad partition below).
+  const profiledSets: Set<string>[] = [];
   if (contexts !== undefined) {
     allowedFolds = [];
     const seen = new Set<string>();
@@ -175,6 +177,7 @@ export function suggestModels(events: RideEvent[], opts?: SuggestOptions): strin
         continue;
       }
       anyProfiled = true;
+      profiledSets.push(new Set(p));
       for (const f of p) {
         if (!seen.has(f)) {
           seen.add(f);
@@ -182,6 +185,26 @@ export function suggestModels(events: RideEvent[], opts?: SuggestOptions): strin
         }
       }
     }
+  }
+  // ── through-service pad partition (pads ONLY — eligibility above is untouched) ──
+  // With ≥2 PROFILED contexts a route spans several lines; a fold present in EVERY profiled
+  // profile serves every line of the route, so it is the rider's LIKELIER train and pads
+  // first. PRECISION CAVEAT (adversarial finding, accepted): line-granular profiles cannot
+  // prove one train runs the route END-TO-END — 50000系 しまかぜ sits on all three 名阪
+  // lines via separate services, so it partitions ahead despite no 名阪 through run. That
+  // is a RANKING nudge, not a service claim (the UI never says 直通); on the shinkansen
+  // corridors the intersection is exact. Stable-partition the union: intersection folds
+  // ahead of the rest, each partition keeping its existing relative order. UNPROFILED
+  // contexts are SKIPPED — they carry no roster, so counting them would zero out every
+  // through fold (explicit policy; allowedSet/cardEligible stay the untouched union).
+  // 0/1 profiled ⇒ no partition (nothing to intersect — order is plain union/profile order).
+  if (allowedFolds !== undefined && profiledSets.length >= 2) {
+    const through: string[] = [];
+    const rest: string[] = [];
+    for (const f of allowedFolds) {
+      (profiledSets.every((set) => set.has(f)) ? through : rest).push(f);
+    }
+    allowedFolds = [...through, ...rest];
   }
   const allowedSet = allowedFolds === undefined ? undefined : new Set(allowedFolds);
 

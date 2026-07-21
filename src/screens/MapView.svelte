@@ -112,6 +112,46 @@
   let pickedA = $state<StationHit | null>(null);
   let pickedB = $state<StationHit | null>(null);
   let routeChoices = $state<RouteCandidate[]>([]); // cross-line route picker (search-mode)
+  // Confirm step (search-mode): the chosen candidate awaiting the explicit 記録 tap. A found
+  // route SELECTS here instead of committing — single-candidate auto-selects (skipping the
+  // one-chip picker), a picker tap selects — so the 車両 chips can reflect THIS route's
+  // lines while the rider decides. Nothing records until the confirm button.
+  let confirmedRoute = $state<RouteCandidate | null>(null);
+  // Focus handoff: selecting a route unmounts the picker button the keyboard user activated
+  // (focus would fall to <body>); move it to the confirm panel (tabindex=-1 container — not
+  // tab-reachable, announced via its group label, Tab lands on the 車両 input next).
+  let confirmEl = $state<HTMLElement | null>(null);
+  let pickerListEl = $state<HTMLElement | null>(null);
+  $effect(() => {
+    if (confirmedRoute) confirmEl?.focus();
+  });
+  /** 選び直す: back to the picker, with the REVERSE focus handoff (the back button the
+   *  keyboard user activated unmounts — land them on the first route chip, not <body>). */
+  function backToPicker(): void {
+    confirmedRoute = null;
+    void tick().then(() => pickerListEl?.querySelector('button')?.focus());
+  }
+  // Stale-model rule (convergent adversarial finding): a CHIP-filled 車両 is scoped to the
+  // CONTEXT whose chips offered it — a different route, a different tap-mode line, or a mode
+  // switch clears it. TYPED free text is the rider's own knowledge and survives (D15: the
+  // field is user-owned). A failed-commit retry and back→same-route keep the value (route
+  // key unchanged). Red-team RT-1: the clear must run at EVERY scope boundary (selectRoute,
+  // switchEntry, pickLine) or a 北陸 E7 chip-fill records onto a 山手線 tap-mark — and once
+  // recorded it becomes a G4 own-fact the gate can never call implausible again.
+  let markModelFromChip = $state(false);
+  let lastRouteKey = $state('');
+  function clearChipFill(): void {
+    if (markModelFromChip) {
+      markTrainModel = '';
+      markModelFromChip = false;
+    }
+  }
+  function selectRoute(r: RouteCandidate): void {
+    const key = r.segmentIds.join();
+    if (key !== lastRouteKey) clearChipFill();
+    lastRouteKey = key;
+    confirmedRoute = r;
+  }
   let noRoute = $state(false); // the two stations have no rail path between them
   let searching = $state(false); // route-finding in flight (paints "探索中" before the sync call)
   const searchSeq = new SearchSeq(); // guards out-of-order async resolves (latest query wins)
@@ -134,6 +174,10 @@
     stationA = null;
     stationAName = null;
     markTrainModel = '';
+    // RT-1: the chip-scope trackers must reset WITH the field — a stale lastRouteKey could
+    // match a future route's key and skip selectRoute's clear for a chip filled elsewhere.
+    markModelFromChip = false;
+    lastRouteKey = '';
     pickerCountry = null;
     resetSearch();
   }
@@ -145,15 +189,17 @@
   // show the honest free-text hint instead of implausible pads.
   //
   // BOTH mark flows supply contexts (outside-voice P1: search mode was falling open to the
-  // CN-first legacy pads): tap mode = the selected line; search mode = the union of lines
-  // across the found route candidates (the user is about to ride one of them). Search mode
-  // NEVER reads selectedLine — switchEntry keeps it when leaving tap mode, so it can be a
-  // stale, unrelated line (adversarial-review finding: a lingering 山手線 pick must not
-  // gate a searched Shinkansen route). Before a route exists the context is KNOWN-EMPTY
-  // ([]), not absent — recents only, no pads, and no hint (we cannot name a line yet).
+  // CN-first legacy pads): tap mode = the selected line; search mode = the CONFIRMED route's
+  // own lines — not the union across candidates, which recommended stock the chosen route
+  // can't carry. Search mode NEVER reads selectedLine — switchEntry keeps it when leaving
+  // tap mode, so it can be a stale, unrelated line (adversarial-review finding: a lingering
+  // 山手線 pick must not gate a searched Shinkansen route). Before a route is confirmed the
+  // context is KNOWN-EMPTY ([]), not absent — and the 車両 field doesn't render at all.
   const markContexts = $derived.by(() =>
     entryMode === 'search'
-      ? lineContexts([...new Set(routeChoices.flatMap((r) => r.lines))], (id) => $geo.lineById.get(id))
+      ? confirmedRoute
+        ? lineContexts(confirmedRoute.lines, (id) => $geo.lineById.get(id))
+        : []
       : selectedLine
         ? [selectedLine] // RailLine satisfies LineContext structurally
         : [],
@@ -251,6 +297,7 @@
     pickedA = null;
     pickedB = null;
     routeChoices = [];
+    confirmedRoute = null;
     noRoute = false;
     searching = false;
   }
@@ -664,6 +711,8 @@
 
   // ── marking interaction ──────────────────────────────────────────────────────
   function pickLine(line: RailLine): void {
+    // RT-1: a chip-fill from a previous line/route context must not survive onto this line.
+    if (selectedLine?.lineId !== line.lineId) clearChipFill();
     selectedLine = line;
     stationA = null;
     stationAName = null;
@@ -676,7 +725,10 @@
   }
 
   async function onStationTap(stationId: string, name: string, lineId: string): Promise<void> {
-    if (!markActive || busy) return;
+    // entryMode gate (adversarial F2): in search mode the tap path must be structurally dead,
+    // not merely unreachable-because-handlers-null-selectedLine — it is the one route that
+    // could still record WITHOUT the confirm step.
+    if (!markActive || busy || entryMode !== 'tap') return;
     // Must pick a line first (line-first marking, DESIGN issue 5).
     if (!selectedLine) {
       toast('先に路線を選んでください', 'info');
@@ -764,13 +816,14 @@
   }
 
   // ── C4: station-first typed entry ───────────────────────────────────────────────
-  // Type A → resolve (disambiguate transfer via a list) → type B → resolve → infer the line
-  // (disambiguate multi-share) → reuse doMark. Setting the inferred line fires C1's red highlight.
+  // Type A → resolve (disambiguate transfer via a list) → type B → resolve → classifyRoutes →
+  // 経路を確認 panel → commitRoute. Search mode never selects a line (selectedLine stays null
+  // throughout — the route's lines drive the 車両 contexts instead).
   function switchEntry(mode: 'tap' | 'search'): void {
     if (entryMode === mode) return;
+    clearChipFill(); // RT-1: chip-fills are context-scoped; a mode switch is a context exit
     resetSearch();
     entryMode = mode;
-    // leaving search clears any inference-only line selection so the highlight goes away.
     if (mode === 'tap') selectedLine = null;
   }
 
@@ -781,11 +834,13 @@
     if (which === 'A') {
       pickedA = null;
       routeChoices = [];
+      confirmedRoute = null;
       noRoute = false;
       hitsA = hits;
     } else {
       pickedB = null;
       routeChoices = [];
+      confirmedRoute = null;
       noRoute = false;
       hitsB = hits;
     }
@@ -865,8 +920,11 @@
   }
 
   function pickHit(which: 'A' | 'B', hit: StationHit): void {
-    // A pick within the debounce window must win: the queued resolve would null the pick out.
+    // A pick within the debounce window must win: the queued resolve would null the pick out —
+    // and an ALREADY-IN-FLIGHT resolve must lose too (advance the seq so its result is stale;
+    // otherwise it lands after the pick and silently unwinds pickedX + confirmedRoute).
     cancelPendingResolve(which);
+    searchSeq.next();
     if (which === 'A') {
       pickedA = hit;
       hitsA = [];
@@ -877,12 +935,14 @@
     void tryInfer();
   }
 
-  // Once both endpoints are pinned, find the cross-line route(s) and let the user pick. A single-line
-  // A→B is just the degenerate 0-change route — same picker, no special case (the search-mode unify).
-  // findRoutes is synchronous and bounded (caps), but a long national pair can take ~250ms, so we paint
-  // a "探索中" state first (yield a frame) rather than freeze silently.
+  // Once both endpoints are pinned, classify the route(s): a single candidate auto-SELECTS into
+  // the 経路を確認 panel (the picker stays behind it as the 選び直す fallback, one chip); multiple
+  // candidates show the picker, whose pick also lands on the confirm panel. Nothing records until
+  // the panel's 記録 tap. findRoutes is synchronous and bounded (caps), but a long national pair
+  // can take ~250ms, so we paint a "探索中" state first (yield a frame) rather than freeze silently.
   async function tryInfer(): Promise<void> {
     routeChoices = [];
+    confirmedRoute = null;
     noRoute = false;
     if (!pickedA || !pickedB) return;
     const a = pickedA;
@@ -912,19 +972,24 @@
     if (outcome.kind === 'no-route') {
       noRoute = true; // warm no-route state with a leg-by-leg fallback
     } else if (outcome.kind === 'single') {
-      void commitRoute(outcome.route);
+      // Confirm step, not auto-commit: the lone candidate still goes through the 経路を確認
+      // panel so the 車両 chips can reflect ITS lines before anything records. routeChoices
+      // keeps the candidate so 経路を選び直す has a picker to fall back to (one chip).
+      routeChoices = [outcome.route];
+      selectRoute(outcome.route);
     } else {
       routeChoices = outcome.routes; // ≥2 candidates — show the route-picker
     }
   }
 
   function pickRoute(r: RouteCandidate): void {
-    void commitRoute(r);
+    selectRoute(r); // select — the confirm panel's 記録 button does the committing
   }
 
   async function commitRoute(r: RouteCandidate): Promise<void> {
-    routeChoices = [];
-    noRoute = false;
+    // No state clearing here: success exits mark mode (resetMarking wipes everything), and
+    // on FAILURE the confirm panel must survive so the rider can simply tap 記録 again —
+    // wiping confirmedRoute up front would eat the route on a transient IndexedDB error.
     if (busy) return;
     busy = true;
     try {
@@ -1028,9 +1093,25 @@
   {#if companyFor(line.operator, line.name)}<span class="line-co">{companyFor(line.operator, line.name)}</span>{/if}
 {/snippet}
 
+<!-- The route read-back interior shared by the picker chip and the confirm panel: logo sequence
+     joined by › on top, "km · 区間 · N路線" below. rank 0 in a multi-picker gets "おすすめ"
+     (a nudge, not a claim); pass rank null for the badge-less confirm summary. -->
+{#snippet routeSummary(r: RouteCandidate, rank: number | null)}
+  {@const lns = r.lines.map((id) => $geo.lineById.get(id)).filter((l): l is RailLine => !!l)}
+  <span class="route-lines">
+    {#each lns as l, i (l.lineId + ':' + i)}
+      {#if i > 0}<span class="route-sep" aria-hidden="true">›</span>{/if}
+      {@render lineMark(l)}
+      <span class="route-line-name">{l.name}</span>
+    {/each}
+    {#if rank === 0 && routeChoices.length > 1}<span class="route-rec">おすすめ</span>{/if}
+  </span>
+  <span class="route-meta">{r.totalKm.toFixed(1)} km · {r.segmentIds.length}区間 · {r.lines.length}路線</span>
+{/snippet}
+
 <!-- A route candidate as a chip. 1 line = today's plain chip (degenerate 0-change route); ≥2 lines =
-     a two-line route chip: logo sequence joined by › on top, "km · 区間 · N路線" below. "おすすめ" on
-     rank-1 (a nudge, not a claim). aria-label reads the route so SRs don't hear "image image image". -->
+     a two-line route chip rendering routeSummary. Picking SELECTS into the confirm panel.
+     aria-label reads the route so SRs don't hear "image image image". -->
 {#snippet routeChip(r: RouteCandidate, rank: number)}
   {@const lns = r.lines.map((id) => $geo.lineById.get(id)).filter((l): l is RailLine => !!l)}
   {#if lns.length <= 1}
@@ -1043,17 +1124,49 @@
       onclick={() => pickRoute(r)}
       aria-label={`${lns.map((l) => l.name).join('、')}経由 ${r.totalKm.toFixed(1)}キロ ${r.lines.length}路線`}
     >
-      <span class="route-lines">
-        {#each lns as l, i (l.lineId + ':' + i)}
-          {#if i > 0}<span class="route-sep" aria-hidden="true">›</span>{/if}
-          {@render lineMark(l)}
-          <span class="route-line-name">{l.name}</span>
-        {/each}
-        {#if rank === 0 && routeChoices.length > 1}<span class="route-rec">おすすめ</span>{/if}
-      </span>
-      <span class="route-meta">{r.totalKm.toFixed(1)} km · {r.segmentIds.length}区間 · {r.lines.length}路線</span>
+      {@render routeSummary(r, rank)}
     </button>
   {/if}
+{/snippet}
+
+<!-- T2: the optional 車両 capture block — ONE definition rendered by BOTH the search-mode confirm
+     panel and tap mode (they never coexist: entryMode is exclusive, so the single #rp-train id
+     stays valid). D15: the preview is feedback, not validation — free text always records.
+     5A: chips highlight by FOLD so typed 'E5系' lights the E5 chip (preview and chip agree).
+     Honest empty state (v3 gate): an unprofiled line pads nothing — free text is the capture
+     path; the hint requires a KNOWN line (markContexts non-empty). -->
+{#snippet trainField()}
+  <div class="train-field">
+    <label class="search-label" for="rp-train">車両 <span class="opt u-muted">(任意)</span></label>
+    <input
+      id="rp-train"
+      class="search-input"
+      type="text"
+      placeholder="例: N700S / E5系 / CR400AF"
+      bind:value={markTrainModel}
+      oninput={() => (markModelFromChip = false)}
+      autocomplete="off"
+    />
+    {#if markModelPreview !== null}
+      <p class="train-preview u-muted">→ {markModelPreview} として記録</p>
+    {/if}
+    {#if modelSuggestions.length > 0}
+      <div class="train-chips" role="group" aria-label="車両の候補">
+        {#each modelSuggestions as m (m)}
+          <Pill
+            active={sameModel(markTrainModel, m)}
+            onclick={() => {
+              const clearing = sameModel(markTrainModel, m);
+              markTrainModel = clearing ? '' : m;
+              markModelFromChip = !clearing;
+            }}
+          >{m}</Pill>
+        {/each}
+      </div>
+    {:else if markTrainModel.trim() === '' && markContexts.length > 0}
+      <p class="train-preview u-muted" role="status">{NO_PROFILE_HINT}</p>
+    {/if}
+  </div>
 {/snippet}
 
 <div class="map-root">
@@ -1090,11 +1203,14 @@
     <div class="mark-panel" role="group" aria-label="区間をマーク">
       <!-- Entry-mode toggle: tap the map, or type station names. -->
       <div class="entry-tabs" role="tablist" aria-label="記録方法">
+        <!-- disabled while a commit is in flight (RT-4): a mid-commit switch would tear down
+             the confirm panel the failure path promises to preserve -->
         <button
           class="entry-tab"
           class:active={entryMode === 'tap'}
           role="tab"
           aria-selected={entryMode === 'tap'}
+          disabled={busy}
           onclick={() => switchEntry('tap')}
         >地図でタップ</button>
         <button
@@ -1102,6 +1218,7 @@
           class:active={entryMode === 'search'}
           role="tab"
           aria-selected={entryMode === 'search'}
+          disabled={busy}
           onclick={() => switchEntry('search')}
         >駅名で検索</button>
       </div>
@@ -1152,7 +1269,7 @@
           {#if pickedA}
             <div class="picked-station">
               <span class="picked-station-label">{bilingualLabel(pickedA.station.name, pickedA.station.nameRoma)} · {@render companyTag(pickedA.line)}{@render lineMark(pickedA.line)}{pickedA.line.name}</span>
-              <button class="clear" aria-label="出発駅をクリア" onclick={() => { pickedA = null; queryA = ''; tryInfer(); }}>×</button>
+              <button class="clear" aria-label="出発駅をクリア" disabled={busy} onclick={() => { pickedA = null; queryA = ''; tryInfer(); }}>×</button>
             </div>
           {:else}
             <input
@@ -1188,7 +1305,7 @@
           {#if pickedB}
             <div class="picked-station">
               <span class="picked-station-label">{bilingualLabel(pickedB.station.name, pickedB.station.nameRoma)} · {@render companyTag(pickedB.line)}{@render lineMark(pickedB.line)}{pickedB.line.name}</span>
-              <button class="clear" aria-label="到着駅をクリア" onclick={() => { pickedB = null; queryB = ''; tryInfer(); }}>×</button>
+              <button class="clear" aria-label="到着駅をクリア" disabled={busy} onclick={() => { pickedB = null; queryB = ''; tryInfer(); }}>×</button>
             </div>
           {:else}
             <input
@@ -1221,11 +1338,30 @@
 
         {#if searching}
           <p class="mark-hint" aria-live="polite">経路を探索中…</p>
+        {:else if confirmedRoute}
+          {@const cr = confirmedRoute}
+          <!-- Confirm step: the chosen route reads back before anything records, and THIS is
+               where the 車両 chips live — they are scoped to this route's lines, so the
+               recommendation can actually inform the choice (the old instant-commit recorded
+               before chips could ever matter). 経路を選び直す falls back to the picker
+               (single-candidate keeps its lone chip there). -->
+          <div class="route-confirm" role="group" aria-label="経路を確認" tabindex="-1" bind:this={confirmEl}>
+            <p class="mark-title">経路を確認</p>
+            <div class="route-summary">
+              {@render routeSummary(cr, null)}
+            </div>
+            {@render trainField()}
+            <div class="route-confirm-actions">
+              <button class="route-record" disabled={busy} onclick={() => void commitRoute(cr)}>この経路で記録</button>
+              <button class="route-back" disabled={busy} onclick={backToPicker}>経路を選び直す</button>
+            </div>
+          </div>
         {:else if routeChoices.length > 0}
           <!-- Cross-line route picker: pick the way you actually rode (a single-line A→B is just
-               the degenerate 0-change route, rendered as a plain chip). -->
+               the degenerate 0-change route, rendered as a plain chip). Picking SELECTS into
+               the confirm panel above — it does not record. -->
           <p class="mark-title">経路を選択</p>
-          <div class="line-list">
+          <div class="line-list" bind:this={pickerListEl}>
             {#each routeChoices as r, i (r.segmentIds.join())}
               {@render routeChip(r, i)}
             {/each}
@@ -1240,42 +1376,11 @@
         {/if}
       {/if}
 
-      {#if (entryMode === 'tap' && selectedLine) || entryMode === 'search'}
-        <!-- T2: optional train-model capture — never blocks a mark; read by both mark paths. -->
-        <div class="train-field">
-          <label class="search-label" for="rp-train">車両 <span class="opt u-muted">(任意)</span></label>
-          <input
-            id="rp-train"
-            class="search-input"
-            type="text"
-            placeholder="例: N700S / E5系 / CR400AF"
-            bind:value={markTrainModel}
-            autocomplete="off"
-          />
-          {#if markModelPreview !== null}
-            <!-- D15: feedback, not validation — shows what the fold will record -->
-            <p class="train-preview u-muted">→ {markModelPreview} として記録</p>
-          {/if}
-          {#if modelSuggestions.length > 0}
-            <div class="train-chips" role="group" aria-label="車両の候補">
-              {#each modelSuggestions as m (m)}
-                <!-- 5A: highlight by FOLD so typed 'E5系' lights the E5 chip (preview and chip agree) -->
-                <Pill
-                  active={sameModel(markTrainModel, m)}
-                  onclick={() => (markTrainModel = sameModel(markTrainModel, m) ? '' : m)}
-                >{m}</Pill>
-              {/each}
-            </div>
-          {:else if markTrainModel.trim() === '' && markContexts.length > 0}
-            <!-- Honest empty state (v3 gate): an unprofiled line pads nothing — free text
-                 is the capture path, and suggestions never pretend to be eligibility.
-                 Yields to the fold preview once the user types (design-lite: the two muted
-                 lines otherwise stack); role="status" matches the blessed .no-hit pattern.
-                 Requires a KNOWN line — 「この路線」 must not render before search mode has
-                 found a route (adversarial-review copy finding). -->
-            <p class="train-preview u-muted" role="status">{NO_PROFILE_HINT}</p>
-          {/if}
-        </div>
+      {#if entryMode === 'tap' && selectedLine}
+        <!-- TAP MODE render of the shared trainField snippet. Search mode renders it inside the
+             confirm panel above, chips scoped to the confirmed route (pre-route it was
+             recents-only noise — the reported "chips don't work with station search" defect). -->
+        {@render trainField()}
       {/if}
     </div>
   {/if}
@@ -1497,6 +1602,63 @@
   .route-meta {
     font-size: 0.82em;
     color: var(--ink-muted);
+  }
+  /* Confirm step: the summary reuses .route-lines/.route-meta type but as a static read-back
+     (bordered like a chip, non-interactive), then the 車両 field, then the action pair. */
+  .route-confirm {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+  /* outline suppressed ONLY here: tabindex=-1 container receiving programmatic focus for the
+     picker→confirm handoff — it is never tab-reachable, so no focus indicator is being taken
+     from a keyboard user (the interactive children keep their own rings). */
+  .route-confirm:focus {
+    outline: none;
+  }
+  .route-summary {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: var(--space-sm) var(--space-md);
+    border: 1px solid var(--rail-dim);
+    border-radius: var(--radius-button);
+    background: var(--rail-bg);
+  }
+  .route-confirm-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    margin-top: var(--space-xs);
+  }
+  .route-record {
+    flex: 1;
+    min-height: 44px;
+    padding: 0 var(--space-lg);
+    border: none;
+    border-radius: var(--radius-button);
+    background: var(--rail-text);
+    color: var(--white);
+    font-size: var(--size-body);
+    font-weight: var(--weight-label);
+  }
+  .route-record:disabled {
+    opacity: 0.55;
+  }
+  .route-record:active:not(:disabled) {
+    transform: scale(0.99);
+  }
+  .route-back {
+    min-height: 44px;
+    padding: 0 var(--space-md);
+    border: 1px solid var(--rail-dim);
+    border-radius: var(--radius-button);
+    background: var(--white);
+    color: var(--ink);
+    font-size: var(--size-body);
+  }
+  .route-back:active {
+    transform: scale(0.99);
   }
   .no-route {
     display: flex;

@@ -810,7 +810,13 @@ export async function markRide(opts: {
     createdAt,
   }));
   const persisted = await db.addRideSegments(candidates);
-  await refresh();
+  // Same post-commit guard as markRoute (red-team RT-2): the write IS persisted; a refresh
+  // failure surfacing here would show a false mark error and invite a duplicate-trip retry.
+  try {
+    await refresh();
+  } catch (err) {
+    console.error('[store] post-mark refresh failed (ride IS persisted)', err);
+  }
   return {
     added: persisted.length,
     sliceLength: segmentIds.length,
@@ -859,7 +865,14 @@ export async function markRoute(
     tripId,
     createdAt,
   }, kmBySegmentId);
-  await refresh();
+  // The write above is COMMITTED (single rw transaction). A refresh failure must not
+  // surface as a mark failure — the caller's error path invites a retry that would append
+  // a duplicate trip (adversarial F4). Stale stores self-heal on the next refresh/boot.
+  try {
+    await refresh();
+  } catch (err) {
+    console.error('[store] post-mark refresh failed (trip IS persisted)', err);
+  }
   return { added: res.added, tripId, totalKm: route.totalKm, segmentIds: route.segmentIds, alreadyCovered };
 }
 
@@ -952,7 +965,13 @@ export async function removeEvents(ids: string[]): Promise<void> {
  *  will call it is a deferred fast-follow; for now it backs tests + a future diary edit/delete. */
 export async function removeTrip(tripId: string): Promise<void> {
   await db.deleteTrip(tripId);
-  await refresh();
+  // Undo fires as void from toasts — a refresh failure after the committed delete would be
+  // an unhandled rejection for state that self-heals on the next refresh/boot (RT-2).
+  try {
+    await refresh();
+  } catch (err) {
+    console.error('[store] post-undo refresh failed (delete IS persisted)', err);
+  }
 }
 
 export async function clearAllRides(): Promise<void> {
