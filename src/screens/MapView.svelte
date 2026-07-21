@@ -112,6 +112,18 @@
   let pickedA = $state<StationHit | null>(null);
   let pickedB = $state<StationHit | null>(null);
   let routeChoices = $state<RouteCandidate[]>([]); // cross-line route picker (search-mode)
+  // Confirm step (search-mode): the chosen candidate awaiting the explicit 記録 tap. A found
+  // route SELECTS here instead of committing — single-candidate auto-selects (skipping the
+  // one-chip picker), a picker tap selects — so the 車両 chips can reflect THIS route's
+  // lines while the rider decides. Nothing records until the confirm button.
+  let confirmedRoute = $state<RouteCandidate | null>(null);
+  // Focus handoff: selecting a route unmounts the picker button the keyboard user activated
+  // (focus would fall to <body>); move it to the confirm panel (tabindex=-1 container — not
+  // tab-reachable, announced via its group label, Tab lands on the 車両 input next).
+  let confirmEl = $state<HTMLElement | null>(null);
+  $effect(() => {
+    if (confirmedRoute) confirmEl?.focus();
+  });
   let noRoute = $state(false); // the two stations have no rail path between them
   let searching = $state(false); // route-finding in flight (paints "探索中" before the sync call)
   const searchSeq = new SearchSeq(); // guards out-of-order async resolves (latest query wins)
@@ -145,15 +157,17 @@
   // show the honest free-text hint instead of implausible pads.
   //
   // BOTH mark flows supply contexts (outside-voice P1: search mode was falling open to the
-  // CN-first legacy pads): tap mode = the selected line; search mode = the union of lines
-  // across the found route candidates (the user is about to ride one of them). Search mode
-  // NEVER reads selectedLine — switchEntry keeps it when leaving tap mode, so it can be a
-  // stale, unrelated line (adversarial-review finding: a lingering 山手線 pick must not
-  // gate a searched Shinkansen route). Before a route exists the context is KNOWN-EMPTY
-  // ([]), not absent — recents only, no pads, and no hint (we cannot name a line yet).
+  // CN-first legacy pads): tap mode = the selected line; search mode = the CONFIRMED route's
+  // own lines — not the union across candidates, which recommended stock the chosen route
+  // can't carry. Search mode NEVER reads selectedLine — switchEntry keeps it when leaving
+  // tap mode, so it can be a stale, unrelated line (adversarial-review finding: a lingering
+  // 山手線 pick must not gate a searched Shinkansen route). Before a route is confirmed the
+  // context is KNOWN-EMPTY ([]), not absent — and the 車両 field doesn't render at all.
   const markContexts = $derived.by(() =>
     entryMode === 'search'
-      ? lineContexts([...new Set(routeChoices.flatMap((r) => r.lines))], (id) => $geo.lineById.get(id))
+      ? confirmedRoute
+        ? lineContexts(confirmedRoute.lines, (id) => $geo.lineById.get(id))
+        : []
       : selectedLine
         ? [selectedLine] // RailLine satisfies LineContext structurally
         : [],
@@ -251,6 +265,7 @@
     pickedA = null;
     pickedB = null;
     routeChoices = [];
+    confirmedRoute = null;
     noRoute = false;
     searching = false;
   }
@@ -883,6 +898,7 @@
   // a "探索中" state first (yield a frame) rather than freeze silently.
   async function tryInfer(): Promise<void> {
     routeChoices = [];
+    confirmedRoute = null;
     noRoute = false;
     if (!pickedA || !pickedB) return;
     const a = pickedA;
@@ -912,19 +928,24 @@
     if (outcome.kind === 'no-route') {
       noRoute = true; // warm no-route state with a leg-by-leg fallback
     } else if (outcome.kind === 'single') {
-      void commitRoute(outcome.route);
+      // Confirm step, not auto-commit: the lone candidate still goes through the 経路を確認
+      // panel so the 車両 chips can reflect ITS lines before anything records. routeChoices
+      // keeps the candidate so 経路を選び直す has a picker to fall back to (one chip).
+      routeChoices = [outcome.route];
+      confirmedRoute = outcome.route;
     } else {
       routeChoices = outcome.routes; // ≥2 candidates — show the route-picker
     }
   }
 
   function pickRoute(r: RouteCandidate): void {
-    void commitRoute(r);
+    confirmedRoute = r; // select — the confirm panel's 記録 button does the committing
   }
 
   async function commitRoute(r: RouteCandidate): Promise<void> {
-    routeChoices = [];
-    noRoute = false;
+    // No state clearing here: success exits mark mode (resetMarking wipes everything), and
+    // on FAILURE the confirm panel must survive so the rider can simply tap 記録 again —
+    // wiping confirmedRoute up front would eat the route on a transient IndexedDB error.
     if (busy) return;
     busy = true;
     try {
@@ -1221,9 +1242,61 @@
 
         {#if searching}
           <p class="mark-hint" aria-live="polite">経路を探索中…</p>
+        {:else if confirmedRoute}
+          {@const cr = confirmedRoute}
+          {@const crLines = cr.lines.map((id) => $geo.lineById.get(id)).filter((l): l is RailLine => !!l)}
+          <!-- Confirm step: the chosen route reads back before anything records, and THIS is
+               where the 車両 chips live — they are scoped to this route's lines, so the
+               recommendation can actually inform the choice (the old instant-commit recorded
+               before chips could ever matter). 経路を選び直す falls back to the picker
+               (single-candidate keeps its lone chip there). -->
+          <div class="route-confirm" role="group" aria-label="経路を確認" tabindex="-1" bind:this={confirmEl}>
+            <p class="mark-title">経路を確認</p>
+            <div class="route-summary">
+              <span class="route-lines">
+                {#each crLines as l, i (l.lineId + ':' + i)}
+                  {#if i > 0}<span class="route-sep" aria-hidden="true">›</span>{/if}
+                  {@render lineMark(l)}
+                  <span class="route-line-name">{l.name}</span>
+                {/each}
+              </span>
+              <span class="route-meta">{cr.totalKm.toFixed(1)} km · {cr.segmentIds.length}区間 · {cr.lines.length}路線</span>
+            </div>
+            <div class="train-field">
+              <label class="search-label" for="rp-train">車両 <span class="opt u-muted">(任意)</span></label>
+              <input
+                id="rp-train"
+                class="search-input"
+                type="text"
+                placeholder="例: N700S / E5系 / CR400AF"
+                bind:value={markTrainModel}
+                autocomplete="off"
+              />
+              {#if markModelPreview !== null}
+                <p class="train-preview u-muted">→ {markModelPreview} として記録</p>
+              {/if}
+              {#if modelSuggestions.length > 0}
+                <div class="train-chips" role="group" aria-label="車両の候補">
+                  {#each modelSuggestions as m (m)}
+                    <Pill
+                      active={sameModel(markTrainModel, m)}
+                      onclick={() => (markTrainModel = sameModel(markTrainModel, m) ? '' : m)}
+                    >{m}</Pill>
+                  {/each}
+                </div>
+              {:else if markTrainModel.trim() === '' && markContexts.length > 0}
+                <p class="train-preview u-muted" role="status">{NO_PROFILE_HINT}</p>
+              {/if}
+            </div>
+            <div class="route-confirm-actions">
+              <button class="route-record" disabled={busy} onclick={() => void commitRoute(cr)}>この経路で記録</button>
+              <button class="route-back" onclick={() => (confirmedRoute = null)}>経路を選び直す</button>
+            </div>
+          </div>
         {:else if routeChoices.length > 0}
           <!-- Cross-line route picker: pick the way you actually rode (a single-line A→B is just
-               the degenerate 0-change route, rendered as a plain chip). -->
+               the degenerate 0-change route, rendered as a plain chip). Picking SELECTS into
+               the confirm panel above — it does not record. -->
           <p class="mark-title">経路を選択</p>
           <div class="line-list">
             {#each routeChoices as r, i (r.segmentIds.join())}
@@ -1240,8 +1313,12 @@
         {/if}
       {/if}
 
-      {#if (entryMode === 'tap' && selectedLine) || entryMode === 'search'}
-        <!-- T2: optional train-model capture — never blocks a mark; read by both mark paths. -->
+      {#if entryMode === 'tap' && selectedLine}
+        <!-- T2: optional train-model capture — never blocks a mark; read by both mark paths.
+             TAP MODE ONLY: search mode's field lives inside the confirm panel above, where
+             the chips are scoped to the confirmed route (pre-route it was recents-only noise
+             — the reported "chips don't work with station search" defect). Same #rp-train id
+             in both places; they never render together (entryMode is exclusive). -->
         <div class="train-field">
           <label class="search-label" for="rp-train">車両 <span class="opt u-muted">(任意)</span></label>
           <input
@@ -1270,9 +1347,7 @@
             <!-- Honest empty state (v3 gate): an unprofiled line pads nothing — free text
                  is the capture path, and suggestions never pretend to be eligibility.
                  Yields to the fold preview once the user types (design-lite: the two muted
-                 lines otherwise stack); role="status" matches the blessed .no-hit pattern.
-                 Requires a KNOWN line — 「この路線」 must not render before search mode has
-                 found a route (adversarial-review copy finding). -->
+                 lines otherwise stack); role="status" matches the blessed .no-hit pattern. -->
             <p class="train-preview u-muted" role="status">{NO_PROFILE_HINT}</p>
           {/if}
         </div>
@@ -1497,6 +1572,60 @@
   .route-meta {
     font-size: 0.82em;
     color: var(--ink-muted);
+  }
+  /* Confirm step: the summary reuses .route-lines/.route-meta type but as a static read-back
+     (bordered like a chip, non-interactive), then the 車両 field, then the action pair. */
+  .route-confirm {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+  /* outline suppressed ONLY here: tabindex=-1 container receiving programmatic focus for the
+     picker→confirm handoff — it is never tab-reachable, so no focus indicator is being taken
+     from a keyboard user (the interactive children keep their own rings). */
+  .route-confirm:focus {
+    outline: none;
+  }
+  .route-summary {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: var(--space-sm) var(--space-md);
+    border: 1px solid var(--rail-dim);
+    border-radius: var(--radius-button);
+    background: var(--rail-bg);
+  }
+  .route-confirm-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    margin-top: var(--space-xs);
+  }
+  .route-record {
+    flex: 1;
+    min-height: 44px;
+    padding: 0 var(--space-lg);
+    border: none;
+    border-radius: var(--radius-button);
+    background: var(--rail-text);
+    color: var(--white);
+    font-size: var(--size-body);
+    font-weight: var(--weight-label);
+  }
+  .route-record:disabled {
+    opacity: 0.55;
+  }
+  .route-record:active:not(:disabled) {
+    transform: scale(0.99);
+  }
+  .route-back {
+    min-height: 44px;
+    padding: 0 var(--space-md);
+    border: 1px solid var(--rail-dim);
+    border-radius: var(--radius-button);
+    background: var(--white);
+    color: var(--ink);
+    font-size: var(--size-body);
   }
   .no-route {
     display: flex;
