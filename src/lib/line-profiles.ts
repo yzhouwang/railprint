@@ -38,11 +38,15 @@ const LINE_PROFILES: Readonly<Record<string, readonly string[]>> = {
   'jp-九州旅客鉄道-西九州新幹線': ['N700S'],
   // E2 restored by the 2026-03-14 改正 (10 down/8 up daily incl. 仙台以北 やまびこ) until ~E10/2030;
   // E3 つばさ regular ops ended 2025-12-24 → E8統一 (鉄道コム/マイナビ 2026-03, raillab 32267).
-  'jp-東日本旅客鉄道-東北新幹線': ['E5', 'E6', 'E8', 'E2', 'H5'],
+  // E7/W7 appended: every 北陸新幹線 train to 東京 traverses 東京–大宮 on THIS lineId (shared
+  // running — ja.wikipedia 北陸新幹線, 東京–高崎は東北・上越新幹線と線路共用), so a rider here
+  // can board one. Line-own services first, through guests after.
+  'jp-東日本旅客鉄道-東北新幹線': ['E5', 'E6', 'E8', 'E2', 'H5', 'E7', 'W7'],
   'jp-北海道旅客鉄道-北海道新幹線': ['E5', 'H5'],
-  // E7-only since 2023-03-18 改正 (とき・たにがわ統一); W7 does not run north of 高崎 in regular
-  // service (ja.wikipedia 上越新幹線, railf.jp 2023-03-19).
-  'jp-東日本旅客鉄道-上越新幹線': ['E7'],
+  // Line-own services E7-only since 2023-03-18 改正 (とき・たにがわ統一; W7 does not run north
+  // of 高崎 — ja.wikipedia 上越新幹線, railf.jp 2023-03-19). W7 appended for the 大宮–高崎
+  // stretch every 北陸新幹線 train traverses on this lineId (same shared-running rule).
+  'jp-東日本旅客鉄道-上越新幹線': ['E7', 'W7'],
   // One shared E7/W7 pool over the whole 東京–敦賀 line — both lineIds get the same list
   // (ja.wikipedia 北陸新幹線; E7 fleet ≈ 2× W7, hence E7 first).
   'jp-東日本旅客鉄道-北陸新幹線': ['E7', 'W7'],
