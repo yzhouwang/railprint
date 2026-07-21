@@ -43,9 +43,9 @@ export type RouteOutcome =
 /**
  * Find the cross-line route(s) A→B within a package and classify them. Routes are re-ordered so one
  * on a line the user actually picked comes first (never float a parallel Shinkansen above the local
- * line they rode, which would tempt a one-tap phantom HSR mark). Zero routes → no-route; exactly one
- * → auto-SELECT into the confirm panel (route-scoped 車両 chips, explicit 記録 tap); two or more →
- * show the picker, whose pick also lands on the confirm panel.
+ * line they rode, which would tempt a one-tap phantom HSR mark). Zero routes → no-route; exactly
+ * one → kind 'single' (callers treat it as pre-selected); two or more → kind 'multi' (callers
+ * offer a choice). How selection/confirmation renders is the caller's concern.
  */
 export function classifyRoutes(pkg: RailGeoPackage, a: StationHit, b: StationHit): RouteOutcome {
   const routes = preferPickedLine(
