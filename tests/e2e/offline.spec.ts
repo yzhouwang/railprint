@@ -112,6 +112,11 @@ test('OFFLINE record: a brand-new ride is marked and persisted with no signal', 
   await page.locator('.hit').first().click();
   await page.locator('#rp-q-b').fill('上海虹桥');
   await page.locator('.hit').first().click();
+  // Single-candidate 京沪 route → the 経路を確認 panel appears; 「この経路で記録」 commits (a
+  // route no longer records on pick). The success toast confirms the offline write.
+  const confirm = page.locator('.route-confirm');
+  await expect(confirm).toBeVisible({ timeout: 15_000 });
+  await confirm.locator('.route-record').click();
   await expect(page.getByText(/経路を記録しました/)).toBeVisible({ timeout: 15_000 });
 
   // And it truly persisted to IndexedDB — survives offline with no network round-trip.

@@ -70,8 +70,12 @@ test('search 津 → 大阪難波 surfaces a multi-line route and records it', a
   await expect(routeChip).toContainText('路線'); // metadata "N路線", N ≥ 2
   await expect(routeChip).toContainText('大阪線');
 
-  // Record it; the success toast confirms the cross-line ride landed.
+  // Tapping a route now SELECTS it into the 経路を確認 panel — it no longer records instantly.
   await routeChip.click();
+  const confirm = page.locator('.route-confirm');
+  await expect(confirm).toBeVisible({ timeout: 10_000 });
+  // 「この経路で記録」 is what commits; the success toast confirms the cross-line ride landed.
+  await confirm.locator('.route-record').click();
   await expect(page.getByText(/経路を記録しました/)).toBeVisible({ timeout: 10_000 });
 });
 
@@ -99,11 +103,21 @@ test('captures the train model on a recorded route and surfaces it in the diary'
   await page.locator('#rp-q-b').fill('大阪難波');
   await page.locator('.hit').first().click();
 
-  // Tag the train via the optional 車両 field before recording (T2 capture path).
-  await page.locator('#rp-train').fill('N700S');
+  // Select the route first — the 車両 field now lives INSIDE the confirm panel, scoped to
+  // THIS route's lines (名古屋線∩大阪線∩難波線), so the recommendation can inform the pick.
   const routeChip = page.locator('.route-chip').first();
   await expect(routeChip).toBeVisible({ timeout: 15_000 });
   await routeChip.click();
+  const confirm = page.locator('.route-confirm');
+  await expect(confirm).toBeVisible({ timeout: 10_000 });
+
+  // Through-service recommendation: 80000系 (ひのとり) — the fold in the intersection of the
+  // three 近鉄 lines this route rides — leads the suggestion pads.
+  await expect(confirm.locator('.train-chips button').first()).toHaveText('80000系');
+
+  // Free text stays first-class: tag a model the pads don't offer (T2 capture path).
+  await page.locator('#rp-train').fill('N700S');
+  await confirm.locator('.route-record').click();
   // v0.13 D14: a mark that collects a NEW model replaces the plain coverage toast with the
   // first-collect beat (undo stays as the action) — this used to assert 経路を記録しました.
   await expect(page.getByText(/N700Sを図鑑に追加しました/)).toBeVisible({ timeout: 10_000 });
@@ -117,4 +131,39 @@ test('captures the train model on a recorded route and surfaces it in the diary'
   const route = page.locator('.trip-route').first();
   await expect(route).toContainText('大阪難波');
   await expect(route).toContainText('津');
+});
+
+test('shinkansen through-route: 長野 → 金沢 recommends the 北陸 through-stock E7系/W7系 first', async ({ page }) => {
+  // The feature's flagship: a route spanning TWO 北陸新幹線 legs — 東日本 (長野→上越妙高) then
+  // 西日本 (上越妙高→金沢), split at the JR East/West boundary. No parallel conventional line
+  // matches its 1-change directness, so the 北陸新幹線 route is the おすすめ. The 車両 chips are
+  // the fold intersection across the two legs — the through-capable 北陸 stock (E7系 then W7系),
+  // which every かがやき/はくたか actually runs. (長野 vs 大宮/東京: from 大宮 the 大宮→高崎 leg
+  // ties the shinkansen with conventional 高崎線 and wins on km → E233; from 東京 the fewest-
+  // change route is the 東海道→米原→北陸線 detour → N700A. 長野→金沢 has no such shorter tie.)
+  await enterSearchMode(page);
+
+  // 長野's 新幹線 instance is the 北陸新幹線 platform (the others are 長野電鉄 / しなの鉄道).
+  // 金沢's two instances (北陸新幹線 / IRいしかわ) share one group; filter the same way.
+  await page.locator('#rp-q-a').fill('長野');
+  await page.locator('.hit', { hasText: '新幹線' }).first().click();
+  await page.locator('#rp-q-b').fill('金沢');
+  await page.locator('.hit', { hasText: '新幹線' }).first().click();
+
+  // Single- or multi-candidate — handle both: the confirm panel appears directly for a lone
+  // route; otherwise the picker shows and its first (recommended) chip selects into it.
+  const confirm = page.locator('.route-confirm');
+  const routeChip = page.locator('.route-chip').first();
+  await expect(confirm.or(routeChip)).toBeVisible({ timeout: 15_000 });
+  if (!(await confirm.isVisible())) await routeChip.click();
+  await expect(confirm).toBeVisible({ timeout: 10_000 });
+
+  // The non-negotiable assertion: E7系 then W7系 lead the route-scoped 車両 pads.
+  const chips = confirm.locator('.train-chips button');
+  await expect(chips.nth(0)).toHaveText('E7系');
+  await expect(chips.nth(1)).toHaveText('W7系');
+
+  // And the confirm → record path still lands a trip.
+  await confirm.locator('.route-record').click();
+  await expect(page.getByText(/経路を記録しました|図鑑に追加/)).toBeVisible({ timeout: 10_000 });
 });

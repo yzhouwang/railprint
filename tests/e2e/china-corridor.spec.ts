@@ -69,15 +69,20 @@ test('REAL FLOW: search 北京南 → 上海虹桥, record with a train model, s
   // Search two China stations by name and pick them.
   await page.locator('#rp-q-a').fill('北京南');
   await page.locator('.hit').first().click();
-
-  // Tag the train BEFORE the destination (a single-line CN route auto-records on pick).
-  await page.locator('#rp-train').fill('CR400AF');
   await page.locator('#rp-q-b').fill('上海虹桥');
   await page.locator('.hit').first().click();
 
-  // 北京南 → 上海虹桥 is the whole 京沪 line (one line, 0 changes) → it records automatically.
-  // v0.13 D14: CR400AF is new to the collection, so the first-collect beat (with the 京沪
-  // corridor meter) replaces the plain 経路を記録しました toast.
+  // 北京南 → 上海虹桥 is the whole 京沪 line (one line, 0 changes) → a SINGLE candidate, so the
+  // 経路を確認 panel appears directly (no picker). The 車両 field now lives in that panel and is
+  // scoped to 京沪高速铁路 — a profiled line — so CR400AF is offered as a suggestion chip. Tap
+  // the chip rather than typing (proves the route-scoped recommendation surfaces).
+  const confirm = page.locator('.route-confirm');
+  await expect(confirm).toBeVisible({ timeout: 15_000 });
+  await confirm.locator('.train-chips button', { hasText: 'CR400AF' }).first().click();
+
+  // 「この経路で記録」 commits. v0.13 D14: CR400AF is new to the collection, so the first-collect
+  // beat (with the 京沪 corridor meter) replaces the plain 経路を記録しました toast.
+  await confirm.locator('.route-record').click();
   await expect(page.getByText(/CR400AFを図鑑に追加しました/)).toBeVisible({ timeout: 15_000 });
 
   // Stats now show a China figure, and the diary row carries the model + the true endpoints.
