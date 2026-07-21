@@ -398,6 +398,50 @@ describe('suggestModels — v3 gate edge branches (ship coverage audit)', () => 
     expect(suggestModels([ev('CR200J', at(0), 'orphan-seg')], { lineOfSegment: noLine })[0]).toBe('CR200J');
   });
 
+  it('DISJOINT profiled contexts (東海道+東北): empty intersection ⇒ NO reorder — pads stay in plain first-context union order', () => {
+    const TOKAIDO: LineContext = { lineId: 'jp-東海旅客鉄道-東海道新幹線', country: 'JP', isHSR: true };
+    const TOHOKU: LineContext = { lineId: 'jp-東日本旅客鉄道-東北新幹線', country: 'JP', isHSR: true };
+    // 東海道 [N700A,N700S] ∩ 東北 [E5,E6,E8,E2,H5,E7,W7] = ∅ — no trainset runs both, so the
+    // through partition is a NO-OP: pads are the union in first-context-first order, never
+    // reshuffled by an empty "through" head. max 9 surfaces the full 9-fold union (the
+    // default cap of 8 would truncate W7 and hide the tail this test pins).
+    const out = suggestModels([], { contexts: [TOKAIDO, TOHOKU], max: 9 });
+    expect(out).toEqual(['N700A', 'N700S', 'E5系', 'E6系', 'E8系', 'E2系', 'H5系', 'E7系', 'W7系']);
+  });
+
+  it('IDENTICAL profiles (北陸新幹線 東+西): the intersection is total — pads are exactly [E7系, W7系]', () => {
+    const HOKURIKU_EAST: LineContext = { lineId: 'jp-東日本旅客鉄道-北陸新幹線', country: 'JP', isHSR: true };
+    const HOKURIKU_WEST: LineContext = { lineId: 'jp-西日本旅客鉄道-北陸新幹線', country: 'JP', isHSR: true };
+    // Both operator halves profile [E7,W7]; every fold is through-capable, so the partition
+    // moves nothing and nothing else pads — the 長野→金沢 confirm panel's exact chip set.
+    const out = suggestModels([], { contexts: [HOKURIKU_EAST, HOKURIKU_WEST] });
+    expect(out).toEqual(['E7系', 'W7系']);
+  });
+
+  it('THREE-WAY (東北+上越+北陸東 — the 東京→金沢 shape): E7/W7 alone survive all three rosters and lead', () => {
+    const TOHOKU: LineContext = { lineId: 'jp-東日本旅客鉄道-東北新幹線', country: 'JP', isHSR: true };
+    const JOETSU: LineContext = { lineId: 'jp-東日本旅客鉄道-上越新幹線', country: 'JP', isHSR: true };
+    const HOKURIKU_EAST: LineContext = { lineId: 'jp-東日本旅客鉄道-北陸新幹線', country: 'JP', isHSR: true };
+    // かがやき/はくたか ride 東北 (東京–大宮) → 上越 (大宮–高崎) → 北陸 lineIds; the fold in
+    // ALL THREE profiles is exactly {E7,W7} — the stock that can run the whole route leads,
+    // then the 東北-only remainder follows in untouched union order.
+    const out = suggestModels([], { contexts: [TOHOKU, JOETSU, HOKURIKU_EAST] });
+    expect(out).toEqual(['E7系', 'W7系', 'E5系', 'E6系', 'E8系', 'E2系', 'H5系']);
+  });
+
+  it('PAIR decision pin (東北+上越): [E7系, W7系, …rest] — W7-second is the ACCEPTED shared-running tradeoff', () => {
+    const TOHOKU: LineContext = { lineId: 'jp-東日本旅客鉄道-東北新幹線', country: 'JP', isHSR: true };
+    const JOETSU: LineContext = { lineId: 'jp-東日本旅客鉄道-上越新幹線', country: 'JP', isHSR: true };
+    // 東北 ∩ 上越 = {E7,W7} because BOTH carry the shared-running append (every 北陸新幹線
+    // train traverses 東京–大宮–高崎 on these lineIds). A 東京→新潟 とき rider therefore sees
+    // E7 first — correct, every とき IS an E7 — and W7 second, a train they could only have
+    // boarded on the 大宮–高崎 shared stretch. That W7-second chip is the DOCUMENTED tradeoff
+    // of keeping the shared-running guests in the profiles (line-profiles.ts), not an
+    // accident: do not "fix" it by stripping W7 from 上越, or the 東京→金沢 through rank dies.
+    const out = suggestModels([], { contexts: [TOHOKU, JOETSU] });
+    expect(out).toEqual(['E7系', 'W7系', 'E5系', 'E6系', 'E8系', 'E2系', 'H5系']);
+  });
+
   it('the legacy lineId still flags on-line when contexts are present but do not include it (degraded editor rows)', () => {
     // StatsScreen passes lineId = lineIds[0] even when that line is unresolvable and thus
     // absent from contexts — an event resolving to it must still count as the user's own fact.

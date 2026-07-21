@@ -104,8 +104,8 @@ test('OFFLINE record: a brand-new ride is marked and persisted with no signal', 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await page.evaluate(() => (window as any).__map?.fire('load'));
 
-  // Mark a NEW ride OFFLINE: search two real CN stations (only present if the real package came from
-  // cache) and let the single-line 京沪 route auto-record. The success toast confirms the offline write.
+  // Mark a NEW ride OFFLINE: search two real CN stations (only present if the real package came
+  // from cache) and record the single-line 京沪 route via the 経路を確認 panel.
   await page.getByRole('button', { name: '区間をマーク' }).first().click();
   await page.getByRole('tab', { name: '駅名で検索' }).click();
   await page.locator('#rp-q-a').fill('北京南');
