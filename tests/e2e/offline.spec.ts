@@ -59,7 +59,12 @@ async function waitForPrecache(page: Page): Promise<void> {
         const cache = await caches.open(name);
         if (await cache.match('/rail/jp-2025.json', { ignoreSearch: true })) pkg = true;
         if (await cache.match('/rail/manifest.json', { ignoreSearch: true })) manifest = true;
-        if (await cache.match('/silhouettes/E5.webp', { ignoreSearch: true })) silhouette = true;
+        if (
+          (await cache.match('/silhouettes/E5.webp', { ignoreSearch: true })) &&
+          // a CJK-named asset proves the percent-encoded cache key round-trip (batch 2)
+          (await cache.match('/silhouettes/%E3%82%AD%E3%83%8F261.webp', { ignoreSearch: true }))
+        )
+          silhouette = true;
       }
       return pkg && manifest && silhouette;
     },

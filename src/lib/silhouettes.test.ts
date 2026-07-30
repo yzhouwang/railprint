@@ -31,12 +31,24 @@ describe('silhouettes — raster asset gates', () => {
     expect([...SILHOUETTE_BATCHES.shinkansen].sort()).toEqual(active);
   });
 
-  it('every limited-express batch fold is a ltd-express card', () => {
-    for (const fold of SILHOUETTE_BATCHES['ltd-express']) {
-      expect(modelByFold(fold)!.category, `silhouette fold "${fold}" has the wrong category`).toBe(
-        'ltd-express',
-      );
+  // Iterates the BATCH ENTRIES (key = registry category), so a future batch key
+  // (commuter, dmu, cn-hsr) inherits its category gate automatically — a per-key
+  // hardcoded gate was the reviewed trap (a third batch would ship ungated).
+  it('every batch fold carries its batch key as its registry category', () => {
+    for (const [category, folds] of Object.entries(SILHOUETTE_BATCHES)) {
+      for (const fold of folds) {
+        expect(modelByFold(fold)?.category, `fold "${fold}" is not a ${category} card`).toBe(
+          category,
+        );
+      }
     }
+  });
+
+  // The subset batch has no roster to pin against, so pin its CARDINALITY: without this,
+  // deleting folds + their files keeps every other gate green (codex adversarial P1 —
+  // "remove 23 of 24 assets with green CI"). Update DELIBERATELY when a batch lands.
+  it('the ltd-express batch holds exactly the shipped 24 (accidental deletions must be loud)', () => {
+    expect(SILHOUETTE_BATCHES['ltd-express']).toHaveLength(24);
   });
 
   it('has no duplicate folds across batches', () => {
@@ -48,6 +60,10 @@ describe('silhouettes — raster asset gates', () => {
   it('the asset directory holds EXACTLY the batch files', () => {
     const onDisk = readdirSync(ASSET_DIR)
       .filter((f) => f.endsWith('.webp'))
+      // NFC insurance: APFS may hand back decomposed (NFD) names for future folds with
+      // voiced kana (ダ/ガ…); the registry folds are NFC. Today's CJK folds are
+      // normalization-invariant — this keeps the gate honest when one isn't.
+      .map((f) => f.normalize('NFC'))
       .sort();
     expect(onDisk).toEqual([...SILHOUETTE_FOLDS].map((f) => `${f}.webp`).sort());
   });
@@ -59,9 +75,21 @@ describe('silhouettes — raster asset gates', () => {
       const size = statSync(path).size; // throws → missing asset fails the test with the path
       total += size;
       expect(size, `${fold}.webp exceeds per-asset budget`).toBeLessThanOrEqual(MAX_ASSET_BYTES);
-      const head = readFileSync(path).subarray(0, 16);
+      // truncation floor: a bare RIFF header would pass the magic check (codex adversarial)
+      expect(size, `${fold}.webp is implausibly small — truncated?`).toBeGreaterThanOrEqual(10 * 1024);
+      const head = readFileSync(path).subarray(0, 32);
       expect(head.toString('latin1', 0, 4), `${fold}.webp is not RIFF`).toBe('RIFF');
       expect(head.toString('latin1', 8, 12), `${fold}.webp is not WEBP`).toBe('WEBP');
+      // VP8L (lossless) headers carry the canvas size — assert the pipeline contract
+      // 512×176 without a decoder: 0x2F signature, then 14-bit (w-1), 14-bit (h-1).
+      expect(head.toString('latin1', 12, 16), `${fold}.webp is not lossless VP8L`).toBe('VP8L');
+      expect(head[20], `${fold}.webp bad VP8L signature`).toBe(0x2f);
+      const bits = head[21] | (head[22] << 8) | (head[23] << 16) | (head[24] << 24);
+      const width = (bits & 0x3fff) + 1;
+      const height = ((bits >> 14) & 0x3fff) + 1;
+      expect({ width, height }, `${fold}.webp wrong canvas`).toEqual({ width: 512, height: 176 });
+      // the ghost CSS mask is alpha-mode — an asset without alpha paints a SOLID rectangle
+      expect((bits >>> 28) & 1, `${fold}.webp has no alpha channel`).toBe(1);
     }
     expect(total, 'silhouette set exceeds precache budget').toBeLessThanOrEqual(MAX_TOTAL_BYTES);
   });
@@ -77,5 +105,8 @@ describe('silhouettes — raster asset gates', () => {
   it('silhouetteAsset() prefixes the injected base — the GitHub-Pages subpath 404 class', () => {
     expect(silhouetteAsset('E5', '/railprint/')).toBe('/railprint/silhouettes/E5.webp');
     expect(silhouetteAsset('E5', '/')).toBe('/silhouettes/E5.webp');
+    // CJK folds resolve through the same template — the URL half of the filename gate
+    expect(silhouetteAsset('キハ261')).toMatch(/silhouettes\/キハ261\.webp$/);
+    expect(silhouetteAsset('南海50000', '/railprint/')).toBe('/railprint/silhouettes/南海50000.webp');
   });
 });

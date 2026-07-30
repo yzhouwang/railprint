@@ -55,10 +55,11 @@ export const SILHOUETTE_BATCHES = {
   ],
 } as const;
 
-export const SILHOUETTE_FOLDS: readonly string[] = [
-  ...SILHOUETTE_BATCHES.shinkansen,
-  ...SILHOUETTE_BATCHES['ltd-express'],
-];
+// DERIVED, never hand-spread: a batch key added above contributes automatically — the
+// review trap was a third batch silently contributing nothing until the dir-equality
+// gate failed with a confusing "stray file" error. Keys are registry categories; the
+// tests iterate the entries, so every future batch inherits its category gate for free.
+export const SILHOUETTE_FOLDS: readonly string[] = Object.values(SILHOUETTE_BATCHES).flat();
 
 const FOLDS: ReadonlySet<string> = new Set(SILHOUETTE_FOLDS);
 
