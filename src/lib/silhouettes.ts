@@ -6,25 +6,59 @@
 // DD10 ghost token, never a restyle. Art carries its own livery colors (DD8 livery-is-data
 // carve-out); the registry accentColor is NOT applied on top of raster art.
 //
-// The fold list is pinned to the ACTIVE 新幹線 roster (13 — E3 is inactive and never
-// ghost-cards). silhouettes.test.ts enforces list ≡ roster ≡ files on disk + size budget.
+// Batches are category-structured: shinkansen is the COMPLETE active roster (pinned);
+// ltd-express is a CURATED flagship subset that grows batch by batch.
+// silhouettes.test.ts enforces batches ≡ files on disk + size budget.
 import { assetUrl } from './asset-url';
 
-export const SILHOUETTE_FOLDS = [
-  'N700S',
-  'N700A',
-  'N700',
-  '500',
-  '700',
-  '800',
-  'E5',
-  'H5',
-  'E6',
-  'E7',
-  'W7',
-  'E8',
-  'E2',
-] as const;
+export const SILHOUETTE_BATCHES = {
+  shinkansen: [
+    'N700S',
+    'N700A',
+    'N700',
+    '500',
+    '700',
+    '800',
+    'E5',
+    'H5',
+    'E6',
+    'E7',
+    'W7',
+    'E8',
+    'E2',
+  ],
+  'ltd-express': [
+    'E353',
+    'E259',
+    'E657',
+    'E261',
+    '683',
+    '273',
+    '283',
+    '285',
+    '787',
+    '883',
+    '885',
+    '789',
+    'キハ261',
+    '2700',
+    '80000',
+    '50000',
+    '近鉄21000',
+    '南海50000',
+    'AE',
+    'N100',
+    '001',
+    '70000',
+    '東武100',
+    '2000',
+  ],
+} as const;
+
+export const SILHOUETTE_FOLDS: readonly string[] = [
+  ...SILHOUETTE_BATCHES.shinkansen,
+  ...SILHOUETTE_BATCHES['ltd-express'],
+];
 
 const FOLDS: ReadonlySet<string> = new Set(SILHOUETTE_FOLDS);
 

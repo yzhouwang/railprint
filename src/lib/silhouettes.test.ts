@@ -3,16 +3,16 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { MODEL_REGISTRY } from './model-registry';
 import { modelByFold } from './train-models';
-import { SILHOUETTE_FOLDS, silhouetteAsset } from './silhouettes';
+import { SILHOUETTE_BATCHES, SILHOUETTE_FOLDS, silhouetteAsset } from './silhouettes';
 
 // silhouettes.ts fronts CURATED ART ASSETS (public/silhouettes/<fold>.webp) feeding
 // TrainSilhouette's raster branch — these are the editing gates (registry idiom): a
-// typo'd fold, a missing/oversized asset, or a fold outside the active 新幹線 roster
+// typo'd fold, a missing/oversized asset, or a fold outside its category batch
 // must fail CI, not silently ghost a card's art or blow the precache budget.
 
 const ASSET_DIR = join(__dirname, '../../public/silhouettes');
 const MAX_ASSET_BYTES = 80 * 1024; // lossless 512×176 WebP lands ~30-40KB
-const MAX_TOTAL_BYTES = 900 * 1024; // all assets precache (workbox glob) — keep it modest
+const MAX_TOTAL_BYTES = 2 * 1024 * 1024; // 37 lossless WebPs are ~1.3MB in the precache
 
 describe('silhouettes — raster asset gates', () => {
   it('every silhouette fold is a registry CARD (own fold key, not an alias)', () => {
@@ -20,6 +20,7 @@ describe('silhouettes — raster asset gates', () => {
       const card = modelByFold(fold);
       expect(card, `silhouette fold "${fold}" has no registry card`).toBeDefined();
       expect(card!.fold, `silhouette fold "${fold}" is an alias of ${card!.fold}`).toBe(fold);
+      expect(card!.active, `silhouette fold "${fold}" is inactive`).toBe(true);
     }
   });
 
@@ -27,7 +28,19 @@ describe('silhouettes — raster asset gates', () => {
     const active = MODEL_REGISTRY.filter((m) => m.category === 'shinkansen' && m.active)
       .map((m) => m.fold)
       .sort();
-    expect([...SILHOUETTE_FOLDS].sort()).toEqual(active);
+    expect([...SILHOUETTE_BATCHES.shinkansen].sort()).toEqual(active);
+  });
+
+  it('every limited-express batch fold is a ltd-express card', () => {
+    for (const fold of SILHOUETTE_BATCHES['ltd-express']) {
+      expect(modelByFold(fold)!.category, `silhouette fold "${fold}" has the wrong category`).toBe(
+        'ltd-express',
+      );
+    }
+  });
+
+  it('has no duplicate folds across batches', () => {
+    expect(SILHOUETTE_FOLDS).toHaveLength(new Set(SILHOUETTE_FOLDS).size);
   });
 
   // the workbox glob precaches every .webp in the directory, so a stray/orphan file
@@ -55,8 +68,9 @@ describe('silhouettes — raster asset gates', () => {
 
   it('silhouetteAsset() resolves batch folds and returns undefined for the rest', () => {
     expect(silhouetteAsset('E5')).toMatch(/silhouettes\/E5\.webp$/);
+    expect(silhouetteAsset('E353')).toMatch(/silhouettes\/E353\.webp$/);
     expect(silhouetteAsset('E3')).toBeUndefined(); // inactive — never ghost-cards
-    expect(silhouetteAsset('E353')).toBeUndefined(); // 特急 — later batch
+    expect(silhouetteAsset('E257')).toBeUndefined(); // registry 特急 card — not in the batch
     expect(silhouetteAsset('CR400AF')).toBeUndefined();
   });
 
