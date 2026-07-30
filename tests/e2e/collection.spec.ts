@@ -53,13 +53,16 @@ async function bootToStats(page: Page, rows: SeedRow[]): Promise<void> {
 test('collect → shelf meter → sheet: collected card, ghost want-list, stamps, detail view', async ({ page }) => {
   await bootToStats(page, [
     { id: 't1:' + JP_SEG, segmentId: JP_SEG, railGeoVersion: '2025.2.0', source: 'manual', tripId: 't1', date: '2025-11-03', trainModel: 'E5系', createdAt: '2025-11-03T00:00:00.000Z' },
+    // batch-2 raster coverage: a CJK-fold 特急 — its collected card proves the
+    // percent-encoded asset URL decodes in a real browser (キハ261.webp)
+    { id: 't2:' + JP_SEG, segmentId: JP_SEG, railGeoVersion: '2025.2.0', source: 'manual', tripId: 't2', date: '2025-11-04', trainModel: 'キハ261系', createdAt: '2025-11-04T00:00:00.000Z' },
   ]);
 
   // DD1 shelf: one job — count + hero meter + chevron; whole shelf is the button.
   const shelf = page.locator('.dex-shelf');
   await expect(shelf).toBeVisible({ timeout: 15_000 });
   await expect(shelf).toContainText('車両図鑑');
-  await expect(shelf).toContainText('1車両を記録');
+  await expect(shelf).toContainText('2車両を記録'); // E5系 + キハ261系 (batch-2 raster seed)
   await expect(shelf).toContainText('/13'); // 新幹線 denominator (2026 roster, fact-checked)
 
   // Open the sheet (DD9 dialog) — anchor meter + collected E5系 + a ghost card + 引退迫る tag.
@@ -80,6 +83,23 @@ test('collect → shelf meter → sheet: collected card, ghost want-list, stamps
   await expect(ghostMask).toBeVisible();
   const maskBox = await ghostMask.boundingBox();
   expect(maskBox && maskBox.width > 10 && maskBox.height > 10).toBe(true);
+
+  // Batch-2 (特急) raster coverage — both states, in a REAL browser:
+  // 1. collected キハ261系: the CJK asset URL must decode (percent-encoded round-trip).
+  const kiha = sheet.getByRole('button', { name: /キハ261系/ });
+  const kihaArt = kiha.locator('img[src*="silhouettes/"]');
+  await expect(kihaArt).toBeVisible();
+  expect(await kihaArt.evaluate((el) => (el as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+  // 2. a ltd-express GHOST (E353系): the box assert alone is vacuous for masks (a 404
+  //    mask still has size) — fetch the actual --sil-mask URL and require the asset bytes.
+  const e353Mask = sheet.locator('.card.ghost[data-fold="E353"] .ras .mask');
+  await expect(e353Mask).toBeVisible();
+  const maskOk = await e353Mask.evaluate(async (el) => {
+    const url = getComputedStyle(el).getPropertyValue('--sil-mask').trim().slice(5, -2); // url('…')
+    const res = await fetch(url);
+    return res.ok && (await res.blob()).size > 10_000;
+  });
+  expect(maskOk, 'E353 ghost mask URL must serve the real asset').toBe(true);
   await expect(sheet.getByText('引退迫る').first()).toBeVisible(); // 500系 honest urgency tag
   await expect(sheet.getByText(`ロースター基準: 2026年`)).toBeVisible();
 
