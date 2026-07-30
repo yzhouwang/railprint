@@ -2,25 +2,32 @@
 
 All notable changes to RailPrint are documented here.
 
-## [0.13.4.0] - 2026-07-21
+## [0.13.5.0] - 2026-07-30
 
-**Pick your train after you pick your route — and now the 特急 have faces too.**
-Station-name search no longer records the moment a route is found — a 経路を確認
-step reads the route back and recommends the rolling stock that serves it, so the
-車両 chips finally work in the flow where they matter most. And the 車両図鑑 grows
-its second art batch: 24 flagship limited expresses in true livery.
+**The 特急 get their faces.** The 車両図鑑's second art batch: 24 flagship limited
+expresses in true livery, from あずさ's violet-winged black mask to ラピート's
+porthole dome.
 
 ### Added
-- **Per-model 先頭 art for 24 flagship 特急.** The JR icons — E353 あずさ's violet-
-  winged black mask, E259 成田エクスプレス, E657 ひたち, E261 サフィール踊り子's
-  sapphire wedge, 683 サンダーバード, 273 新やくも bronze, 283 オーシャンアロー,
-  285 サンライズ, 787・883 ソニック・885・789 ライラック, キハ261, 2700 — and the
-  private-railway bench: 80000 ひのとり, 50000 しまかぜ, 南海50000 ラピート's
-  porthole dome, AE スカイライナー, N100 スペーシアX, 001 Laview, 70000 GSE,
-  近鉄21000 アーバンライナー, 東武100 スペーシア, 名鉄2000 ミュースカイ. Collected
-  cards show full livery; 未乗車 ghosts show each model's real nose profile. Every
-  livery fact-checked against current schemes (post-renewal 885, single-band
-  アーバンライナー plus, current キハ261 colors). ~824KB for all 24, fully offline.
+- **Per-model 先頭 art for 24 flagship 特急.** The JR icons — E353 あずさ, E259
+  成田エクスプレス, E657 ひたち, E261 サフィール踊り子's sapphire wedge, 683
+  サンダーバード, 273 新やくも bronze, 283 オーシャンアロー, 285 サンライズ,
+  787・883 ソニック・885・789 ライラック, キハ261, 2700 — and the private-railway
+  bench: 80000 ひのとり, 50000 しまかぜ, 南海50000 ラピート, AE スカイライナー,
+  N100 スペーシアX, 001 Laview, 70000 GSE, 近鉄21000 アーバンライナー, 東武100
+  スペーシア, 名鉄2000 ミュースカイ. Collected cards show full livery; 未乗車
+  ghosts show each model's real nose profile. Every livery fact-checked against
+  current schemes (post-renewal 885, single-band アーバンライナー plus, current
+  キハ261 colors). ~780KB for all 24, fully offline.
+
+## [0.13.4.0] - 2026-07-21
+
+**Pick your train after you pick your route.** Station-name search no longer
+records the moment a route is found — a 経路を確認 step reads the route back and
+recommends the rolling stock that serves it, so the 車両 chips finally work in
+the flow where they matter most.
+
+### Added
 - **経路を確認 — a confirm step for searched routes.** Pin two stations (or pick from
   the route candidates) and the route reads back — lines, km, 区間 — with the 車両
   field right there and 「この経路で記録」 to commit. No more instant recording that
